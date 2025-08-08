@@ -1,0 +1,53 @@
+site_name: UnReflectAnything Documentation
+
+theme:
+  name: material
+
+nav:
+  # Pipelines
+  - Pipelines:
+      - Depth: depth.md
+ 
+  - Dataset:
+      - Dataset Overview: dataset.md
+      - Base Dataset: dataset/base.md
+      - Data Loader: dataset/loader.md
+      - Multi Dataset: dataset/multi_dataset.md
+      - Specialized Datasets: dataset/specialized.md
+      - Dataset Utils: dataset/utils.md
+  - Core Modules:
+      - Geometry: geometry.md
+      - Projections: projections.md
+      - Losses: losses.md
+      - Logger: logger.md
+  - Networks:
+      - Base Networks: networks/base.md
+      - Backbones: networks/backbones.md
+      - Depth Decoding: networks/depth_decoding.md
+      - Odometry Decoding: networks/odometry_decoding.md
+      - End-to-End Models: networks/e2e_models.md
+      - 8-Point Algorithm: networks/8_point.md
+      - AFSfM Learner: networks/afsfm_learner.md
+      - DINOTracker: networks/dinotracker.md
+  - Utilities:
+      - Camera Utilities: utilities/camera.md
+      - Data Analysis: utilities/data_analysis.md
+      - Development Utils: utilities/dev_utils.md
+      - Engine Initializers: utilities/engine_initializers.md
+      - Formatting: utilities/formatting.md
+      - Linear Algebra: utilities/linearalgebra.md
+      - ML Utils: utilities/ml_utils.md
+      - Point Cloud: utilities/pointcloud.md
+      - Rotations: utilities/rotations.md
+      - System Operations: utilities/system_ops.md
+      - Tensor Utils: utilities/tensor_utils.md
+      - Visualization: utilities/visualization.md
+
+plugins:
+  - search
+  - mkdocstrings
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true

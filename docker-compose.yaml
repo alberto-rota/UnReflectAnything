@@ -1,0 +1,54 @@
+version: '3.9'
+
+services:
+  unreflectanything_env:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: unreflectanything_env
+    network_mode: host
+    #---------------------------------------------
+    # Comment this out if using a CPU-only runtime
+    runtime: nvidia
+    #---------------------------------------------
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - PYTHONPATH=/workspace
+      - DATASET_ROOTDIR=/DATA
+    volumes:
+    #---------------------------------------------
+    # Mount the root dataset directory to the container 
+    # /YOUR_DATASET_DIR:./DATA/YOUR_DATASET_DIR
+      - /datasets/SCARED/v1:/DATA/SCARED/v1
+    #---------------------------------------------
+      - .:/workspace
+      - /workspace/.venv
+      - ./results:/workspace/results
+      - ./wandb:/workspace/wandb
+
+    stdin_open: true 
+    tty: true
+    restart: "no"    
+    entrypoint: ["/bin/bash", "-c", "source /workspace/.venv/bin/activate && exec bash"]
+    #---------------------------------------------
+    # Comment this out if using a CPU-only runtime
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    #---------------------------------------------
+
+  docs:
+    build:
+      context: .
+      dockerfile: docs/Dockerfile.docs  
+    container_name: unreflectanything_docs
+    ports:
+      - "8998:8000"
+    volumes:
+      - ./:/docs
+    restart: unless-stopped
+    command: serve -a 0.0.0.0:8000
