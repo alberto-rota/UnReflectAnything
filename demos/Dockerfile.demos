@@ -2,11 +2,16 @@ FROM python:3.10.9-slim
 
 WORKDIR /usr/src/app
 
-# Install rerun-sdk
-RUN pip install --no-cache-dir rerun-sdk
+# Install dependencies
+RUN pip install --no-cache-dir rerun-sdk flask
 
-# Copy the entrypoint script
-COPY demos/entrypoint.sh /usr/src/app/entrypoint.sh
-RUN chmod +x /usr/src/app/entrypoint.sh
+# Copy the web server script
+COPY demos/web_server.py /usr/src/app/web_server.py
 
-ENTRYPOINT ["/usr/src/app/entrypoint.sh"]
+# Expose main web interface port
+EXPOSE 8080
+
+# Expose range for rerun web viewers
+EXPOSE 60001-60200
+
+CMD ["python", "web_server.py"]

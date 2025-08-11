@@ -9,7 +9,6 @@
 
 from argparse import Action
 import math
-from typing import Union, Any, Optional, Tuple
 import lovely_tensors as lt
 import matplotlib.pyplot as plt
 import numpy as np

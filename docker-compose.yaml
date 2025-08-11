@@ -59,10 +59,8 @@ services:
       dockerfile: demos/Dockerfile.demos  
     container_name: unreflectanything_demos
     ports:
-      - "8000"  # Let Docker assign random host port for WebSocket
-      - "8001"  # Let Docker assign random host port for Web viewer
+      - "${DEMOS_PORT:-58888}:8080"       # Web interface (high port)
+      - "60000-60200:60000-60200"         # Range for rerun viewers
     volumes:
       - ./demos:/demos:ro
     restart: no
-    environment:
-      - DEMO_FILE=${DEMO_FILE:-green}

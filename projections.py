@@ -80,7 +80,7 @@ class BackProject(nn.Module):
         Args:
             image: RGB image [B, 3, H, W] or feature map [B, E, Hf, Wf]
             depth: Depth map [B, 1, H, W] or [B, H, W]. If image is a feature map 
-                   and depth is at original resolution, it will be automatically downsampled.
+                and depth is at original resolution, it will be automatically downsampled.
             invK: Inverse camera intrinsics [B, 3, 3] (for original resolution)
             points_match: Specific pixel coordinates to project in either:
                 - [B, N, 2] format (same number of points per batch)
@@ -105,7 +105,7 @@ class BackProject(nn.Module):
         # Detect if input is RGB or feature map based on dimensions
         _, channels, img_h, img_w = image.shape
         is_feature_map = (img_h == self.feat_height and img_w == self.feat_width and 
-                         channels != 3) or (channels > 3)
+                        channels != 3) or (channels > 3)
         
         if is_feature_map:
             # Working with feature maps - use feature resolution pixel coordinates and scaled intrinsics
@@ -593,8 +593,8 @@ class Warp(nn.Module):
         Args:
             source_image (torch.Tensor): Source image [B, 3, H, W] or feature map [B, E, Hf, Wf]
             depth_map (torch.Tensor): Depth map [B, 1, H, W] or [B, 1, Hf, Wf]. If source_image is 
-                                     a feature map and depth_map is at original resolution, it will be 
-                                     automatically downsampled to match.
+                                    a feature map and depth_map is at original resolution, it will be 
+                                    automatically downsampled to match.
             camera_intrinsics (torch.Tensor): Camera intrinsics matrix [B, 3, 3] (for original resolution)
             camera_pose (torch.Tensor): Camera pose / transformation [B, 4, 4] or [B, 6] (Euler)
             return_mask (bool): Whether to return visibility mask
@@ -901,7 +901,7 @@ class DepthWarp(nn.Module):
         # Create dummy RGB data since BackProject requires it but Raycast doesn't use it
         # We'll use zeros as placeholder since we only care about the 3D point cloud
         dummy_rgb = torch.zeros(batch_size, 3, self.height, self.width, 
-                               device=device, dtype=source_depth.dtype)
+                            device=device, dtype=source_depth.dtype)
         
         # Back-project source depth to 3D point cloud in source camera coordinates
         # Since source pose is identity, these are also world coordinates
@@ -933,13 +933,19 @@ class DepthWarp(nn.Module):
         
         return result    
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Tuple, Dict, Optional, Union, Literal
+
+
 class HighLightRenderer(nn.Module):
     """
     Renders reflection artifacts on images based on light sources and surface geometry.
     Simulates specular reflections using the law of reflection and Phong lighting model.
     """
     
-    def __init__(self, height, width, patch_size=16):
+    def __init__(self, height: int, width: int, patch_size: int = 16):
         super().__init__()
         self.height = height
         self.width = width
@@ -948,65 +954,334 @@ class HighLightRenderer(nn.Module):
         self.feat_width = width // patch_size
         self.project = Project(height, width, patch_size)
         
+        # Precompute neighborhood offsets for normal estimation
+        self.register_buffer('_neighborhood_offsets', self._create_neighborhood_offsets())
+        
+    def _create_neighborhood_offsets(self, neighborhood_size: int = 3) -> torch.Tensor:
+        """Create neighborhood offsets for normal estimation."""
+        half_size = neighborhood_size // 2
+        offsets = torch.meshgrid(
+            torch.arange(-half_size, half_size + 1),
+            torch.arange(-half_size, half_size + 1),
+            indexing='ij'
+        )
+        # [2, neighborhood_size, neighborhood_size] -> [neighborhood_size^2, 2]
+        offsets = torch.stack(offsets, dim=0).reshape(2, -1).T
+        # Remove center point (0, 0)
+        center_idx = len(offsets) // 2
+        offsets = torch.cat([offsets[:center_idx], offsets[center_idx+1:]])
+        return offsets  # [N_neighbors, 2]
+    
+    import torch
+    import torch.nn.functional as F
+
     def estimate_surface_normals(self, cloud_xyz: torch.Tensor, neighborhood_size: int = 3) -> torch.Tensor:
         """
-        Estimate surface normals from 3D point cloud using local plane fitting.
-        
+        Estimate surface normals using robust PCA-based method with local neighborhoods.
+    
         Args:
             cloud_xyz: 3D points [B, 3, N]
-            neighborhood_size: Size of neighborhood for normal estimation
-            
+            neighborhood_size: Size of neighborhood for normal estimation (should be odd)
+        
         Returns:
             normals: Surface normals [B, 3, N]
         """
-        B, _, N = cloud_xyz.shape
+        B, _, N = cloud_xyz.shape  # [B, 3, N]
         device = cloud_xyz.device
-        
-        # For simplicity, we'll use a gradient-based approach
-        # In practice, you might want more sophisticated normal estimation
-        
-        # Reshape to spatial grid for gradient calculation
+    
+        # Determine spatial resolution
         is_feature_res = N == (self.feat_height * self.feat_width)
         if is_feature_res:
             h, w = self.feat_height, self.feat_width
         else:
             h, w = self.height, self.width
-            
-        # Reshape cloud to spatial format [B, 3, H, W]
-        cloud_spatial = cloud_xyz.view(B, 3, h, w)
         
-        # Calculate gradients
-        grad_x = torch.gradient(cloud_spatial, dim=3)[0]  # [B, 3, H, W]
-        grad_y = torch.gradient(cloud_spatial, dim=2)[0]  # [B, 3, H, W]
+        # Reshape to spatial format for neighborhood processing
+        cloud_spatial = cloud_xyz.view(B, 3, h, w)  # [B, 3, H, W]
+    
+        # Use conv2d with unfold for efficient neighborhood extraction
+        kernel_size = neighborhood_size
+        pad_size = kernel_size // 2
+    
+        # Pad for boundary handling
+        cloud_padded = F.pad(cloud_spatial, (pad_size, pad_size, pad_size, pad_size), mode='replicate')
+    
+        # Extract neighborhoods using unfold (more efficient than advanced indexing)
+        # unfold: [B, 3, H, W] -> [B, 3*k*k, H*W] where k=kernel_size
+        neighborhoods = F.unfold(
+            cloud_padded, 
+            kernel_size=kernel_size, 
+            stride=1
+        )  # [B, 3*k*k, H*W]
+    
+        # Reshape to separate spatial dimensions and neighborhood
+        neighborhoods = neighborhoods.view(B, 3, kernel_size*kernel_size, h*w)  # [B, 3, k*k, H*W]
+        neighborhoods = neighborhoods.permute(0, 3, 1, 2)  # [B, H*W, 3, k*k]
+    
+        # Center point is the middle of the neighborhood
+        center_idx = kernel_size*kernel_size // 2
+        center_points = neighborhoods[:, :, :, center_idx:center_idx+1]  # [B, H*W, 3, 1]
+    
+        # Compute relative positions
+        relative_pos = neighborhoods - center_points  # [B, H*W, 3, k*k]
+    
+        # Remove the center point from the neighborhood (it's all zeros anyway)
+        mask = torch.ones(kernel_size*kernel_size, dtype=torch.bool, device=device)
+        mask[center_idx] = False
+        relative_pos = relative_pos[:, :, :, mask]  # [B, H*W, 3, k*k-1]
+    
+        # Compute covariance matrices: [B, H*W, 3, 3]
+        cov_matrices = torch.matmul(relative_pos, relative_pos.transpose(-2, -1))
+        cov_matrices = cov_matrices / (relative_pos.shape[-1] - 1)
+    
+        # Add regularization for numerical stability
+        eps = 1e-6
+        eye = torch.eye(3, device=device, dtype=cov_matrices.dtype)
+        cov_matrices = cov_matrices + eps * eye.unsqueeze(0).unsqueeze(0)
+    
+        # Compute eigendecomposition - normal is eigenvector with smallest eigenvalue
+        try:
+            eigenvalues, eigenvectors = torch.linalg.eigh(cov_matrices)  # [B, H*W, 3], [B, H*W, 3, 3]
+            # Smallest eigenvalue corresponds to normal direction (index 0)
+            normals = eigenvectors[:, :, :, 0]  # [B, H*W, 3]
+        
+            # Check for degenerate cases (very small eigenvalues)
+            min_eigenvals = eigenvalues[:, :, 0]  # [B, H*W]
+            degenerate_mask = min_eigenvals < eps * 10
+        
+            if degenerate_mask.any():
+                # Fallback to gradient-based normals for degenerate cases
+                grad_normals = self._compute_gradient_normals(cloud_spatial)  # [B, 3, H*W]
+                grad_normals = grad_normals.permute(0, 2, 1)  # [B, H*W, 3]
+                normals = torch.where(degenerate_mask.unsqueeze(-1), grad_normals, normals)
+            
+        except Exception as e:
+            # Complete fallback to gradient-based method
+            print(f"Eigendecomposition failed: {e}. Using gradient-based normals.")
+            normals = self._compute_gradient_normals(cloud_spatial)  # [B, 3, H*W]
+            normals = normals.permute(0, 2, 1)  # [B, H*W, 3]
+    
+        # Ensure consistent orientation (point towards camera)
+        # Assume camera is at origin looking down -Z axis
+        camera_dir = torch.tensor([0., 0., -1.], device=device, dtype=normals.dtype)
+        dot_product = torch.sum(normals * camera_dir.view(1, 1, 3), dim=-1, keepdim=True)  # [B, H*W, 1]
+        normals = torch.where(dot_product < 0, -normals, normals)
+    
+        # Normalize
+        normals = F.normalize(normals, dim=-1, eps=1e-8)  # [B, H*W, 3]
+    
+        # Reshape back to point cloud format
+        normals = normals.permute(0, 2, 1)  # [B, 3, H*W] -> [B, 3, N]
+    
+        return normals
+
+    def _compute_gradient_normals(self, cloud_spatial: torch.Tensor) -> torch.Tensor:
+        """
+        Fallback method: compute normals using spatial gradients.
+    
+        Args:
+            cloud_spatial: Points in spatial format [B, 3, H, W]
+        
+        Returns:
+            normals: Normal vectors [B, 3, H*W]
+        """
+        B, _, H, W = cloud_spatial.shape
+    
+        # Compute gradients using Sobel filters
+        sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], 
+                              dtype=cloud_spatial.dtype, device=cloud_spatial.device).view(1, 1, 3, 3)
+        sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], 
+                              dtype=cloud_spatial.dtype, device=cloud_spatial.device).view(1, 1, 3, 3)
+    
+        # Apply to each coordinate
+        grad_x = F.conv2d(cloud_spatial.view(B*3, 1, H, W), sobel_x, padding=1).view(B, 3, H, W)
+        grad_y = F.conv2d(cloud_spatial.view(B*3, 1, H, W), sobel_y, padding=1).view(B, 3, H, W)
+    
+        # Cross product to get normals
+        normals = torch.cross(grad_x.view(B, 3, -1), grad_y.view(B, 3, -1), dim=1)  # [B, 3, H*W]
+    
+        # Normalize
+        normals = F.normalize(normals, dim=1, eps=1e-8)
+    
+        return normals
+    
+    def _gradient_based_normals(self, cloud_spatial: torch.Tensor) -> torch.Tensor:
+        """Fallback gradient-based normal estimation."""
+        # Calculate gradients using Sobel filters for better stability
+        sobel_x = torch.tensor([[[[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]]], 
+                              device=cloud_spatial.device, dtype=cloud_spatial.dtype) / 8.0
+        sobel_y = torch.tensor([[[[-1, -2, -1], [0, 0, 0], [1, 2, 1]]]], 
+                              device=cloud_spatial.device, dtype=cloud_spatial.dtype) / 8.0
+        
+        B, _, H, W = cloud_spatial.shape
+        grad_x = torch.zeros_like(cloud_spatial)  # [B, 3, H, W]
+        grad_y = torch.zeros_like(cloud_spatial)  # [B, 3, H, W]
+        
+        # Apply Sobel filters to each coordinate
+        for i in range(3):
+            grad_x[:, i:i+1] = F.conv2d(cloud_spatial[:, i:i+1], sobel_x, padding=1)
+            grad_y[:, i:i+1] = F.conv2d(cloud_spatial[:, i:i+1], sobel_y, padding=1)
         
         # Cross product to get normals
         normals = torch.cross(grad_x, grad_y, dim=1)  # [B, 3, H, W]
         
         # Normalize
-        norm_magnitude = torch.norm(normals, dim=1, keepdim=True) + 1e-8
-        normals = normals / norm_magnitude
+        normals = F.normalize(normals, dim=1, eps=1e-8)
         
-        # Ensure normals point towards camera (negative z in camera coordinates)
-        normals = torch.where(normals[:, 2:3, :, :] > 0, -normals, normals)
-        
-        # Flatten back to point cloud format
-        normals = normals.view(B, 3, -1)  # [B, 3, N]
-        
-        return normals
+        return normals.view(B, 3, -1)  # [B, 3, H*W]
     
-    def calculate_reflection_intensity(self, cloud_xyz: torch.Tensor, normals: torch.Tensor, camera_pos: torch.Tensor, light_pos: torch.Tensor, 
-                                     light_intensity: float, light_color: torch.Tensor, surface_roughness: float = 0.1,
-                                     light_attenuation: tuple = (1.0, 0.1, 0.01)) -> torch.Tensor:
+    def _sample_planar_light(self, 
+                                light_pose: torch.Tensor,     # [B, 4, 4]
+                                light_width: float, 
+                                light_height: float, 
+                                num_samples: int,
+                                projected_image: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, int]:
         """
-        Calculate reflection intensity using Phong reflection model.
+        Sample points on a rectangular planar light with optional image projection.
+        
+        Args:
+            light_pose: Light pose matrix [B, 4, 4] (world to light transform)
+            light_width: Width of light plane (in light's local X direction)
+            light_height: Height of light plane (in light's local Y direction)
+            num_samples: Number of sample points (will be made square: sqrt(num_samples)^2)
+            projected_image: Optional RGB image to project [B, 3, H_img, W_img]
+            
+        Returns:
+            sample_points: World coordinates of sample points [B, 3, num_samples_actual]
+            sample_colors: Color at each sample point [B, 3, num_samples_actual]
+            num_samples_actual: Actual number of samples used
+        """
+        B = light_pose.shape[0]
+        device = light_pose.device
+        dtype = light_pose.dtype
+        
+        # Make num_samples a perfect square for uniform grid
+        samples_per_side = int(torch.sqrt(torch.tensor(num_samples, dtype=torch.float32)).item())
+        actual_num_samples = samples_per_side ** 2
+        
+        # Create uniform grid in light's local coordinate system
+        # Light plane spans [-width/2, width/2] x [-height/2, height/2] x [0]
+        u = torch.linspace(-light_width/2, light_width/2, samples_per_side, device=device, dtype=dtype)
+        v = torch.linspace(-light_height/2, light_height/2, samples_per_side, device=device, dtype=dtype)
+        
+        # Create grid: [samples_per_side, samples_per_side]
+        uu, vv = torch.meshgrid(u, v, indexing='ij')
+        
+        # Flatten to get sample points in light's local coordinates
+        local_x = uu.flatten()  # [actual_num_samples]
+        local_y = vv.flatten()  # [actual_num_samples]
+        local_z = torch.zeros_like(local_x)  # Light plane at z=0 in local coords
+        
+        # Homogeneous coordinates in light space: [4, actual_num_samples]
+        local_points = torch.stack([local_x, local_y, local_z, torch.ones_like(local_x)], dim=0)
+        
+        # Transform to world coordinates
+        # light_pose is world-to-light, so we need light-to-world (inverse)
+        light_to_world = torch.linalg.inv(light_pose)  # [B, 4, 4]
+        
+        # Broadcast and transform: [B, 4, 4] @ [4, actual_num_samples] -> [B, 4, actual_num_samples]
+        world_points = torch.matmul(light_to_world, local_points.unsqueeze(0).expand(B, -1, -1))
+        
+        # Get colors for each sample point
+        if projected_image is not None:
+            # Sample image colors based on local coordinates
+            sample_colors = self._sample_projected_image(
+                local_x, local_y, light_width, light_height, projected_image
+            )  # [B, 3, actual_num_samples]
+        else:
+            # Default to white light
+            sample_colors = torch.ones(B, 3, actual_num_samples, device=device, dtype=dtype)
+        
+        # Return 3D coordinates: [B, 3, actual_num_samples], colors: [B, 3, actual_num_samples]
+        return world_points[:, :3, :], sample_colors, actual_num_samples
+    
+    def _sample_projected_image(self, 
+                               local_x: torch.Tensor,      # [num_samples]
+                               local_y: torch.Tensor,      # [num_samples]
+                               light_width: float,
+                               light_height: float, 
+                               projected_image: torch.Tensor) -> torch.Tensor:  # [B, 3, H, W]
+        """
+        Sample colors from projected image based on local light coordinates.
+        
+        Args:
+            local_x, local_y: Local coordinates on light plane [num_samples]
+            light_width, light_height: Physical dimensions of light plane
+            projected_image: Image to project [B, 3, H_img, W_img]
+            
+        Returns:
+            sampled_colors: Colors at sample points [B, 3, num_samples]
+        """
+        B, _, H_img, W_img = projected_image.shape
+        num_samples = local_x.shape[0]
+        device = projected_image.device
+        
+        # Convert local coordinates to UV coordinates [0, 1]
+        # local_x spans [-light_width/2, light_width/2] -> map to [0, 1]
+        # local_y spans [-light_height/2, light_height/2] -> map to [0, 1]
+        u = (local_x + light_width/2) / light_width    # [num_samples]
+        v = (local_y + light_height/2) / light_height  # [num_samples]
+        
+        # Clamp to valid range [0, 1]
+        u = torch.clamp(u, 0.0, 1.0)
+        v = torch.clamp(v, 0.0, 1.0)
+        
+        # Convert UV to image pixel coordinates
+        # Note: We flip V coordinate because image (0,0) is top-left but light plane (0,0) is center
+        u_img = u * (W_img - 1)  # [num_samples]
+        v_img = (1.0 - v) * (H_img - 1)  # [num_samples] - flip V axis
+        
+        # Create grid for F.grid_sample (expects [-1, 1] range)
+        grid_x = 2.0 * u - 1.0  # Convert [0, 1] -> [-1, 1]
+        grid_y = 2.0 * v - 1.0  # Convert [0, 1] -> [-1, 1]
+        
+        # Create sampling grid: [B, 1, num_samples, 2]
+        grid = torch.stack([grid_x, grid_y], dim=-1)  # [num_samples, 2]
+        grid = grid.unsqueeze(0).unsqueeze(0).expand(B, 1, -1, -1)  # [B, 1, num_samples, 2]
+        
+        # Sample from image using bilinear interpolation
+        # F.grid_sample expects [B, C, H, W] and [B, H_out, W_out, 2]
+        sampled = F.grid_sample(
+            projected_image,  # [B, 3, H_img, W_img]
+            grid,            # [B, 1, num_samples, 2]
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=True
+        )  # [B, 3, 1, num_samples]
+        
+        # Reshape to [B, 3, num_samples]
+        sampled_colors = sampled.squeeze(2)  # [B, 3, num_samples]
+        
+        return sampled_colors
+    
+    def calculate_reflection_intensity(self, 
+                                     cloud_xyz: torch.Tensor,  # [B, 3, N]
+                                     normals: torch.Tensor,    # [B, 3, N]
+                                     camera_pos: torch.Tensor, # [B, 3, 1]
+                                     light_pos: Optional[torch.Tensor] = None,  # [B, 3, 1] for point light
+                                     light_pose: Optional[torch.Tensor] = None, # [B, 4, 4] for planar light
+                                     light_width: Optional[float] = None,       # planar light width
+                                     light_height: Optional[float] = None,      # planar light height
+                                     light_samples: int = 16,                   # samples for planar light
+                                     light_intensity: float = 1.0, 
+                                     light_color: torch.Tensor = None, # [B, 3, 1] or [B, 3, N]
+                                     surface_roughness: float = 0.1,
+                                     light_attenuation: Tuple[float, float, float] = (1.0, 0.1, 0.01)) -> torch.Tensor:
+        """
+        Calculate reflection intensity using optimized Phong reflection model.
+        Supports both point lights and planar (area) lights.
         
         Args:
             cloud_xyz: 3D surface points [B, 3, N]
             normals: Surface normals [B, 3, N]
             camera_pos: Camera position [B, 3, 1] 
-            light_pos: Light position [B, 3, 1]
+            light_pos: Point light position [B, 3, 1] (for point light)
+            light_pose: Planar light pose [B, 4, 4] (for planar light)
+            light_width: Width of planar light (required for planar light)
+            light_height: Height of planar light (required for planar light)
+            light_samples: Number of samples for planar light integration
             light_intensity: Light intensity scalar
-            light_color: Light color [3] or [B, 3, 1]
+            light_color: Light color [B, 3, 1] or [B, 3, N]
             surface_roughness: Surface roughness parameter (0=mirror, 1=rough)
             light_attenuation: (constant, linear, quadratic) attenuation
             
@@ -1016,136 +1291,402 @@ class HighLightRenderer(nn.Module):
         B, _, N = cloud_xyz.shape
         device = cloud_xyz.device
         
-        # Ensure light_color has correct shape
-        if len(light_color.shape) == 1:
-            light_color = light_color.view(1, 3, 1).expand(B, -1, N)
-        elif light_color.shape == (B, 3, 1):
-            light_color = light_color.expand(-1, -1, N)
+        # Determine light type and validate inputs
+        is_point_light = light_pos is not None
+        is_planar_light = light_pose is not None and light_width is not None and light_height is not None
+        
+        if not (is_point_light ^ is_planar_light):  # XOR - exactly one should be true
+            raise ValueError("Specify exactly one light type: either light_pos for point light, or (light_pose, light_width, light_height) for planar light")
+        
+        # Ensure light_color broadcasting
+        if light_color is not None and light_color.shape[-1] == 1:
+            light_color = light_color.expand(-1, -1, N)  # [B, 3, N]
+        elif light_color is None:
+            light_color = torch.ones(B, 3, N, device=device, dtype=cloud_xyz.dtype)
+        
+        if is_point_light:
+            # Point light calculation (original logic)
+            light_positions = light_pos  # [B, 3, 1]
             
-        # Calculate light direction (from surface to light)
-        light_dir = light_pos - cloud_xyz  # [B, 3, N]
-        light_distance = torch.norm(light_dir, dim=1, keepdim=True) + 1e-8
-        light_dir = light_dir / light_distance
-        
-        # Calculate view direction (from surface to camera)
-        view_dir = camera_pos - cloud_xyz  # [B, 3, N]
-        view_dir = view_dir / (torch.norm(view_dir, dim=1, keepdim=True) + 1e-8)
-        
-        # Calculate reflection direction: R = 2(N·L)N - L
-        dot_nl = torch.sum(normals * light_dir, dim=1, keepdim=True)  # [B, 1, N]
-        reflection_dir = 2 * dot_nl * normals - light_dir  # [B, 3, N]
-        reflection_dir = reflection_dir / (torch.norm(reflection_dir, dim=1, keepdim=True) + 1e-8)
-        
-        # Calculate specular component (how well reflection aligns with view)
-        dot_rv = torch.sum(reflection_dir * view_dir, dim=1, keepdim=True)  # [B, 1, N]
-        dot_rv = torch.clamp(dot_rv, 0.0, 1.0)
-        
-        # Phong specular term with roughness
-        shininess = max(1.0, 128.0 * (1.0 - surface_roughness))
-        specular = torch.pow(dot_rv, shininess)
-        
-        # Light attenuation based on distance
-        const_att, linear_att, quad_att = light_attenuation
-        attenuation = 1.0 / (const_att + linear_att * light_distance + quad_att * light_distance**2)
-        
-        # Ensure surfaces facing away from light don't reflect
-        facing_light = torch.clamp(dot_nl, 0.0, 1.0)
-        
-        # Final reflection intensity
-        reflection_intensity = (light_intensity * attenuation * facing_light * 
-                              specular * light_color)  # [B, 3, N]
+            # Vectorized direction calculations
+            light_dir = light_positions - cloud_xyz  # [B, 3, N]
+            light_distance = torch.norm(light_dir, dim=1, keepdim=True)  # [B, 1, N]
+            light_dir = F.normalize(light_dir, dim=1, eps=1e-8)  # [B, 3, N]
+            
+            # Calculate reflections
+            reflection_intensity = self._calculate_phong_reflection(
+                cloud_xyz, normals, camera_pos, light_dir, light_distance,
+                light_intensity, light_color, surface_roughness, light_attenuation
+            )
+            
+        else:
+            # Planar light calculation
+            # Sample points on the planar light with image projection
+            light_sample_points, light_sample_colors, actual_samples = self._sample_planar_light(
+                light_pose, light_width, light_height, light_samples, 
+                projected_image=getattr(self, '_current_projected_image', None)
+            )  # [B, 3, actual_samples], [B, 3, actual_samples], int
+            
+            # Initialize accumulated reflection
+            total_reflection = torch.zeros(B, 3, N, device=device, dtype=cloud_xyz.dtype)
+            
+            # Calculate reflection from each light sample
+            for i in range(actual_samples):
+                sample_pos = light_sample_points[:, :, i:i+1]  # [B, 3, 1]
+                sample_color = light_sample_colors[:, :, i:i+1]  # [B, 3, 1]
+                
+                # Broadcast sample color to all surface points
+                sample_color_full = sample_color.expand(-1, -1, N)  # [B, 3, N]
+                
+                # Direction from surface to this light sample
+                light_dir = sample_pos - cloud_xyz  # [B, 3, N]
+                light_distance = torch.norm(light_dir, dim=1, keepdim=True)  # [B, 1, N]
+                light_dir = F.normalize(light_dir, dim=1, eps=1e-8)  # [B, 3, N]
+                
+                # Calculate reflection from this sample with its specific color
+                sample_reflection = self._calculate_phong_reflection(
+                    cloud_xyz, normals, camera_pos, light_dir, light_distance,
+                    light_intensity, sample_color_full, surface_roughness, light_attenuation
+                )  # [B, 3, N]
+                
+                total_reflection += sample_reflection
+            
+            # Average over all samples (Monte Carlo integration)
+            reflection_intensity = total_reflection / actual_samples
+            
+            # Scale by light area (larger lights emit more total energy)
+            light_area = light_width * light_height
+            reflection_intensity *= light_area
         
         return reflection_intensity
     
-    def forward(self, cloud: torch.Tensor, rgb_vec: torch.Tensor, camera_K: torch.Tensor, camera_T: torch.Tensor, light_position: torch.Tensor, 
-                light_intensity: float = 1.0, light_color: torch.Tensor = None, surface_roughness: float = 0.1,
-                light_attenuation: tuple = (1.0, 0.1, 0.01), reflection_strength: float = 0.5) -> dict:
+    def _calculate_phong_reflection(self,
+                                  cloud_xyz: torch.Tensor,      # [B, 3, N]
+                                  normals: torch.Tensor,        # [B, 3, N]
+                                  camera_pos: torch.Tensor,     # [B, 3, 1]
+                                  light_dir: torch.Tensor,      # [B, 3, N]
+                                  light_distance: torch.Tensor, # [B, 1, N]
+                                  light_intensity: float,
+                                  light_color: torch.Tensor,    # [B, 3, N]
+                                  surface_roughness: float,
+                                  light_attenuation: Tuple[float, float, float]) -> torch.Tensor:
         """
-        Render image with reflection artifacts.
+        Core Phong reflection calculation for a single light direction.
+        
+        Returns:
+            reflection_intensity: [B, 3, N]
+        """
+        # View direction
+        view_dir = camera_pos - cloud_xyz  # [B, 3, N]
+        view_dir = F.normalize(view_dir, dim=1, eps=1e-8)  # [B, 3, N]
+        
+        # Optimized reflection calculation: R = 2(N·L)N - L
+        dot_nl = torch.sum(normals * light_dir, dim=1, keepdim=True).clamp(0.0, 1.0)  # [B, 1, N]
+        reflection_dir = 2.0 * dot_nl * normals - light_dir  # [B, 3, N]
+        reflection_dir = F.normalize(reflection_dir, dim=1, eps=1e-8)  # [B, 3, N]
+        
+        # Specular calculation
+        dot_rv = torch.sum(reflection_dir * view_dir, dim=1, keepdim=True).clamp(0.0, 1.0)  # [B, 1, N]
+        
+        # Optimized shininess calculation
+        shininess = torch.clamp(torch.tensor(128.0 * (1.0 - surface_roughness)), min=1.0)
+        specular = torch.pow(dot_rv, shininess)  # [B, 1, N]
+        
+        # Vectorized attenuation
+        const_att, linear_att, quad_att = light_attenuation
+        attenuation = 1.0 / (const_att + linear_att * light_distance + quad_att * light_distance.square())  # [B, 1, N]
+        
+        # Final intensity calculation - fully vectorized
+        reflection_intensity = (light_intensity * attenuation * dot_nl * specular * light_color)  # [B, 3, N]
+        
+        return reflection_intensity
+    
+    def _prepare_common_inputs(self, 
+                              cloud: torch.Tensor,      # [B, 4, N]
+                              rgb_vec: torch.Tensor,    # [B, 3, N] or [B, E, N]
+                              camera_T: torch.Tensor,   # [B, 4, 4] or [B, 6]
+                              light_color: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Prepare common inputs for both light types.
+        
+        Returns:
+            cloud_xyz: [B, 3, N]
+            camera_pos: [B, 3, 1] 
+            light_color_processed: [B, 3, 1]
+            normals: [B, 3, N]
+        """
+        B, _, N = cloud.shape
+        device = cloud.device
+        
+        # Input validation
+        assert cloud.shape[1] == 4, f"Expected cloud shape [B, 4, N], got {cloud.shape}"
+        assert rgb_vec.shape[0] == B and rgb_vec.shape[2] == N, f"RGB shape mismatch: {rgb_vec.shape}"
+        
+        # Default light color setup
+        if light_color is None:
+            light_color = torch.ones(3, device=device, dtype=cloud.dtype)
+        
+        # Ensure correct shapes for light_color
+        if light_color.dim() == 1:
+            light_color = light_color.unsqueeze(0).expand(B, -1)  # [B, 3]
+        light_color_processed = light_color.unsqueeze(-1)  # [B, 3, 1]
+        
+        # Extract camera position
+        camera_T_processed = camera_T
+        if camera_T.shape[1] == 6:
+            camera_T_processed = geometry.euler2mat(camera_T)  # [B, 4, 4]
+        camera_pos = camera_T_processed[:, :3, 3:4]  # [B, 3, 1]
+        
+        # Extract 3D coordinates
+        cloud_xyz = cloud[:, :3, :]  # [B, 3, N]
+        
+        # Estimate surface normals
+        normals = self.estimate_surface_normals(cloud_xyz)  # [B, 3, N]
+        
+        return cloud_xyz, camera_pos, light_color_processed, normals
+    
+    def _apply_reflections_and_project(self,
+                                     cloud: torch.Tensor,           # [B, 4, N]
+                                     rgb_vec: torch.Tensor,         # [B, 3, N] or [B, E, N]
+                                     camera_K: torch.Tensor,        # [B, 3, 3]
+                                     camera_T: torch.Tensor,        # [B, 4, 4] or [B, 6]
+                                     reflection_intensity: torch.Tensor,  # [B, 3, N]
+                                     normals: torch.Tensor,         # [B, 3, N]
+                                     camera_pos: torch.Tensor,      # [B, 3, 1]
+                                     light_info: Dict,              # Light-specific info
+                                     reflection_strength: float) -> Dict[str, torch.Tensor]:
+        """
+        Apply reflections to RGB/features and project to image.
+        
+        Returns:
+            Complete result dictionary
+        """
+        B, _, N = cloud.shape
+        device = cloud.device
+        
+        # Apply reflection strength
+        reflection_intensity = reflection_intensity * reflection_strength
+        
+        # Enhance RGB/features with reflections
+        if rgb_vec.shape[1] == 3:
+            # RGB case - add reflections directly
+            enhanced_rgb = torch.clamp(rgb_vec + reflection_intensity, 0.0, 1.0)  # [B, 3, N]
+        else:
+            # Feature case - add reflections to first 3 channels if available
+            enhanced_rgb = rgb_vec.clone()
+            if rgb_vec.shape[1] >= 3:
+                enhanced_rgb[:, :3, :] = torch.clamp(
+                    enhanced_rgb[:, :3, :] + reflection_intensity, 0.0, 1.0
+                )
+        
+        # Project to image
+        projection_result = self.project(
+            cloud, enhanced_rgb, camera_K, camera_T,
+            return_artifacts=True, return_mask=True
+        )
+        
+        # Create reflection-only visualization
+        if rgb_vec.shape[1] > 3:
+            reflection_features = torch.cat([
+                reflection_intensity, 
+                torch.zeros(B, rgb_vec.shape[1] - 3, N, device=device, dtype=reflection_intensity.dtype)
+            ], dim=1)
+        else:
+            reflection_features = reflection_intensity
+            
+        reflection_only = self.project(
+            cloud, reflection_features, camera_K, camera_T,
+            return_artifacts=True, return_mask=True
+        )
+        
+        # Build result dictionary
+        result = {
+            'reflection_intensity': reflection_intensity,      # [B, 3, N]
+            'surface_normals': normals,                       # [B, 3, N]
+            'reflection_only': reflection_only['warped'],     # [B, 3, H, W] or [B, E, H, W]
+            'camera_position': camera_pos,                    # [B, 3, 1]
+            'enhanced_features': enhanced_rgb,                # [B, 3, N] or [B, E, N]
+        }
+        
+        # Add light-specific information
+        result.update(light_info)
+        
+        # Add projection results
+        result.update(projection_result)
+        
+        return result
+    
+    def forward_point_light(self,
+                           cloud: torch.Tensor,                    # [B, 4, N]
+                           rgb_vec: torch.Tensor,                  # [B, 3, N] or [B, E, N]
+                           camera_K: torch.Tensor,                 # [B, 3, 3]
+                           camera_T: torch.Tensor,                 # [B, 4, 4] or [B, 6]
+                           light_position: torch.Tensor,           # [B, 3] or [3]
+                           light_intensity: float = 1.0,
+                           light_color: Optional[torch.Tensor] = None,     # [3] or [B, 3]
+                           surface_roughness: float = 0.1,
+                           light_attenuation: Tuple[float, float, float] = (1.0, 0.1, 0.01),
+                           reflection_strength: float = 0.5) -> Dict[str, torch.Tensor]:
+        """
+        Render image with reflections from a point light source.
         
         Args:
             cloud: 3D point cloud [B, 4, N] (homogeneous coordinates)
             rgb_vec: RGB values [B, 3, N] or features [B, E, N]
             camera_K: Camera intrinsics [B, 3, 3]
             camera_T: Camera pose [B, 4, 4] or [B, 6]
-            light_position: Light position [B, 3] or [3] (world coordinates)
-            light_intensity: Light intensity scalar (default: 1.0)
-            light_color: Light color [3] or [B, 3] (default: white light)
+            light_position: Point light position [B, 3] or [3] (world coordinates)
+            light_intensity: Light intensity scalar
+            light_color: Light color [3] or [B, 3] (default: white)
             surface_roughness: Surface roughness 0-1 (0=mirror, 1=diffuse)
             light_attenuation: (constant, linear, quadratic) attenuation coefficients
             reflection_strength: Overall reflection strength multiplier (0-1)
             
         Returns:
-            dict: Dictionary containing image with reflections and intermediate results
+            Dict containing image with reflections and intermediate results
         """
-        B, _, N = cloud.shape
-        device = cloud.device
+        B = cloud.shape[0]
         
-        # Default light color to white
-        if light_color is None:
-            light_color = torch.tensor([1.0, 1.0, 1.0], device=device)
-        if len(light_color.shape) == 1:
-            light_color = light_color.unsqueeze(0).expand(B, -1)
+        # Prepare common inputs
+        cloud_xyz, camera_pos, light_color_processed, normals = self._prepare_common_inputs(
+            cloud, rgb_vec, camera_T, light_color
+        )
         
-        # Ensure light_position has correct shape [B, 3, 1]
-        if len(light_position.shape) == 1:
-            light_position = light_position.unsqueeze(0).expand(B, -1)
-        light_position = light_position.unsqueeze(-1)  # [B, 3, 1]
+        # Process point light position
+        if light_position.dim() == 1:
+            light_position = light_position.unsqueeze(0).expand(B, -1)  # [B, 3]
+        light_pos_processed = light_position.unsqueeze(-1)  # [B, 3, 1]
         
-        # Extract camera position from transform matrix
-        if camera_T.shape[1] == 6:
-            camera_T = geometry.euler2mat(camera_T)
-        camera_pos = camera_T[:, :3, 3:4]  # [B, 3, 1]
-        
-        # Extract 3D coordinates without homogeneous coordinate
-        cloud_xyz = cloud[:, :3, :]  # [B, 3, N]
-        
-        # Estimate surface normals
-        normals = self.estimate_surface_normals(cloud_xyz)
-        
-        # Calculate reflection intensities
+        # Calculate reflection intensities for point light
         reflection_intensity = self.calculate_reflection_intensity(
-            cloud_xyz, normals, camera_pos, light_position,
-            light_intensity, light_color.unsqueeze(-1), surface_roughness, light_attenuation
+            cloud_xyz=cloud_xyz,
+            normals=normals,
+            camera_pos=camera_pos,
+            light_pos=light_pos_processed,
+            light_pose=None,
+            light_width=None,
+            light_height=None,
+            light_samples=1,  # Not used for point light
+            light_intensity=light_intensity,
+            light_color=light_color_processed,
+            surface_roughness=surface_roughness,
+            light_attenuation=light_attenuation
+        )  # [B, 3, N]
+        
+        # Light-specific info
+        light_info = {
+            'light_type': 'point',
+            'light_position': light_pos_processed,  # [B, 3, 1]
+        }
+        
+        # Apply reflections and project
+        return self._apply_reflections_and_project(
+            cloud, rgb_vec, camera_K, camera_T, reflection_intensity,
+            normals, camera_pos, light_info, reflection_strength
         )
+    
+    def forward_planar_light(self,
+                            cloud: torch.Tensor,                    # [B, 4, N]
+                            rgb_vec: torch.Tensor,                  # [B, 3, N] or [B, E, N]
+                            camera_K: torch.Tensor,                 # [B, 3, 3]
+                            camera_T: torch.Tensor,                 # [B, 4, 4] or [B, 6]
+                            light_pose: torch.Tensor,               # [B, 4, 4]
+                            light_width: float,                     # Width of light plane
+                            light_height: float,                    # Height of light plane
+                            light_samples: int = 16,                # Number of sample points
+                            light_intensity: float = 1.0,
+                            light_color: Optional[torch.Tensor] = None,     # [3] or [B, 3] (used if no projected_image)
+                            projected_image: Optional[torch.Tensor] = None, # [B, 3, H, W] - NEW: RGB image to project
+                            surface_roughness: float = 0.1,
+                            light_attenuation: Tuple[float, float, float] = (1.0, 0.1, 0.01),
+                            reflection_strength: float = 0.5) -> Dict[str, torch.Tensor]:
+        """
+        Render image with reflections from a planar (area) light source with optional image projection.
         
-        # Apply reflection strength
-        reflection_intensity *= reflection_strength
-        
-        # For RGB, add reflections directly
-        # For features, we'll add reflections as a white light effect on first 3 channels
-        if rgb_vec.shape[1] == 3:
-            # RGB case - add reflections
-            enhanced_rgb = rgb_vec + reflection_intensity
-            enhanced_rgb = torch.clamp(enhanced_rgb, 0.0, 1.0)
+        Args:
+            cloud: 3D point cloud [B, 4, N] (homogeneous coordinates)
+            rgb_vec: RGB values [B, 3, N] or features [B, E, N]
+            camera_K: Camera intrinsics [B, 3, 3]
+            camera_T: Camera pose [B, 4, 4] or [B, 6]
+            light_pose: Light pose matrix [B, 4, 4] (world-to-light transform)
+            light_width: Width of rectangular light plane
+            light_height: Height of rectangular light plane
+            light_samples: Number of sample points for integration
+            light_intensity: Light intensity scalar
+            light_color: Light color [3] or [B, 3] (used if no projected_image provided)
+            projected_image: RGB image to project [B, 3, H, W] - creates projector effect
+            surface_roughness: Surface roughness 0-1 (0=mirror, 1=diffuse)
+            light_attenuation: (constant, linear, quadratic) attenuation coefficients
+            reflection_strength: Overall reflection strength multiplier (0-1)
+            
+        Returns:
+            Dict containing image with reflections and intermediate results
+        """
+        # Store projected image for use in reflection calculation
+        if projected_image is not None:
+            self._current_projected_image = projected_image
         else:
-            # Feature case - add white light reflection to first 3 channels if available
-            enhanced_rgb = rgb_vec.clone()
-            if rgb_vec.shape[1] >= 3:
-                enhanced_rgb[:, :3, :] += reflection_intensity
-                enhanced_rgb[:, :3, :] = torch.clamp(enhanced_rgb[:, :3, :], 0.0, 1.0)
+            self._current_projected_image = None
         
-        # Project to image using the existing Project class
-        projection_result = self.project(
-            cloud, enhanced_rgb, camera_K, camera_T,
-            return_artifacts=True, return_mask=True
+        # Prepare common inputs
+        cloud_xyz, camera_pos, light_color_processed, normals = self._prepare_common_inputs(
+            cloud, rgb_vec, camera_T, light_color
         )
         
-        # Also create a reflection-only visualization
-        reflection_only = self.project(
-            cloud, 
-            torch.cat([reflection_intensity, torch.zeros_like(rgb_vec[:, 3:, :])], dim=1) if rgb_vec.shape[1] > 3 else reflection_intensity,
-            camera_K, camera_T,
-            return_artifacts=True, return_mask=True
+        # Calculate reflection intensities for planar light
+        reflection_intensity = self.calculate_reflection_intensity(
+            cloud_xyz=cloud_xyz,
+            normals=normals,
+            camera_pos=camera_pos,
+            light_pos=None,
+            light_pose=light_pose,
+            light_width=light_width,
+            light_height=light_height,
+            light_samples=light_samples,
+            light_intensity=light_intensity,
+            light_color=light_color_processed,
+            surface_roughness=surface_roughness,
+            light_attenuation=light_attenuation
+        )  # [B, 3, N]
+        
+        # Clean up temporary attribute
+        if hasattr(self, '_current_projected_image'):
+            delattr(self, '_current_projected_image')
+        
+        # Light-specific info
+        light_info = {
+            'light_type': 'planar',
+            'light_pose': light_pose,           # [B, 4, 4]
+            'light_width': light_width,         # float
+            'light_height': light_height,       # float
+            'light_samples': light_samples,     # int
+        }
+        
+        # Add projected image info if provided
+        if projected_image is not None:
+            light_info.update({
+                'projected_image': projected_image,  # [B, 3, H, W]
+                'projection_mode': True,
+            })
+        else:
+            light_info.update({
+                'projection_mode': False,
+            })
+        
+        # Apply reflections and project
+        return self._apply_reflections_and_project(
+            cloud, rgb_vec, camera_K, camera_T, reflection_intensity,
+            normals, camera_pos, light_info, reflection_strength
         )
+    
+    def forward(self, *args, **kwargs):
+        """
+        Deprecated: Use forward_point_light() or forward_planar_light() instead.
         
-        # Add reflection-specific outputs
-        projection_result.update({
-            'reflection_intensity': reflection_intensity,
-            'surface_normals': normals,
-            'reflection_only': reflection_only['warped'],
-            'light_position': light_position,
-            'camera_position': camera_pos
-        })
-        
-        return projection_result
+        This method is kept for backward compatibility but will raise an error
+        to encourage using the specific light type methods.
+        """
+        raise NotImplementedError(
+            "The generic forward() method has been deprecated. "
+            "Use forward_point_light() for point lights or forward_planar_light() for planar lights instead."
+        )
