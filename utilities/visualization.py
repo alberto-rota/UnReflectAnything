@@ -1632,7 +1632,7 @@ def visualize_patch_matches_pil(
 ) -> Image.Image:
     """
     Visualizes matched pixels in source and target patches and returns a PIL image.
-
+S
     Args:
         spatches (torch.Tensor): Source patches of shape (N, 3, H, W).
         tpatches (torch.Tensor): Target patches of shape (N, 3, H, W).

@@ -1,0 +1,12 @@
+FROM python:3.10.9-slim
+
+WORKDIR /usr/src/app
+
+# Install rerun-sdk
+RUN pip install --no-cache-dir rerun-sdk
+
+# Copy the entrypoint script
+COPY demos/entrypoint.sh /usr/src/app/entrypoint.sh
+RUN chmod +x /usr/src/app/entrypoint.sh
+
+ENTRYPOINT ["/usr/src/app/entrypoint.sh"]

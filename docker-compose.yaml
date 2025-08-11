@@ -52,3 +52,17 @@ services:
       - ./:/docs
     restart: no
     command: serve -a 0.0.0.0:8000
+
+  demos:
+    build:
+      context: .
+      dockerfile: demos/Dockerfile.demos  
+    container_name: unreflectanything_demos
+    ports:
+      - "8000"  # Let Docker assign random host port for WebSocket
+      - "8001"  # Let Docker assign random host port for Web viewer
+    volumes:
+      - ./demos:/demos:ro
+    restart: no
+    environment:
+      - DEMO_FILE=${DEMO_FILE:-green}
