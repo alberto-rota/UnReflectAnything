@@ -414,8 +414,8 @@ import geometry
 
 
 def compute_global_pose(
-    prev_pose, current_transformation, is_keyframe, last_keyframe_pose
-):
+    prev_pose: torch.Tensor, current_transformation: torch.Tensor, is_keyframe: bool, last_keyframe_pose: torch.Tensor
+) -> tuple:
     """
     Compute the global pose based on the previous pose and current transformation.
 

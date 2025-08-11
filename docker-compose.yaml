@@ -50,5 +50,5 @@ services:
       - "8998:8000"
     volumes:
       - ./:/docs
-    restart: unless-stopped
+    restart: no
     command: serve -a 0.0.0.0:8000

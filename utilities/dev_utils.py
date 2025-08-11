@@ -424,8 +424,8 @@ def rgb_to_lab(rgb):
 
 
 def download_from_gcs(
-    model_name, bucket_name="alberto-bucket", destination_file_path=None
-):
+    model_name: str, bucket_name: str = "alberto-bucket", destination_file_path: str = None
+) -> str:
     """
     Downloads a file from Google Cloud Storage bucket
 

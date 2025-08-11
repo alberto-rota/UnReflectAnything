@@ -2,7 +2,7 @@
 Specialized dataset classes for specific data sources.
 """
 
-from typing import List
+from typing import List, Any, Dict
 from .base import Mono3D_Dataset
 
 
@@ -12,7 +12,7 @@ class SCARED(Mono3D_Dataset):
     Extends the base Mono3D_Dataset.
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the SCARED dataset.
         
@@ -44,7 +44,7 @@ class CHOLEC80(Mono3D_Dataset):
     Extends the base Mono3D_Dataset.
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the CHOLEC80 dataset.
         
@@ -76,7 +76,7 @@ class GRASP(Mono3D_Dataset):
     Extends the base Mono3D_Dataset with custom dimensions.
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the GRASP dataset.
         

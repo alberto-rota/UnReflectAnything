@@ -28,12 +28,11 @@ size2embeddim = {"tiny": 256, "small": 384, "base": 768, "beit-base-384": 768,"l
 class DINOv2_Intel(MONO3DModel):
     def __init__(self, size="large", intermediate_states=True):
         """
-        Initializes a DPT_DepthEstimator object.
+        Initializes a DINOv2_Intel object.
 
         Args:
-            pretrained_backbone (bool): Whether to use a pretrained backbone. Defaults to False.
-            pretrained_neck (bool): Whether to use a pretrained neck. Defaults to False.
-            pretrained_head (bool): Whether to use a pretrained head. Defaults to False.
+            size (str): Model size ("large", "base", etc.). Defaults to "large".
+            intermediate_states (bool): Whether to return intermediate states. Defaults to True.
         """
         super(DINOv2_Intel, self).__init__()
         self.model = (
@@ -89,12 +88,11 @@ class DINOv2_Intel(MONO3DModel):
 class DINOv2_Facebook(MONO3DModel):
     def __init__(self, size="large", intermediate_states=True):
         """
-        Initializes a DPT_DepthEstimator object.
+        Initializes a DINOv2_Facebook object.
 
         Args:
-            pretrained_backbone (bool): Whether to use a pretrained backbone. Defaults to False.
-            pretrained_neck (bool): Whether to use a pretrained neck. Defaults to False.
-            pretrained_head (bool): Whether to use a pretrained head. Defaults to False.
+            size (str): Model size ("large", "base", etc.). Defaults to "large".
+            intermediate_states (bool): Whether to return intermediate states. Defaults to True.
         """
         super(DINOv2_Facebook, self).__init__()
         self.model = transformers.DPTForDepthEstimation.from_pretrained(
@@ -241,7 +239,7 @@ class LoFTR2Tensor(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, loftr_output):
+    def forward(self, loftr_output: dict) -> tuple:
         """
         Transform LoFTR output dict into batched tensors with padding and mask.
 
@@ -300,4 +298,4 @@ class LoFTR2Tensor(nn.Module):
 
             start_idx = end_idx
 
-        return source_points, target_points, scores  # , valid_mask
+        return (source_points, target_points, scores)  # , valid_mask

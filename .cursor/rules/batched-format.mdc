@@ -1,0 +1,4 @@
+---
+alwaysApply: true
+---
+Unless explicit in the code you have as context, we work with batched data. The leading dimension of any relevant tensor should be the batch size B, and the code you write should be optimized to take this into account.

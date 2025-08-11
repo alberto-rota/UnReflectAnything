@@ -137,7 +137,7 @@ def RdGr(value):
     return f"[{color}]{(value*100):.2f}[/{color}]"
 
 
-def metrics_for_wandb(metrics_dict, prefix_str, separator="/"):
+def metrics_for_wandb(metrics_dict: dict, prefix_str: str, separator: str = "/") -> dict:
     """
     Process dictionary keys to include a prefix if they don't already contain the separator.
     Skip any key-value pairs where the value is None.
@@ -172,7 +172,7 @@ def metrics_for_wandb(metrics_dict, prefix_str, separator="/"):
     return result
 
 
-def strip_rich_markup(text):
+def strip_rich_markup(text: str) -> str:
     """
     Strip Rich markup tags from a string.
 

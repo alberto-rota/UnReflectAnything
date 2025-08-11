@@ -86,12 +86,13 @@ class TrueDepthTransformation(nn.Module):
 class DPT_Predictor(MONO3DModel):
     def __init__(self, backbone_brand="intel", size="large", out_h=384, out_w=384):
         """
-        Initializes a DPT_DepthEstimator object.
+        Initializes a DPT_Predictor object.
 
         Args:
-            pretrained_backbone (bool): Whether to use a pretrained backbone. Defaults to False.
-            pretrained_neck (bool): Whether to use a pretrained neck. Defaults to False.
-            pretrained_head (bool): Whether to use a pretrained head. Defaults to False.
+            backbone_brand (str): Backbone brand ("intel", "facebook"). Defaults to "intel".
+            size (str): Model size ("large", "base", etc.). Defaults to "large".
+            out_h (int): Output height. Defaults to 384.
+            out_w (int): Output width. Defaults to 384.
         """
         super(DPT_Predictor, self).__init__()
         if backbone_brand == "intel":
@@ -113,15 +114,16 @@ class DPT_Predictor(MONO3DModel):
         # self.depth_warp = DepthWarp()
         # self.true_depth = TrueDepthTransformation()
 
-    def forward(self, backbone_out: torch.Tensor, out_indices) -> torch.Tensor:
+    def forward(self, backbone_out: torch.Tensor, out_indices: list) -> torch.Tensor:
         """
-        Forward pass of the DPT_DepthEstimator.
+        Forward pass of the DPT_Predictor.
 
         Args:
-            source (torch.Tensor): The input tensor.
+            backbone_out (torch.Tensor): The backbone output tensor.
+            out_indices: Indices for selecting hidden states.
 
         Returns:
-            torch.Tensor: The output tensor.
+            torch.Tensor: The predicted depth tensor.
         """
         backbone_out = list(backbone_out)
         # HIDDEN_LEVELS_CONNECTED = [5, 11, 17, 24]

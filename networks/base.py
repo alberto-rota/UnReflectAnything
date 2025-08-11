@@ -8,6 +8,7 @@
 # -------------------------------------------------------------------------------------------------#
 import torch
 import torch.nn as nn
+from typing import Any
 from utilities import *
 from utilities import *
 import projections as proj
@@ -259,10 +260,12 @@ class MONO3DModel(nn.Module):
         Checks if the shapes of the input tensors are compatible with the forward pass of the model.
 
         Args:
-            source (torch.Tensor): The source image tensor.
+            framestack (torch.Tensor): The input framestack tensor.
+            Ts2t (torch.Tensor): The ground truth transformation tensor.
             depthmap_pred (torch.Tensor): The predicted depth map tensor.
             warped (torch.Tensor): The warped image tensor.
-            target (torch.Tensor): The target image tensor.
+            Ts2t_pred (tuple): The predicted transformation tensor.
+            verbosity (int): Verbosity level for debugging. Defaults to 1.
 
         Returns:
             bool: True if the shapes are compatible, False otherwise.
@@ -347,16 +350,19 @@ class MONO3DModel(nn.Module):
 class DINO_backbone(nn.Module):
     def __init__(
         self,
-        config=None,
+        config: Any = None,
         size: str = "small",
         frozen: bool = True,
-        output_hidden_states=False,
+        output_hidden_states: bool = False,
     ):
         """
         Initializes a DINO_backbone object.
 
         Args:
-            pretrained (bool): Whether to load the pretrained DINO model or not. Defaults to True.
+            config: Model configuration. Defaults to None.
+            size (str): Model size ("small", "base", etc.). Defaults to "small".
+            frozen (bool): Whether to freeze model parameters. Defaults to True.
+            output_hidden_states (bool): Whether to output hidden states. Defaults to False.
         """
         super(DINO_backbone, self).__init__()
         self.frozen = frozen
@@ -404,12 +410,11 @@ class DINO_backbone(nn.Module):
 class DINOINTEL_backbone(nn.Module):
     def __init__(self, size="large", intermediate_states=False):
         """
-        Initializes a DPT_DepthEstimator object.
+        Initializes a DINOINTEL_backbone object.
 
         Args:
-            pretrained_backbone (bool): Whether to use a pretrained backbone. Defaults to False.
-            pretrained_neck (bool): Whether to use a pretrained neck. Defaults to False.
-            pretrained_head (bool): Whether to use a pretrained head. Defaults to False.
+            size (str): Model size ("large", "base", etc.). Defaults to "large".
+            intermediate_states (bool): Whether to return intermediate states. Defaults to False.
         """
         super(DINOINTEL_backbone, self).__init__()
         self.model = transformers.DPTForDepthEstimation.from_pretrained(
@@ -445,13 +450,16 @@ class DINOINTEL_backbone(nn.Module):
 
 class SWIN_backbone(nn.Module):
     def __init__(
-        self, config=None, frozen: bool = True, size="base", output_hidden_states=False
+        self, config: Any = None, frozen: bool = True, size: str = "base", output_hidden_states: bool = False
     ):
         """
-        Initializes a DINO_backbone object.
+        Initializes a SWIN_backbone object.
 
         Args:
-            pretrained (bool): Whether to load the pretrained DINO model or not. Defaults to True.
+            config: Model configuration. Defaults to None.
+            frozen (bool): Whether to freeze model parameters. Defaults to True.
+            size (str): Model size ("tiny", "small", "base", "large"). Defaults to "base".
+            output_hidden_states (bool): Whether to output hidden states. Defaults to False.
         """
         super(SWIN_backbone, self).__init__()
         self.frozen = frozen

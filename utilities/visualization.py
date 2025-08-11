@@ -1623,31 +1623,36 @@ import matplotlib.pyplot as plt  # Only used for colormap
 
 
 def visualize_patch_matches_pil(
-    spatches, tpatches, best_src_xy, best_tgt_xy, scores, num_examples=5
-):
+    spatches: torch.Tensor,
+    tpatches: torch.Tensor, 
+    best_src_xy: torch.Tensor,
+    best_tgt_xy: torch.Tensor,
+    scores: torch.Tensor,
+    num_examples: int = 5
+) -> Image.Image:
     """
     Visualizes matched pixels in source and target patches and returns a PIL image.
 
     Args:
         spatches (torch.Tensor): Source patches of shape (N, 3, H, W).
-        tpatches (torch.Tensor): Target patches of the same shape.
-        best_src_xy (torch.Tensor): (N, 2) tensor with matched (y, x) pixel coordinates in the source patch.
-        best_tgt_xy (torch.Tensor): (N, 2) tensor with matched (y, x) pixel coordinates in the target patch.
-        scores (torch.Tensor): (N,) tensor with scores for each match, used for coloring the dots.
-        num_examples (int): Number of random examples to visualize.
+        tpatches (torch.Tensor): Target patches of shape (N, 3, H, W).
+        best_src_xy (torch.Tensor): Tensor of shape (N, 2) with matched (y, x) pixel coordinates in the source patch.
+        best_tgt_xy (torch.Tensor): Tensor of shape (N, 2) with matched (y, x) pixel coordinates in the target patch.
+        scores (torch.Tensor): Tensor of shape (N,) with scores for each match, used for coloring the dots.
+        num_examples (int, optional): Number of random examples to visualize. Defaults to 5.
 
     Returns:
-        PIL.Image: The composed image with source patches on top, target patches below, and colored dots.
+        Image.Image: The composed PIL image with source patches on top, target patches below, and colored dots.
     """
     import random
 
-    N = spatches.shape[0]
-    num_examples = min(num_examples, N)  # Ensure we don't exceed available samples
-    indices = random.sample(range(N), num_examples)
+    N: int = spatches.shape[0]
+    num_examples: int = min(num_examples, N)  # Ensure we don't exceed available samples
+    indices: list[int] = random.sample(range(N), num_examples)
 
     # Normalize scores to [0, 1]
-    scores = scores.cpu().numpy()
-    scores_norm = (scores - scores.min()) / (scores.max() - scores.min() + 1e-8)
+    scores: np.ndarray = scores.cpu().numpy()
+    scores_norm: np.ndarray = (scores - scores.min()) / (scores.max() - scores.min() + 1e-8)
 
     # Create a red-to-green colormap using matplotlib
     cmap = plt.get_cmap("RdYlGn")
@@ -1790,25 +1795,25 @@ def sampleinspect(sample: tuple):
 
 
 def log_to_rerun(
-    frame=0,
-    mode="pred",
-    is_keyframe=False,
-    color=None,
-    framestack=None,
-    depthmap=None,
-    warped=None,
-    K=None,
-    cloud=None,
-    rgb_vec=None,
-    points_match_3d=None,
-    camera_pose=None,
-    with_motion_trail=True,
-    base_pose=None,
-    images=None,
-    metrics=None,
-    cam_size=0.1,
-    **kwargs,
-):
+    frame: int = 0,
+    mode: str = "pred",
+    is_keyframe: bool = False,
+    color: Optional[list] = None,
+    framestack: Optional[torch.Tensor] = None,
+    depthmap: Optional[torch.Tensor] = None,
+    warped: Optional[torch.Tensor] = None,
+    K: Optional[torch.Tensor] = None,
+    cloud: Optional[torch.Tensor] = None,
+    rgb_vec: Optional[torch.Tensor] = None,
+    points_match_3d: Optional[torch.Tensor] = None,
+    camera_pose: Optional[torch.Tensor] = None,
+    with_motion_trail: bool = True,
+    base_pose: Optional[torch.Tensor] = None,
+    images: Optional[dict] = None,
+    metrics: Optional[dict] = None,
+    cam_size: float = 0.1,
+    **kwargs: Any,
+) -> None:
     """
     Enhanced logging function for Rerun that visualizes data conditionally based on provided parameters.
 
@@ -1826,7 +1831,6 @@ def log_to_rerun(
         points_match_3d (Tensor, optional): [B,N,3] matched 3D points.
         camera_pose (Tensor, optional): [B,6] camera pose parameters.
         base_pose (Tensor, optional): Base pose matrix for trajectory calculation.
-        previous_pose (Tensor, optional): Previous pose for motion trail visualization.
         images (dict, optional): Dictionary of named images to log, where keys are image names and values are the images.
         metrics (dict, optional): Dictionary of named metrics to log, where keys are metric names and values are scalar values.
         **kwargs: Additional parameters for extensibility.
@@ -2096,7 +2100,7 @@ import torch
 import rerun as rr
 
 
-def log_rerun_line(source, target=None, entity="/line", **kwargs):
+def log_rerun_line(source: Union[torch.Tensor, np.ndarray, list], target: Union[torch.Tensor, np.ndarray, list] = None, entity: str = "/line", **kwargs: Any) -> None:
     """
     Draws a 3D line from the origin to a pose, or between two poses, using Rerun's LineStrips3D.
 
@@ -2161,13 +2165,13 @@ def log_rerun_line(source, target=None, entity="/line", **kwargs):
     rr.log(entity, rr.LineStrips3D([line], **kwargs))
 
 def log_rerun_camera(
-    K,                # (3, 3) camera intrinsics matrix, torch.Tensor or np.ndarray
-    pose,             # (4, 4) camera-to-world pose, torch.Tensor or np.ndarray
-    height=384,           # int, image height
-    width=384,            # int, image width
-    entity="/camera", # str, rerun entity path
-    **kwargs
-):
+    K: Union[torch.Tensor, np.ndarray],                # (3, 3) camera intrinsics matrix, torch.Tensor or np.ndarray
+    pose: Union[torch.Tensor, np.ndarray],             # (4, 4) camera-to-world pose, torch.Tensor or np.ndarray
+    height: int = 384,           # int, image height
+    width: int = 384,            # int, image width
+    entity: str = "/camera", # str, rerun entity path
+    **kwargs: Any
+) -> None:
     """
     Logs a camera as a Rerun Pinhole object at a specific pose.
 
@@ -2597,25 +2601,28 @@ def bundle_to_rerun(
     rr.log("slam/camera2/image", rr.Image(rgb2_with_points))
 
 
-def mark_img(image, marker=None):
+def mark_img(
+    image: Union[torch.Tensor, np.ndarray, Image.Image],
+    marker: Optional[str] = None
+) -> Union[torch.Tensor, np.ndarray, Image.Image]:
     """
     Add a marker to the top-left corner o an image.
 
     Args:
-        image (tensor, numpy array, or PIL Image): Input image to mark
-        marker (str, optional): Text to display on the image. If None, no marker is added.
+        image (Union[torch.Tensor, np.ndarray, Image.Image]): Input image to mark
+        marker (Optional[str]): Text to display on the image. If None, no marker is added.
 
     Returns:
-        Same type as input: Image with or without marker
+        Union[torch.Tensor, np.ndarray, Image.Image]: Image with or without marker, same type as input
     """
     if marker is None:
         return image
 
     # Store original type for later conversion
-    original_type = type(image)
-    is_tensor = isinstance(image, torch.Tensor)
-    is_pil = hasattr(image, "mode")  # Check if PIL Image
-    original_shape = None
+    original_type: type = type(image)
+    is_tensor: bool = isinstance(image, torch.Tensor)
+    is_pil: bool = hasattr(image, "mode")  # Check if PIL Image
+    original_shape: Optional[Tuple[int, ...]] = None
 
     # Convert PIL Image to numpy array if necessary
     if is_pil:
@@ -2640,20 +2647,22 @@ def mark_img(image, marker=None):
     image = image.astype(np.uint8)
 
     # Get dimensions for text positioning and sizing
+    height: int
+    width: int
     height, width = image.shape[:2]
-    font_scale = max(0.5, min(width, height) / 500)  # Scale based on image size
-    font_thickness = max(1, int(font_scale * 2))
-    text_size = cv2.getTextSize(
+    font_scale: float = max(0.5, min(width, height) / 500)  # Scale based on image size
+    font_thickness: int = max(1, int(font_scale * 2))
+    text_size: Tuple[int, int] = cv2.getTextSize(
         marker, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness
     )[0]
 
     # Calculate position (top-left corner with small padding)
-    x = 10
-    y = text_size[1] + 10
+    x: int = 10
+    y: int = text_size[1] + 10
 
     # Create a semi-transparent background for the text
-    overlay = image.copy()
-    bg_padding = 5
+    overlay: np.ndarray = image.copy()
+    bg_padding: int = 5
     cv2.rectangle(
         overlay,
         (x - bg_padding, y - text_size[1] - bg_padding),
@@ -2663,7 +2672,7 @@ def mark_img(image, marker=None):
     )
 
     # Apply the rectangle with alpha blending
-    alpha = 0.6
+    alpha: float = 0.6
     image = cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0)
 
     # Draw marker text in white
@@ -2691,7 +2700,7 @@ def mark_img(image, marker=None):
 
     return image
 
-def blackout_pca(tensor):
+def blackout_pca(tensor: torch.Tensor) -> torch.Tensor:
     """
     Replace most frequent color in tensor with black
     

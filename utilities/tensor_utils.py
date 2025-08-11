@@ -13,7 +13,7 @@ from rich import print as nativeprint
 import torch
 import torch.nn.functional as F
 
-def closest_multiple(value, factor, mode="closest"):
+def closest_multiple(value: float, factor: float, mode: str = "closest") -> int:
     """
     Find the closest multiple of a factor to a given value.
 
@@ -366,7 +366,7 @@ def generate_random_pose_tensor(
     angle_unit="degrees",
     device=None,
     dtype=torch.float32,
-):
+) -> torch.Tensor:
     """
     Generates a random 6x1 pose tensor with translation and Euler angles.
 
@@ -460,7 +460,7 @@ def generate_random_pose_tensor(
 
     return pose_vector.T
 
-def interpolate_featuremap(tensor, mask, mode="nearest", k=4):
+def interpolate_featuremap(tensor: torch.Tensor, mask: torch.Tensor, mode: str = "nearest", k: int = 4) -> torch.Tensor:
     """
     Fully vectorized interpolation for filling invalid positions.
     
@@ -577,7 +577,7 @@ def interpolate_featuremap(tensor, mask, mode="nearest", k=4):
     return output
 
 
-def inpaint(image, missing_value, median_kernel_size=3, iterations=10):
+def inpaint(image: torch.Tensor, missing_value: float, median_kernel_size: int = 3, iterations: int = 10) -> torch.Tensor:
     """
     Inpaint missing values in BxWxW RGB image using median filtering
     

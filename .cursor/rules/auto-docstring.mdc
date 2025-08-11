@@ -1,0 +1,5 @@
+---
+description: Apply when generating, modifying or enhancing a function, class or method
+alwaysApply: false
+---
+All functions, classes and methods should have docstrings, typing, function annotations and a description of what the function does. Use a format that can be read by mkdocs so that the function gets integrated in the documentation seamlessly. Wherever possible, add tensor shapes in the for of numbers or symbols, like [Bx3xHxW]

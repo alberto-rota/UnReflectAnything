@@ -5,6 +5,8 @@ theme:
 
 nav:
   # Pipelines
+  - Home: index.md
+  - UnReflectAnything: UnReflectAnything.md
   - Pipelines:
       - Depth: depth.md
  
@@ -15,6 +17,7 @@ nav:
       - Multi Dataset: dataset/multi_dataset.md
       - Specialized Datasets: dataset/specialized.md
       - Dataset Utils: dataset/utils.md
+      - HighLight Renderer: dataset/HighLightRenderer.md
   - Core Modules:
       - Geometry: geometry.md
       - Projections: projections.md

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Union
 import geometry
 
 class BackProject(nn.Module):
@@ -274,19 +275,19 @@ class Project(nn.Module):
 
     def forward(
         self,
-        cloud,
-        data_vec,  # Can be rgb_vec or feature_vec
-        K,
-        T,
-        points_match_3d=None,
-        batch_idx_match=None,
-        missing_value=0,
-        median_kernel_size=5,
-        return_artifacts=False,
-        return_mask=False,
-        infilling_steps=10,
-        splat_fraction=0.0,  # Controls bilinear splatting (0.0 = no splatting)
-    ):
+        cloud: torch.Tensor,
+        data_vec: torch.Tensor,  # Can be rgb_vec or feature_vec
+        K: torch.Tensor,
+        T: torch.Tensor,
+        points_match_3d: torch.Tensor = None,
+        batch_idx_match: torch.Tensor = None,
+        missing_value: float = 0,
+        median_kernel_size: int = 5,
+        return_artifacts: bool = False,
+        return_mask: bool = False,
+        infilling_steps: int = 10,
+        splat_fraction: float = 0.0,  # Controls bilinear splatting (0.0 = no splatting)
+    ) -> dict:
         """
         Project 3D points to 2D image space.
 
@@ -574,18 +575,18 @@ class Warp(nn.Module):
 
     def forward(
         self,
-        source_image,
-        depth_map,
-        camera_intrinsics,
-        camera_pose,
-        return_mask=False,
-        return_artifacts=False,
-        points_to_match=None,
-        batch_idx_match=None,
-        median_kernel_size=5,
-        infilling_steps=10,
-        splat_fraction=0.0,
-    ):
+        source_image: torch.Tensor,
+        depth_map: torch.Tensor,
+        camera_intrinsics: torch.Tensor,
+        camera_pose: torch.Tensor,
+        return_mask: bool = False,
+        return_artifacts: bool = False,
+        points_to_match: torch.Tensor = None,
+        batch_idx_match: torch.Tensor = None,
+        median_kernel_size: int = 5,
+        infilling_steps: int = 10,
+        splat_fraction: float = 0.0,
+    ) -> dict:
         """
         Warp a source image/feature map to a target viewpoint based on depth and camera pose.
 
@@ -869,7 +870,7 @@ class DepthWarp(nn.Module):
         median_kernel_size: int = 5,
         num_iterations: int = 10,
         return_mask: bool = False,
-    ):
+    ) -> Union[torch.Tensor, tuple]:
         """
         Warp a depth map from source viewpoint (identity pose) to target viewpoint.
         
@@ -947,7 +948,7 @@ class HighLightRenderer(nn.Module):
         self.feat_width = width // patch_size
         self.project = Project(height, width, patch_size)
         
-    def estimate_surface_normals(self, cloud_xyz, neighborhood_size=3):
+    def estimate_surface_normals(self, cloud_xyz: torch.Tensor, neighborhood_size: int = 3) -> torch.Tensor:
         """
         Estimate surface normals from 3D point cloud using local plane fitting.
         
@@ -993,9 +994,9 @@ class HighLightRenderer(nn.Module):
         
         return normals
     
-    def calculate_reflection_intensity(self, cloud_xyz, normals, camera_pos, light_pos, 
-                                     light_intensity, light_color, surface_roughness=0.1,
-                                     light_attenuation=(1.0, 0.1, 0.01)):
+    def calculate_reflection_intensity(self, cloud_xyz: torch.Tensor, normals: torch.Tensor, camera_pos: torch.Tensor, light_pos: torch.Tensor, 
+                                     light_intensity: float, light_color: torch.Tensor, surface_roughness: float = 0.1,
+                                     light_attenuation: tuple = (1.0, 0.1, 0.01)) -> torch.Tensor:
         """
         Calculate reflection intensity using Phong reflection model.
         
@@ -1056,9 +1057,9 @@ class HighLightRenderer(nn.Module):
         
         return reflection_intensity
     
-    def forward(self, cloud, rgb_vec, camera_K, camera_T, light_position, 
-                light_intensity=1.0, light_color=None, surface_roughness=0.1,
-                light_attenuation=(1.0, 0.1, 0.01), reflection_strength=0.5):
+    def forward(self, cloud: torch.Tensor, rgb_vec: torch.Tensor, camera_K: torch.Tensor, camera_T: torch.Tensor, light_position: torch.Tensor, 
+                light_intensity: float = 1.0, light_color: torch.Tensor = None, surface_roughness: float = 0.1,
+                light_attenuation: tuple = (1.0, 0.1, 0.01), reflection_strength: float = 0.5) -> dict:
         """
         Render image with reflection artifacts.
         
