@@ -2,16 +2,16 @@ FROM python:3.10.9-slim
 
 WORKDIR /usr/src/app
 
-# Install dependencies
-RUN pip install --no-cache-dir rerun-sdk flask
+# Install dependencies including flask-cors
+RUN pip install --no-cache-dir flask flask-cors
 
-# Copy the web server script
-COPY demos/web_server.py /usr/src/app/web_server.py
+# Copy the demo server script
+COPY demos/web_server.py .
 
-# Expose main web interface port
-EXPOSE 8080
+# Create demo_data directory (will be mounted at runtime)
+RUN mkdir -p /demos
 
-# Expose range for rerun web viewers
-EXPOSE 60001-60200
+# Expose port
+EXPOSE 60000
 
 CMD ["python", "web_server.py"]

@@ -59,8 +59,9 @@ services:
       dockerfile: demos/Dockerfile.demos  
     container_name: unreflectanything_demos
     ports:
-      - "${DEMOS_PORT:-58888}:8080"       # Web interface (high port)
-      - "60000-60200:60000-60200"         # Range for rerun viewers
+      - "60000:60000"
     volumes:
-      - ./demos:/demos:ro
+      - ./demos/demo_data:/demos:ro
+    environment:
+      - RERUN_HOSTNAME=${RERUN_HOSTNAME:-zima-1.tailea7917.ts.net}
     restart: no
