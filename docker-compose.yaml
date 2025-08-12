@@ -63,5 +63,6 @@ services:
     volumes:
       - ./demos/demo_data:/demos:ro
     environment:
-      - RERUN_HOSTNAME=${RERUN_HOSTNAME:-zima-1.tailea7917.ts.net}
+        # Will run on zima-1.tailea7917.ts.net. Set $RERUN_HOSTNAME to change.
+      - RERUN_HOSTNAME=${RERUN_HOSTNAME:-zima-1.tailea7917.ts.net} 
     restart: no

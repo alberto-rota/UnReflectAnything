@@ -6,3 +6,5 @@ docker compose up docs
 ```
 **Access the documentation**:
     Open your browser and navigate to `http://localhost:8998`
+
+Demos available at https://zima-unreflectanything.tailea7917.ts.net/
