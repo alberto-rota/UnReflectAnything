@@ -29,26 +29,12 @@ parameters:
           STANDSTILL: 0.0
         }
       
-      # GRASP:
-      #   PATH: "/home/jupyter/GRASP"
-      #   FPS: 16
-      #   FRAMESKIP: [1,2,4,8,16,24,32]
-      #   TRAIN_VAL_SPLIT: 0.7
-      #   TEST_VIDEOS: ["v13","v14"]
-      #   RANDOM_POSE_TRAINING: True # Whether to use random poses for training
-      #   RANDOM_POSE_RANGES: [5, 7.5] # Whether to use random poses for training  
-      #   CURRICULUM_FACTOR:  1  # Curriculum learning factor
-      #   AUGMENTATION_PROBABILITY: {
-      #     COLOR: 0.8,   
-      #     GEOMETRIC: 0.25,
-      #     REVERSE: 0.0,
-      #     STANDSTILL: 0.0
-      #   }
+
 
   IMAGE_HEIGHT:  
-    value: 682  # Height of the input images
+    value: 874  # Height of the input images
   IMAGE_WIDTH:
-    value: 852  # Width of the input images
+    value: 1132  # Width of the input images
 
   BATCH_SIZE:
     value: 4  # Batch size for training
@@ -94,7 +80,7 @@ parameters:
   BACKBONE_BRAND: # ["intel","facebook"]
     value: "intel"  # Brand of the backbonde model
   BACKBONE_SIZE: 
-    value: "beit-base-384"  # Size of the backbone model
+    value: "large"  # Size of the backbone model
   RESAMPLED_PATCH_SIZE:
     value: 8   # Patch size after bilinear interpolation (DINOv2 patch size = 16)
 
@@ -108,7 +94,7 @@ parameters:
   SWITCH_OPTIMIZER_EPOCH: #[int]
     value: 0  # Epoch at which to switch the optimizer
   LEARNING_RATE:
-    value: 1.0e-3  # Learning rate for the optimizer  
+    value: 1.0e-5  # Learning rate for the optimizer  
   WEIGHT_DECAY:
     value: 1.0e-7  # Weight decay for the optimizer
   GRADIENT_ACCUMULATION_STEPS:

@@ -1105,6 +1105,63 @@ class HighLightRenderer(nn.Module):
     
         return normals
     
+    def _compute_gradient_normals_fast(self, cloud_xyz: torch.Tensor) -> torch.Tensor:
+        """
+        Optimized fast gradient-based surface normal estimation for GPU.
+        
+        This method uses efficient convolutions and vectorized operations to compute
+        surface normals from spatial gradients with minimal memory allocations.
+        
+        Args:
+            cloud_xyz: 3D points [B×3×N]
+            
+        Returns:
+            normals: Surface normals [B×3×N]
+        """
+        B, _, N = cloud_xyz.shape
+        device = cloud_xyz.device
+        dtype = cloud_xyz.dtype
+        
+        # Determine spatial resolution
+        is_feature_res = N == (self.feat_height * self.feat_width)
+        h, w = (self.feat_height, self.feat_width) if is_feature_res else (self.height, self.width)
+        
+        # Reshape to spatial format efficiently
+        cloud_spatial = cloud_xyz.view(B, 3, h, w)  # [B, 3, H, W]
+        
+        # Pre-computed optimized Sobel kernels (avoid tensor creation overhead)
+        if not hasattr(self, '_sobel_kernels'):
+            self._sobel_kernels = {
+                'x': torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], 
+                               dtype=dtype, device=device).view(1, 1, 3, 3) / 8.0,
+                'y': torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], 
+                               dtype=dtype, device=device).view(1, 1, 3, 3) / 8.0
+            }
+        
+        # Move kernels to current device if needed (device might change)
+        sobel_x = self._sobel_kernels['x'].to(device=device, dtype=dtype)
+        sobel_y = self._sobel_kernels['y'].to(device=device, dtype=dtype)
+        
+        # Efficient batched convolution - reshape to process all coordinates at once
+        cloud_reshaped = cloud_spatial.view(B * 3, 1, h, w)  # [B*3, 1, H, W]
+        
+        # Apply gradients in parallel (more efficient than per-coordinate loop)
+        grad_x = F.conv2d(cloud_reshaped, sobel_x, padding=1).view(B, 3, h, w)  # [B, 3, H, W]
+        grad_y = F.conv2d(cloud_reshaped, sobel_y, padding=1).view(B, 3, h, w)  # [B, 3, H, W]
+        
+        # Reshape to point cloud format for cross product
+        grad_x_flat = grad_x.view(B, 3, -1)  # [B, 3, N]
+        grad_y_flat = grad_y.view(B, 3, -1)  # [B, 3, N]
+        
+        # Vectorized cross product: n = grad_x × grad_y
+        normals = torch.cross(grad_x_flat, grad_y_flat, dim=1)  # [B, 3, N]
+        
+        # Fast normalization with rsqrt (more efficient than F.normalize)
+        norm_squared = torch.sum(normals.square(), dim=1, keepdim=True)  # [B, 1, N]
+        normals = normals * torch.rsqrt(norm_squared + 1e-12)  # [B, 3, N]
+        
+        return normals
+    
     def _gradient_based_normals(self, cloud_spatial: torch.Tensor) -> torch.Tensor:
         """Fallback gradient-based normal estimation."""
         # Calculate gradients using Sobel filters for better stability
@@ -1528,62 +1585,142 @@ class HighLightRenderer(nn.Module):
                            light_attenuation: Tuple[float, float, float] = (1.0, 0.1, 0.01),
                            reflection_strength: float = 0.5) -> Dict[str, torch.Tensor]:
         """
-        Render image with reflections from a point light source.
+        Optimized GPU-accelerated rendering of image with reflections from a point light source.
+        
+        This method is fully vectorized and optimized for CUDA GPU execution with minimal memory allocations
+        and maximum parallelization. All operations are batched and avoid explicit loops.
         
         Args:
-            cloud: 3D point cloud [B, 4, N] (homogeneous coordinates)
-            rgb_vec: RGB values [B, 3, N] or features [B, E, N]
-            camera_K: Camera intrinsics [B, 3, 3]
-            camera_T: Camera pose [B, 4, 4] or [B, 6]
-            light_position: Point light position [B, 3] or [3] (world coordinates)
+            cloud: 3D point cloud [B×4×N] (homogeneous coordinates)
+            rgb_vec: RGB values [B×3×N] or features [B×E×N] 
+            camera_K: Camera intrinsics [B×3×3]
+            camera_T: Camera pose [B×4×4] or [B×6] (Euler angles)
+            light_position: Point light position [B×3] or [3] (world coordinates)
             light_intensity: Light intensity scalar
-            light_color: Light color [3] or [B, 3] (default: white)
+            light_color: Light color [3] or [B×3] (default: white)
             surface_roughness: Surface roughness 0-1 (0=mirror, 1=diffuse)
-            light_attenuation: (constant, linear, quadratic) attenuation coefficients
+            light_attenuation: (constant, linear, quadratic) attenuation coefficients  
             reflection_strength: Overall reflection strength multiplier (0-1)
             
         Returns:
-            Dict containing image with reflections and intermediate results
+            Dict containing image with reflections and intermediate results with keys:
+            - 'warped': Final rendered image [B×3×H×W] or [B×E×H×W]
+            - 'reflection_intensity': Reflection intensity [B×3×N]  
+            - 'surface_normals': Surface normals [B×3×N]
+            - 'reflection_only': Reflection-only visualization [B×3×H×W]
+            - 'camera_position': Camera position [B×3×1]
+            - Additional projection and light info
         """
-        B = cloud.shape[0]
+        B, _, N = cloud.shape  # [B, 4, N]
+        device = cloud.device
+        dtype = cloud.dtype
         
-        # Prepare common inputs
-        cloud_xyz, camera_pos, light_color_processed, normals = self._prepare_common_inputs(
-            cloud, rgb_vec, camera_T, light_color
+        # ===== OPTIMIZED INPUT PROCESSING (INLINED) =====
+        # Extract 3D coordinates - no copy, just view
+        cloud_xyz = cloud[:, :3, :]  # [B, 3, N]
+        
+        # Vectorized camera pose processing 
+        if camera_T.shape[1] == 6:
+            # Convert Euler to transformation matrix (batched)
+            camera_T_processed = geometry.euler2mat(camera_T)  # [B, 4, 4]
+        else:
+            camera_T_processed = camera_T
+        camera_pos = camera_T_processed[:, :3, 3:4]  # [B, 3, 1]
+        
+        # Vectorized light color processing
+        if light_color is None:
+            light_color = torch.ones(B, 3, 1, device=device, dtype=dtype)
+        else:
+            # Efficient reshaping without multiple expansions
+            if light_color.dim() == 1:
+                light_color = light_color.view(1, 3, 1).expand(B, 3, 1)
+            elif light_color.dim() == 2:
+                light_color = light_color.unsqueeze(-1)  # [B, 3, 1]
+        
+        # Optimized light position processing - single operation
+        if light_position.dim() == 1:
+            light_pos = light_position.view(1, 3, 1).expand(B, 3, 1)  # [B, 3, 1] 
+        else:
+            light_pos = light_position.unsqueeze(-1)  # [B, 3, 1]
+        
+        # ===== OPTIMIZED SURFACE NORMAL ESTIMATION =====
+        # Fast gradient-based normals (much faster than PCA)
+        normals = self._compute_gradient_normals_fast(cloud_xyz)  # [B, 3, N]
+        
+        # ===== OPTIMIZED REFLECTION CALCULATION (INLINED & VECTORIZED) =====
+        # All operations vectorized for GPU efficiency
+        light_dir = light_pos - cloud_xyz  # [B, 3, N] - vectorized subtraction
+        light_distance = torch.norm(light_dir, dim=1, keepdim=True)  # [B, 1, N]
+        light_dir_norm = light_dir * torch.rsqrt(torch.sum(light_dir.square(), dim=1, keepdim=True) + 1e-16)  # [B, 3, N] - fast normalize
+        
+        # View direction (vectorized)
+        view_dir = camera_pos - cloud_xyz  # [B, 3, N]
+        view_dir_norm = view_dir * torch.rsqrt(torch.sum(view_dir.square(), dim=1, keepdim=True) + 1e-16)  # [B, 3, N]
+        
+        # Optimized Phong reflection: R = 2(N·L)N - L (fully vectorized)
+        dot_nl = torch.sum(normals * light_dir_norm, dim=1, keepdim=True).clamp_(0.0, 1.0)  # [B, 1, N] - in-place clamp
+        reflection_dir = (2.0 * dot_nl) * normals - light_dir_norm  # [B, 3, N] - fused multiply-add
+        reflection_dir_norm = reflection_dir * torch.rsqrt(torch.sum(reflection_dir.square(), dim=1, keepdim=True) + 1e-16)  # [B, 3, N]
+        
+        # Specular calculation (vectorized)
+        dot_rv = torch.sum(reflection_dir_norm * view_dir_norm, dim=1, keepdim=True).clamp_(0.0, 1.0)  # [B, 1, N]
+        
+        # Optimized shininess calculation
+        shininess = max(1.0, 128.0 * (1.0 - surface_roughness))  # Scalar computation
+        specular = torch.pow(dot_rv, shininess)  # [B, 1, N]
+        
+        # Vectorized distance attenuation
+        const_att, linear_att, quad_att = light_attenuation
+        attenuation = torch.reciprocal(const_att + linear_att * light_distance + quad_att * light_distance.square())  # [B, 1, N]
+        
+        # Final reflection intensity (fully vectorized, broadcasted)
+        reflection_intensity = (light_intensity * reflection_strength * attenuation * dot_nl * specular) * light_color  # [B, 3, N]
+        
+        # ===== OPTIMIZED PROJECTION (INLINED) =====
+        # Apply reflections to RGB/features (vectorized)
+        if rgb_vec.shape[1] == 3:
+            enhanced_rgb = torch.clamp_(rgb_vec + reflection_intensity, 0.0, 1.0)  # [B, 3, N] - in-place clamp
+        else:
+            enhanced_rgb = rgb_vec.clone()
+            if rgb_vec.shape[1] >= 3:
+                enhanced_rgb[:, :3, :].add_(reflection_intensity).clamp_(0.0, 1.0)  # In-place operations
+        
+        # Project enhanced features to image
+        projection_result = self.project(
+            cloud, enhanced_rgb, camera_K, camera_T,
+            return_artifacts=True, return_mask=True
         )
         
-        # Process point light position
-        if light_position.dim() == 1:
-            light_position = light_position.unsqueeze(0).expand(B, -1)  # [B, 3]
-        light_pos_processed = light_position.unsqueeze(-1)  # [B, 3, 1]
+        # Create reflection-only visualization (optimized)
+        if rgb_vec.shape[1] > 3:
+            # Efficient zero padding for features
+            reflection_features = torch.cat([
+                reflection_intensity, 
+                torch.zeros(B, rgb_vec.shape[1] - 3, N, device=device, dtype=dtype)
+            ], dim=1)
+        else:
+            reflection_features = reflection_intensity
+            
+        reflection_only = self.project(
+            cloud, reflection_features, camera_K, camera_T,
+            return_artifacts=True, return_mask=True
+        )
         
-        # Calculate reflection intensities for point light
-        reflection_intensity = self.calculate_reflection_intensity(
-            cloud_xyz=cloud_xyz,
-            normals=normals,
-            camera_pos=camera_pos,
-            light_pos=light_pos_processed,
-            light_pose=None,
-            light_width=None,
-            light_height=None,
-            light_samples=1,  # Not used for point light
-            light_intensity=light_intensity,
-            light_color=light_color_processed,
-            surface_roughness=surface_roughness,
-            light_attenuation=light_attenuation
-        )  # [B, 3, N]
-        
-        # Light-specific info
-        light_info = {
+        # ===== BUILD RESULT DICTIONARY =====
+        result = {
+            'reflection_intensity': reflection_intensity,      # [B, 3, N]
+            'surface_normals': normals,                       # [B, 3, N]
+            'reflection_only': reflection_only['warped'],     # [B, 3, H, W] or [B, E, H, W]
+            'camera_position': camera_pos,                    # [B, 3, 1]
+            'enhanced_features': enhanced_rgb,                # [B, 3, N] or [B, E, N]
             'light_type': 'point',
-            'light_position': light_pos_processed,  # [B, 3, 1]
+            'light_position': light_pos,                      # [B, 3, 1]
         }
         
-        # Apply reflections and project
-        return self._apply_reflections_and_project(
-            cloud, rgb_vec, camera_K, camera_T, reflection_intensity,
-            normals, camera_pos, light_info, reflection_strength
-        )
+        # Add projection results
+        result.update(projection_result)
+        
+        return result
     
     def forward_planar_light(self,
                             cloud: torch.Tensor,                    # [B, 4, N]
@@ -1679,6 +1816,292 @@ class HighLightRenderer(nn.Module):
             normals, camera_pos, light_info, reflection_strength
         )
     
+    def forward(self, *args, **kwargs):
+        """
+        Deprecated: Use forward_point_light() or forward_planar_light() instead.
+        
+        This method is kept for backward compatibility but will raise an error
+        to encourage using the specific light type methods.
+        """
+        raise NotImplementedError(
+            "The generic forward() method has been deprecated. "
+            "Use forward_point_light() for point lights or forward_planar_light() for planar lights instead."
+        )
+        
+        
+class ReflectionWarp(nn.Module):
+    """
+    Reflection warp module that combines back-projection and highlight rendering operations.
+    Transforms a source image/feature map to a target viewpoint and adds realistic reflections
+    from light sources. Supports both RGB images and feature maps with automatic detection.
+    """
+
+    def __init__(self, height: int, width: int, patch_size: int = 16):
+        super().__init__()
+        self.height = height
+        self.width = width
+        self.patch_size = patch_size
+        self.backproject = BackProject(height, width, patch_size)
+        self.highlight_renderer = HighLightRenderer(height, width, patch_size)
+
+    def forward_point_light(self,
+                           source_image: torch.Tensor,              # [B, 3, H, W] or [B, E, Hf, Wf]
+                           depth_map: torch.Tensor,                 # [B, 1, H, W] or [B, 1, Hf, Wf]
+                           camera_intrinsics: torch.Tensor,         # [B, 3, 3]
+                           camera_pose: torch.Tensor,               # [B, 4, 4] or [B, 6]
+                           light_position: torch.Tensor,            # [B, 3] or [3]
+                           light_intensity: float = 1.0,
+                           light_color: Optional[torch.Tensor] = None,      # [3] or [B, 3]
+                           surface_roughness: float = 0.1,
+                           light_attenuation: Tuple[float, float, float] = (1.0, 0.1, 0.01),
+                           reflection_strength: float = 0.5,
+                           return_mask: bool = False,
+                           return_artifacts: bool = False,
+                           points_to_match: torch.Tensor = None,    # [B, N, 2] or [BN, 2]
+                           batch_idx_match: torch.Tensor = None,    # [BN, 1] if points_to_match is [BN, 2]
+                           median_kernel_size: int = 5,
+                           infilling_steps: int = 10,
+                           splat_fraction: float = 0.0) -> Dict[str, torch.Tensor]:
+        """
+        Warp a source image/feature map to a target viewpoint and add point light reflections.
+
+        Args:
+            source_image: Source image [B, 3, H, W] or feature map [B, E, Hf, Wf]
+            depth_map: Depth map [B, 1, H, W] or [B, 1, Hf, Wf]. If source_image is 
+                      a feature map and depth_map is at original resolution, it will be 
+                      automatically downsampled to match.
+            camera_intrinsics: Camera intrinsics matrix [B, 3, 3] (for original resolution)
+            camera_pose: Camera pose / transformation [B, 4, 4] or [B, 6] (Euler)
+            light_position: Point light position [B, 3] or [3] (world coordinates)
+            light_intensity: Light intensity scalar
+            light_color: Light color [3] or [B, 3] (default: white)
+            surface_roughness: Surface roughness 0-1 (0=mirror, 1=diffuse)
+            light_attenuation: (constant, linear, quadratic) attenuation coefficients
+            reflection_strength: Overall reflection strength multiplier (0-1)
+            return_mask: Whether to return visibility mask
+            return_artifacts: Whether to return intermediate artifacts
+            points_to_match: Source points to track in either:
+                - [B, N, 2] format (same number of points per batch)
+                - [BN, 2] format (variable number of points per batch)
+            batch_idx_match: If points_to_match is [BN, 2], this tensor [BN, 1]
+                indicates which batch each point belongs to
+            median_kernel_size: Size of kernel for median filtering in rendering
+            infilling_steps: Number of infilling iterations
+            splat_fraction: Fraction for bilinear splatting (0.0 = no splatting)
+
+        Returns:
+            Dict containing warped image/features with reflections and intermediate results
+        """
+        # Validate input format (same validation as Warp class)
+        batch_size = source_image.shape[0]
+
+        if points_to_match is not None:
+            if len(points_to_match.shape) == 2:  # [BN, 2] format
+                assert (
+                    points_to_match.shape[1] == 2
+                ), "Last dimension of points_to_match must be 2"
+                assert (
+                    batch_idx_match is not None
+                ), "batch_idx_match must be provided when points_to_match has shape [BN, 2]"
+                assert (
+                    batch_idx_match.shape[0] == points_to_match.shape[0]
+                ), "batch_idx_match and points_to_match must have the same first dimension"
+                assert (
+                    len(batch_idx_match.shape) == 1
+                ), "batch_idx_match must have shape [BN,]"
+                assert torch.all(batch_idx_match >= 0) and torch.all(
+                    batch_idx_match < batch_size
+                ), f"batch_idx_match values must be in range [0, {batch_size-1}]"
+            elif len(points_to_match.shape) == 3:  # [B, N, 2] format
+                assert (
+                    points_to_match.shape[0] == batch_size
+                ), "Batch size of points_to_match must match source_image"
+                assert (
+                    points_to_match.shape[2] == 2
+                ), "Last dimension of points_to_match must be 2"
+                if batch_idx_match is not None:
+                    print(
+                        "Warning: batch_idx_match is ignored when points_to_match has shape [B, N, 2]"
+                    )
+                    batch_idx_match = None
+            else:
+                raise ValueError(
+                    f"Invalid shape for points_to_match: {points_to_match.shape}"
+                )
+
+        # Back-project source image/features and/or points to 3D
+        backproj_output = self.backproject(
+            source_image,
+            depth_map,
+            torch.inverse(camera_intrinsics),
+            points_match=points_to_match,
+            batch_idx_match=batch_idx_match,
+        )
+
+        # Extract 3D points and data values (RGB or features)
+        cloud = backproj_output["xyz1"]  # [B, 4, N]
+        
+        # Get the appropriate data vector - RGB for images, features for feature maps
+        if "rgb" in backproj_output:
+            data_vec = backproj_output["rgb"]
+        elif "features" in backproj_output:
+            data_vec = backproj_output["features"]
+        else:
+            raise ValueError("BackProject output must contain either 'rgb' or 'features' key")
+
+        # Render with point light reflections
+        reflection_output = self.highlight_renderer.forward_point_light(
+            cloud=cloud,
+            rgb_vec=data_vec,
+            camera_K=camera_intrinsics,
+            camera_T=camera_pose,
+            light_position=light_position,
+            light_intensity=light_intensity,
+            light_color=light_color,
+            surface_roughness=surface_roughness,
+            light_attenuation=light_attenuation,
+            reflection_strength=reflection_strength
+        )
+        
+        # Merge backprojection and reflection outputs
+        reflection_output.update(backproj_output)
+        return reflection_output
+
+    def forward_planar_light(self,
+                            source_image: torch.Tensor,              # [B, 3, H, W] or [B, E, Hf, Wf]
+                            depth_map: torch.Tensor,                 # [B, 1, H, W] or [B, 1, Hf, Wf]
+                            camera_intrinsics: torch.Tensor,         # [B, 3, 3]
+                            camera_pose: torch.Tensor,               # [B, 4, 4] or [B, 6]
+                            light_pose: torch.Tensor,                # [B, 4, 4]
+                            light_width: float,                      # Width of light plane
+                            light_height: float,                     # Height of light plane
+                            light_samples: int = 16,                 # Number of sample points
+                            light_intensity: float = 1.0,
+                            light_color: Optional[torch.Tensor] = None,      # [3] or [B, 3]
+                            projected_image: Optional[torch.Tensor] = None,  # [B, 3, H, W]
+                            surface_roughness: float = 0.1,
+                            light_attenuation: Tuple[float, float, float] = (1.0, 0.1, 0.01),
+                            reflection_strength: float = 0.5,
+                            return_mask: bool = False,
+                            return_artifacts: bool = False,
+                            points_to_match: torch.Tensor = None,    # [B, N, 2] or [BN, 2]
+                            batch_idx_match: torch.Tensor = None,    # [BN, 1] if points_to_match is [BN, 2]
+                            median_kernel_size: int = 5,
+                            infilling_steps: int = 10,
+                            splat_fraction: float = 0.0) -> Dict[str, torch.Tensor]:
+        """
+        Warp a source image/feature map to a target viewpoint and add planar light reflections.
+
+        Args:
+            source_image: Source image [B, 3, H, W] or feature map [B, E, Hf, Wf]
+            depth_map: Depth map [B, 1, H, W] or [B, 1, Hf, Wf]. If source_image is 
+                      a feature map and depth_map is at original resolution, it will be 
+                      automatically downsampled to match.
+            camera_intrinsics: Camera intrinsics matrix [B, 3, 3] (for original resolution)
+            camera_pose: Camera pose / transformation [B, 4, 4] or [B, 6] (Euler)
+            light_pose: Light pose matrix [B, 4, 4] (world-to-light transform)
+            light_width: Width of rectangular light plane
+            light_height: Height of rectangular light plane
+            light_samples: Number of sample points for integration
+            light_intensity: Light intensity scalar
+            light_color: Light color [3] or [B, 3] (used if no projected_image provided)
+            projected_image: RGB image to project [B, 3, H, W] - creates projector effect
+            surface_roughness: Surface roughness 0-1 (0=mirror, 1=diffuse)
+            light_attenuation: (constant, linear, quadratic) attenuation coefficients
+            reflection_strength: Overall reflection strength multiplier (0-1)
+            return_mask: Whether to return visibility mask
+            return_artifacts: Whether to return intermediate artifacts
+            points_to_match: Source points to track in either:
+                - [B, N, 2] format (same number of points per batch)
+                - [BN, 2] format (variable number of points per batch)
+            batch_idx_match: If points_to_match is [BN, 2], this tensor [BN, 1]
+                indicates which batch each point belongs to
+            median_kernel_size: Size of kernel for median filtering in rendering
+            infilling_steps: Number of infilling iterations
+            splat_fraction: Fraction for bilinear splatting (0.0 = no splatting)
+
+        Returns:
+            Dict containing warped image/features with reflections and intermediate results
+        """
+        # Validate input format (same validation as Warp class)
+        batch_size = source_image.shape[0]
+
+        if points_to_match is not None:
+            if len(points_to_match.shape) == 2:  # [BN, 2] format
+                assert (
+                    points_to_match.shape[1] == 2
+                ), "Last dimension of points_to_match must be 2"
+                assert (
+                    batch_idx_match is not None
+                ), "batch_idx_match must be provided when points_to_match has shape [BN, 2]"
+                assert (
+                    batch_idx_match.shape[0] == points_to_match.shape[0]
+                ), "batch_idx_match and points_to_match must have the same first dimension"
+                assert (
+                    len(batch_idx_match.shape) == 1
+                ), "batch_idx_match must have shape [BN,]"
+                assert torch.all(batch_idx_match >= 0) and torch.all(
+                    batch_idx_match < batch_size
+                ), f"batch_idx_match values must be in range [0, {batch_size-1}]"
+            elif len(points_to_match.shape) == 3:  # [B, N, 2] format
+                assert (
+                    points_to_match.shape[0] == batch_size
+                ), "Batch size of points_to_match must match source_image"
+                assert (
+                    points_to_match.shape[2] == 2
+                ), "Last dimension of points_to_match must be 2"
+                if batch_idx_match is not None:
+                    print(
+                        "Warning: batch_idx_match is ignored when points_to_match has shape [B, N, 2]"
+                    )
+                    batch_idx_match = None
+            else:
+                raise ValueError(
+                    f"Invalid shape for points_to_match: {points_to_match.shape}"
+                )
+
+        # Back-project source image/features and/or points to 3D
+        backproj_output = self.backproject(
+            source_image,
+            depth_map,
+            torch.inverse(camera_intrinsics),
+            points_match=points_to_match,
+            batch_idx_match=batch_idx_match,
+        )
+
+        # Extract 3D points and data values (RGB or features)
+        cloud = backproj_output["xyz1"]  # [B, 4, N]
+        
+        # Get the appropriate data vector - RGB for images, features for feature maps
+        if "rgb" in backproj_output:
+            data_vec = backproj_output["rgb"]
+        elif "features" in backproj_output:
+            data_vec = backproj_output["features"]
+        else:
+            raise ValueError("BackProject output must contain either 'rgb' or 'features' key")
+
+        # Render with planar light reflections
+        reflection_output = self.highlight_renderer.forward_planar_light(
+            cloud=cloud,
+            rgb_vec=data_vec,
+            camera_K=camera_intrinsics,
+            camera_T=camera_pose,
+            light_pose=light_pose,
+            light_width=light_width,
+            light_height=light_height,
+            light_samples=light_samples,
+            light_intensity=light_intensity,
+            light_color=light_color,
+            projected_image=projected_image,
+            surface_roughness=surface_roughness,
+            light_attenuation=light_attenuation,
+            reflection_strength=reflection_strength
+        )
+        
+        # Merge backprojection and reflection outputs
+        reflection_output.update(backproj_output)
+        return reflection_output
+
     def forward(self, *args, **kwargs):
         """
         Deprecated: Use forward_point_light() or forward_planar_light() instead.
