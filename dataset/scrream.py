@@ -208,10 +208,11 @@ class SCRREAM(Dataset):
     # -------------------- polarization processing --------------------
 
     def _load_and_process_polarization(self, pol_path: str) -> Dict[str, torch.Tensor]:
-        if POLANALYSER_AVAILABLE:
-            return self._load_and_process_polarization_polanalyser(pol_path)
-        else:
-            return self._load_and_process_polarization_manual(pol_path)
+        # if POLANALYSER_AVAILABLE:
+        #     return self._load_and_process_polarization_polanalyser(pol_path)
+        # else:
+        #     return self._load_and_process_polarization_manual(pol_path)
+        return self._load_and_process_polarization_manual(pol_path)
 
     def _load_and_process_polarization_polanalyser(self, pol_path: str) -> Dict[str, torch.Tensor]:
         # Load composite RGB (0..1), split quadrants

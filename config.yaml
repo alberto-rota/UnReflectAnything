@@ -10,7 +10,6 @@ parameters:
   RUN:
     value: ""
 
-
   DATASETS:
     value:
       SCRREAM:
@@ -29,7 +28,7 @@ parameters:
   SHUFFLE:
     value: True  # Whether to shuffle the dataset
   WORKERS:
-    value: 10  # Number of workers for the dataloader
+    value: 8  # Number of workers for the dataloader
   PIN_MEMORY:
     value: True  # Whether to pin memory for the dataloader
   PREFETCH_FACTOR:
