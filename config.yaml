@@ -3,32 +3,20 @@ parameters:
   NOTES: 
     value: ""  # General notes or comments about the training configuration
 
-  # Project Information
+  # Wandb Project Information
   PROJECT:
     value: "UnReflectAnything"  # Name of the project
 
   RUN:
     value: ""
 
-  # Test videos
+
   DATASETS:
     value:
-      SCARED:
+      SCRREAM:
         PATH: "/datasets/SCARED"
-        FPS: 1
-        FRAMESKIP: [1,2,4,8,16,24,32]
-        TRAIN_VAL_SPLIT: 0.7
-        TEST_VIDEOS: ["v27","v28","v29","v30","v31","v32","v33","v34"]
-        RANDOM_POSE_TRAINING: False # Whether to use random poses for training
-        RANDOM_POSE_RANGES: [10, 9] # Whether to use random poses for training  
-        CURRICULUM_FACTOR:  1  # Curriculum learning factor
-        AUGMENTATION_PROBABILITY: {
-          COLOR: 0.8,
-          GEOMETRIC: 0.25,
-          REVERSE: 0.0,
-          STANDSTILL: 0.0
-        }
-      
+        RHO_S: 0.6
+        EPS: 1.0e-8
 
 
   IMAGE_HEIGHT:  
@@ -46,8 +34,7 @@ parameters:
     value: True  # Whether to pin memory for the dataloader
   PREFETCH_FACTOR:
     value: 2  # Number of prefetch factor for the dataloader
-  FEWFRAMES:
-    value: False # Load only 100 frames
+  
   NO_WANDB:
     value: False # Whether to disable Weights and Biases logging
 

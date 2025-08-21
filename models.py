@@ -174,277 +174,277 @@ class DINOv3(nn.Module):
         return processed_batch.to(image_tensor.device)
 
 
-class TransformerInpaintingDecoder(nn.Module):
-    """
-    Transformer-based decoder for reconstructing RGB images from DINOv3 features.
-    Supports inpainting by combining global and local attention mechanisms.
-    """
+# class TransformerInpaintingDecoder(nn.Module):
+#     """
+#     Transformer-based decoder for reconstructing RGB images from DINOv3 features.
+#     Supports inpainting by combining global and local attention mechanisms.
+#     """
     
-    def __init__(self, config):
-        """
-        Initialize the decoder.
+#     def __init__(self, config):
+#         """
+#         Initialize the decoder.
         
-        Args:
-            config: dict containing:
-                - feature_dim: int, input feature dimension from DINOv3 (default: 768)
-                - hidden_dim: int, hidden dimension for transformer layers (default: 512)
-                - num_heads: int, number of attention heads (default: 8)
-                - num_global_layers: int, number of global transformer layers (default: 4)
-                - num_local_layers: int, number of local transformer layers (default: 2)
-                - patch_size: int, patch size used by DINOv3 (default: 16)
-                - dropout: float, dropout rate (default: 0.1)
-        """
-        super().__init__()
+#         Args:
+#             config: dict containing:
+#                 - feature_dim: int, input feature dimension from DINOv3 (default: 768)
+#                 - hidden_dim: int, hidden dimension for transformer layers (default: 512)
+#                 - num_heads: int, number of attention heads (default: 8)
+#                 - num_global_layers: int, number of global transformer layers (default: 4)
+#                 - num_local_layers: int, number of local transformer layers (default: 2)
+#                 - patch_size: int, patch size used by DINOv3 (default: 16)
+#                 - dropout: float, dropout rate (default: 0.1)
+#         """
+#         super().__init__()
         
-        # Configuration with defaults
-        self.config = {
-            'feature_dim': 768,
-            'hidden_dim': 512, 
-            'num_heads': 8,
-            'num_global_layers': 4,
-            'num_local_layers': 2,
-            'patch_size': 16,
-            'dropout': 0.1,
-            **config
-        }
+#         # Configuration with defaults
+#         self.config = {
+#             'feature_dim': 768,
+#             'hidden_dim': 512, 
+#             'num_heads': 8,
+#             'num_global_layers': 4,
+#             'num_local_layers': 2,
+#             'patch_size': 16,
+#             'dropout': 0.1,
+#             **config
+#         }
         
-        feature_dim = self.config['feature_dim']
-        hidden_dim = self.config['hidden_dim']
-        num_heads = self.config['num_heads']
+#         feature_dim = self.config['feature_dim']
+#         hidden_dim = self.config['hidden_dim']
+#         num_heads = self.config['num_heads']
         
-        # Feature projection
-        self.feature_proj = nn.Sequential(
-            nn.Linear(feature_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(self.config['dropout'])
-        )
+#         # Feature projection
+#         self.feature_proj = nn.Sequential(
+#             nn.Linear(feature_dim, hidden_dim),
+#             nn.LayerNorm(hidden_dim),
+#             nn.ReLU(inplace=True),
+#             nn.Dropout(self.config['dropout'])
+#         )
         
-        # Global transformer - processes all patches to understand overall context
-        global_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
-            dropout=self.config['dropout'],
-            activation='gelu',
-            batch_first=True
-        )
-        self.global_transformer = nn.TransformerEncoder(
-            global_layer, 
-            num_layers=self.config['num_global_layers']
-        )
+#         # Global transformer - processes all patches to understand overall context
+#         global_layer = nn.TransformerEncoderLayer(
+#             d_model=hidden_dim,
+#             nhead=num_heads,
+#             dim_feedforward=hidden_dim * 4,
+#             dropout=self.config['dropout'],
+#             activation='gelu',
+#             batch_first=True
+#         )
+#         self.global_transformer = nn.TransformerEncoder(
+#             global_layer, 
+#             num_layers=self.config['num_global_layers']
+#         )
         
-        # Local transformer - focuses on spatial neighborhoods  
-        local_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=num_heads,
-            dim_feedforward=hidden_dim * 2,
-            dropout=self.config['dropout'],
-            activation='gelu', 
-            batch_first=True
-        )
-        self.local_transformer = nn.TransformerEncoder(
-            local_layer,
-            num_layers=self.config['num_local_layers']
-        )
+#         # Local transformer - focuses on spatial neighborhoods  
+#         local_layer = nn.TransformerEncoderLayer(
+#             d_model=hidden_dim,
+#             nhead=num_heads,
+#             dim_feedforward=hidden_dim * 2,
+#             dropout=self.config['dropout'],
+#             activation='gelu', 
+#             batch_first=True
+#         )
+#         self.local_transformer = nn.TransformerEncoder(
+#             local_layer,
+#             num_layers=self.config['num_local_layers']
+#         )
         
-        # Feature fusion
-        self.fusion = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(self.config['dropout'])
-        )
+#         # Feature fusion
+#         self.fusion = nn.Sequential(
+#             nn.Linear(hidden_dim * 2, hidden_dim),
+#             nn.LayerNorm(hidden_dim),
+#             nn.ReLU(inplace=True),
+#             nn.Dropout(self.config['dropout'])
+#         )
         
-        # Progressive upsampling decoder
-        self.decoder = nn.Sequential(
-            # First upsampling: patch_res -> patch_res * 2
-            nn.ConvTranspose2d(hidden_dim, hidden_dim // 2, 4, stride=2, padding=1),
-            nn.BatchNorm2d(hidden_dim // 2),
-            nn.ReLU(inplace=True),
+#         # Progressive upsampling decoder
+#         self.decoder = nn.Sequential(
+#             # First upsampling: patch_res -> patch_res * 2
+#             nn.ConvTranspose2d(hidden_dim, hidden_dim // 2, 4, stride=2, padding=1),
+#             nn.BatchNorm2d(hidden_dim // 2),
+#             nn.ReLU(inplace=True),
             
-            # Second upsampling: patch_res * 2 -> patch_res * 4
-            nn.ConvTranspose2d(hidden_dim // 2, hidden_dim // 4, 4, stride=2, padding=1),
-            nn.BatchNorm2d(hidden_dim // 4),
-            nn.ReLU(inplace=True),
+#             # Second upsampling: patch_res * 2 -> patch_res * 4
+#             nn.ConvTranspose2d(hidden_dim // 2, hidden_dim // 4, 4, stride=2, padding=1),
+#             nn.BatchNorm2d(hidden_dim // 4),
+#             nn.ReLU(inplace=True),
             
-            # Third upsampling: patch_res * 4 -> patch_res * 8
-            nn.ConvTranspose2d(hidden_dim // 4, hidden_dim // 8, 4, stride=2, padding=1),
-            nn.BatchNorm2d(hidden_dim // 8),
-            nn.ReLU(inplace=True),
+#             # Third upsampling: patch_res * 4 -> patch_res * 8
+#             nn.ConvTranspose2d(hidden_dim // 4, hidden_dim // 8, 4, stride=2, padding=1),
+#             nn.BatchNorm2d(hidden_dim // 8),
+#             nn.ReLU(inplace=True),
             
-            # Fourth upsampling: patch_res * 8 -> patch_res * 16 (full resolution)
-            nn.ConvTranspose2d(hidden_dim // 8, 64, 4, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
+#             # Fourth upsampling: patch_res * 8 -> patch_res * 16 (full resolution)
+#             nn.ConvTranspose2d(hidden_dim // 8, 64, 4, stride=2, padding=1),
+#             nn.BatchNorm2d(64),
+#             nn.ReLU(inplace=True),
             
-            # Final RGB output
-            nn.Conv2d(64, 3, 3, padding=1),
-            nn.Sigmoid()  # RGB values [0, 1]
-        )
+#             # Final RGB output
+#             nn.Conv2d(64, 3, 3, padding=1),
+#             nn.Sigmoid()  # RGB values [0, 1]
+#         )
     
-    def apply_local_attention_windows(self, x, patch_h, patch_w, window_size=7):
-        """
-        Apply local attention in sliding windows for spatial locality.
+#     def apply_local_attention_windows(self, x, patch_h, patch_w, window_size=7):
+#         """
+#         Apply local attention in sliding windows for spatial locality.
         
-        Args:
-            x: [B, N_patches, hidden_dim] - Feature tokens
-            patch_h, patch_w: int - Spatial dimensions of patches
-            window_size: int - Size of attention windows
+#         Args:
+#             x: [B, N_patches, hidden_dim] - Feature tokens
+#             patch_h, patch_w: int - Spatial dimensions of patches
+#             window_size: int - Size of attention windows
             
-        Returns:
-            [B, N_patches, hidden_dim] - Locally attended features
-        """
-        B, N, D = x.shape
+#         Returns:
+#             [B, N_patches, hidden_dim] - Locally attended features
+#         """
+#         B, N, D = x.shape
         
-        # Reshape to spatial format
-        x_spatial = x.view(B, patch_h, patch_w, D)  # [B, H, W, D]
+#         # Reshape to spatial format
+#         x_spatial = x.view(B, patch_h, patch_w, D)  # [B, H, W, D]
         
-        # Pad for windowing if needed
-        pad_h = (window_size - patch_h % window_size) % window_size
-        pad_w = (window_size - patch_w % window_size) % window_size
+#         # Pad for windowing if needed
+#         pad_h = (window_size - patch_h % window_size) % window_size
+#         pad_w = (window_size - patch_w % window_size) % window_size
         
-        if pad_h > 0 or pad_w > 0:
-            x_spatial = F.pad(x_spatial, (0, 0, 0, pad_w, 0, pad_h))
+#         if pad_h > 0 or pad_w > 0:
+#             x_spatial = F.pad(x_spatial, (0, 0, 0, pad_w, 0, pad_h))
         
-        H_pad, W_pad = x_spatial.shape[1], x_spatial.shape[2]
+#         H_pad, W_pad = x_spatial.shape[1], x_spatial.shape[2]
         
-        # Create windows
-        num_windows_h = H_pad // window_size
-        num_windows_w = W_pad // window_size
+#         # Create windows
+#         num_windows_h = H_pad // window_size
+#         num_windows_w = W_pad // window_size
         
-        # Reshape into windows: [B, num_windows, window_size^2, D]
-        x_windows = x_spatial.view(
-            B, num_windows_h, window_size, num_windows_w, window_size, D
-        ).permute(0, 1, 3, 2, 4, 5).contiguous()
+#         # Reshape into windows: [B, num_windows, window_size^2, D]
+#         x_windows = x_spatial.view(
+#             B, num_windows_h, window_size, num_windows_w, window_size, D
+#         ).permute(0, 1, 3, 2, 4, 5).contiguous()
         
-        x_windows = x_windows.view(
-            B * num_windows_h * num_windows_w, window_size * window_size, D
-        )
+#         x_windows = x_windows.view(
+#             B * num_windows_h * num_windows_w, window_size * window_size, D
+#         )
         
-        # Apply local transformer to each window
-        x_windows = self.local_transformer(x_windows)
+#         # Apply local transformer to each window
+#         x_windows = self.local_transformer(x_windows)
         
-        # Reshape back to spatial format
-        x_windows = x_windows.view(
-            B, num_windows_h, num_windows_w, window_size, window_size, D
-        ).permute(0, 1, 3, 2, 4, 5).contiguous()
+#         # Reshape back to spatial format
+#         x_windows = x_windows.view(
+#             B, num_windows_h, num_windows_w, window_size, window_size, D
+#         ).permute(0, 1, 3, 2, 4, 5).contiguous()
         
-        x_local = x_windows.view(B, H_pad, W_pad, D)
+#         x_local = x_windows.view(B, H_pad, W_pad, D)
         
-        # Remove padding if it was added
-        if pad_h > 0 or pad_w > 0:
-            x_local = x_local[:, :patch_h, :patch_w, :]
+#         # Remove padding if it was added
+#         if pad_h > 0 or pad_w > 0:
+#             x_local = x_local[:, :patch_h, :patch_w, :]
         
-        # Reshape back to token format
-        x_local = x_local.view(B, N, D)
+#         # Reshape back to token format
+#         x_local = x_local.view(B, N, D)
         
-        return x_local
+#         return x_local
     
-    def forward(self, dinov3_features, patch_h, patch_w):
-        """
-        Forward pass for image reconstruction.
+#     def forward(self, dinov3_features, patch_h, patch_w):
+#         """
+#         Forward pass for image reconstruction.
         
-        Args:
-            dinov3_features: [B, N_patches, feature_dim] or [B, feature_dim, patch_h, patch_w]
-                           DINOv3 features (patch tokens without CLS/register tokens)
-            patch_h, patch_w: int - Spatial dimensions of the patch grid
+#         Args:
+#             dinov3_features: [B, N_patches, feature_dim] or [B, feature_dim, patch_h, patch_w]
+#                            DINOv3 features (patch tokens without CLS/register tokens)
+#             patch_h, patch_w: int - Spatial dimensions of the patch grid
             
-        Returns:
-            [B, 3, H, W] - Reconstructed RGB image at full resolution
-        """
-        B = dinov3_features.shape[0]
+#         Returns:
+#             [B, 3, H, W] - Reconstructed RGB image at full resolution
+#         """
+#         B = dinov3_features.shape[0]
         
-        # Handle both token and feature map formats
-        if dinov3_features.dim() == 4:  # [B, feature_dim, patch_h, patch_w]
-            # Convert feature maps to tokens
-            x = dinov3_features.flatten(2).transpose(1, 2)  # [B, N_patches, feature_dim]
-        else:  # [B, N_patches, feature_dim] 
-            x = dinov3_features
+#         # Handle both token and feature map formats
+#         if dinov3_features.dim() == 4:  # [B, feature_dim, patch_h, patch_w]
+#             # Convert feature maps to tokens
+#             x = dinov3_features.flatten(2).transpose(1, 2)  # [B, N_patches, feature_dim]
+#         else:  # [B, N_patches, feature_dim] 
+#             x = dinov3_features
         
-        # Project features to hidden dimension
-        x = self.feature_proj(x)  # [B, N_patches, hidden_dim]
+#         # Project features to hidden dimension
+#         x = self.feature_proj(x)  # [B, N_patches, hidden_dim]
         
-        # Global attention - understand overall context
-        x_global = self.global_transformer(x)  # [B, N_patches, hidden_dim]
+#         # Global attention - understand overall context
+#         x_global = self.global_transformer(x)  # [B, N_patches, hidden_dim]
         
-        # Local attention - capture spatial details
-        x_local = self.apply_local_attention_windows(x, patch_h, patch_w)  # [B, N_patches, hidden_dim]
+#         # Local attention - capture spatial details
+#         x_local = self.apply_local_attention_windows(x, patch_h, patch_w)  # [B, N_patches, hidden_dim]
         
-        # Fuse global and local features
-        x_fused = self.fusion(torch.cat([x_global, x_local], dim=-1))  # [B, N_patches, hidden_dim]
+#         # Fuse global and local features
+#         x_fused = self.fusion(torch.cat([x_global, x_local], dim=-1))  # [B, N_patches, hidden_dim]
         
-        # Reshape to spatial format for convolution
-        x_spatial = x_fused.transpose(1, 2).view(
-            B, self.config['hidden_dim'], patch_h, patch_w
-        )  # [B, hidden_dim, patch_h, patch_w]
+#         # Reshape to spatial format for convolution
+#         x_spatial = x_fused.transpose(1, 2).view(
+#             B, self.config['hidden_dim'], patch_h, patch_w
+#         )  # [B, hidden_dim, patch_h, patch_w]
         
-        # Progressive upsampling to reconstruct full resolution image
-        reconstructed_image = self.decoder(x_spatial)  # [B, 3, H, W]
+#         # Progressive upsampling to reconstruct full resolution image
+#         reconstructed_image = self.decoder(x_spatial)  # [B, 3, H, W]
         
-        return reconstructed_image
+#         return reconstructed_image
 
 
-class DINOv3Inpainter(nn.Module):
-    """
-    Complete inpainting model combining DINOv3 encoder and Transformer decoder.
-    """
+# class DINOv3Inpainter(nn.Module):
+#     """
+#     Complete inpainting model combining DINOv3 encoder and Transformer decoder.
+#     """
     
-    def __init__(self, encoder_config, decoder_config):
-        """
-        Initialize the inpainting model.
+#     def __init__(self, encoder_config, decoder_config):
+#         """
+#         Initialize the inpainting model.
         
-        Args:
-            encoder_config: dict - Configuration for DINOv3 encoder
-            decoder_config: dict - Configuration for Transformer decoder
-        """
-        super().__init__()
+#         Args:
+#             encoder_config: dict - Configuration for DINOv3 encoder
+#             decoder_config: dict - Configuration for Transformer decoder
+#         """
+#         super().__init__()
         
-        # DINOv3 encoder with feature maps output
-        encoder_config = {
-            'return_as_feature_maps': True,
-            'return_last_hidden_state': True,
-            **encoder_config
-        }
-        self.encoder = DINOv3(encoder_config)
+#         # DINOv3 encoder with feature maps output
+#         encoder_config = {
+#             'return_as_feature_maps': True,
+#             'return_last_hidden_state': True,
+#             **encoder_config
+#         }
+#         self.encoder = DINOv3(encoder_config)
         
-        # Transformer decoder 
-        decoder_config = {
-            'feature_dim': self.encoder.feature_dim,
-            'patch_size': self.encoder.patch_size,
-            **decoder_config
-        }
-        self.decoder = TransformerInpaintingDecoder(decoder_config)
+#         # Transformer decoder 
+#         decoder_config = {
+#             'feature_dim': self.encoder.feature_dim,
+#             'patch_size': self.encoder.patch_size,
+#             **decoder_config
+#         }
+#         self.decoder = TransformerInpaintingDecoder(decoder_config)
     
-    def forward(self, rgb_image):
-        """
-        Forward pass for inpainting.
+#     def forward(self, rgb_image):
+#         """
+#         Forward pass for inpainting.
         
-        Args:
-            rgb_image: [B, 3, H, W] - Input RGB image (preprocessed for DINOv3)
+#         Args:
+#             rgb_image: [B, 3, H, W] - Input RGB image (preprocessed for DINOv3)
         
-        Returns:
-            [B, 3, H, W] - Inpainted RGB image
-        """
-        B, _, H, W = rgb_image.shape
+#         Returns:
+#             [B, 3, H, W] - Inpainted RGB image
+#         """
+#         B, _, H, W = rgb_image.shape
         
-        # Extract features using DINOv3
-        encoder_outputs = self.encoder(rgb_image)
-        features = encoder_outputs['last_hidden_state']  # [B, feature_dim, patch_h, patch_w]
+#         # Extract features using DINOv3
+#         encoder_outputs = self.encoder(rgb_image)
+#         features = encoder_outputs['last_hidden_state']  # [B, feature_dim, patch_h, patch_w]
         
-        # Get patch dimensions
-        patch_h, patch_w = self.encoder.get_patch_spatial_dims(H, W)
+#         # Get patch dimensions
+#         patch_h, patch_w = self.encoder.get_patch_spatial_dims(H, W)
         
-        # Reconstruct image using transformer decoder
-        reconstructed = self.decoder(features, patch_h, patch_w)  # [B, 3, H_out, W_out]
+#         # Reconstruct image using transformer decoder
+#         reconstructed = self.decoder(features, patch_h, patch_w)  # [B, 3, H_out, W_out]
         
-        # Resize to match input resolution if needed
-        if reconstructed.shape[-2:] != (H, W):
-            reconstructed = F.interpolate(
-                reconstructed, size=(H, W), mode='bilinear', align_corners=False
-            )
+#         # Resize to match input resolution if needed
+#         if reconstructed.shape[-2:] != (H, W):
+#             reconstructed = F.interpolate(
+#                 reconstructed, size=(H, W), mode='bilinear', align_corners=False
+#             )
         
-        return reconstructed
+#         return reconstructed
 
 
 def create_inpainting_model(encoder_config=None, decoder_config=None, device='cuda'):
@@ -659,11 +659,11 @@ class DPTRGBDecoder(nn.Module):
             'fusion_hidden_size': 256,
             'readout_type': 'ignore',  # 'ignore', 'add', or 'project'
             'use_bn': False,
-            'output_size': None,  # If None, maintains input size
+            'output_image_size': (448,448),  # If None, maintains input size
         }
         
         self.config = {**default_config, **(config or {})}
-        
+        self.out_image_size = self.config['output_image_size']
         # Create reassemble layers for multi-scale feature extraction
         self.reassemble_layers = nn.ModuleList([
             DPTReassembleLayer(
@@ -715,8 +715,6 @@ class DPTRGBDecoder(nn.Module):
     def forward(
         self,
         hidden_states: List[torch.Tensor],
-        input_height: int,
-        input_width: int
     ) -> torch.Tensor:
         """
         Forward pass through DPT decoder.
@@ -731,7 +729,7 @@ class DPTRGBDecoder(nn.Module):
             rgb_output: [B, 3, H, W] - RGB image in [0, 1] range
         """
         batch_size = hidden_states[0].shape[0]
-        
+        input_height, input_width = self.out_image_size
         # Calculate patch grid dimensions
         patch_h = input_height // 16  # DINOv3 uses patch_size=16
         patch_w = input_width // 16
@@ -769,8 +767,8 @@ class DPTRGBDecoder(nn.Module):
         rgb_output = self.rgb_head(fused)  # [B, 3, 384, 384]
         
         # Resize to original input size if needed
-        if self.config['output_size'] or (rgb_output.shape[-2:] != (input_height, input_width)):
-            target_size = self.config['output_size'] or (input_height, input_width)
+        if self.config['output_image_size'] or (rgb_output.shape[-2:] != (input_height, input_width)):
+            target_size = self.config['output_image_size'] or (input_height, input_width)
             rgb_output = F.interpolate(
                 rgb_output,
                 size=target_size,
@@ -853,3 +851,327 @@ class DINOv3toDPTRGB(nn.Module):
             {'params': self.decoder.fusion_blocks.parameters(), 'lr': base_lr * 0.5},  # Fusion: 50%
             {'params': self.decoder.rgb_head.parameters(), 'lr': base_lr}  # RGB head: 100%
         ]
+        
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# ---------- 1) POL preprocessing ----------
+class PolarizationPreprocess(nn.Module):
+    """
+    Input:
+      aolp: (B,1,H,W) in radians, typically [0, pi)
+      dolp: (B,1,H,W) in [0,1]
+    Output:
+      (B,3,H,W) = [cos(2*AoLP), sin(2*AoLP), DoLP]
+    """
+    def forward(self, aolp: torch.Tensor, dolp: torch.Tensor) -> torch.Tensor:
+        cos2 = torch.cos(2.0 * aolp)
+        sin2 = torch.sin(2.0 * aolp)
+        return torch.cat([cos2, sin2, dolp.clamp(0,1)], dim=1)
+
+# ---------- 2) Tiny ViT-style POL encoder ----------
+class PatchEmbed(nn.Module):
+    def __init__(self, in_ch=3, embed_dim=768, patch_size=16):
+        super().__init__()
+        self.patch_size = patch_size
+        self.proj = nn.Conv2d(in_ch, embed_dim, kernel_size=patch_size, stride=patch_size)
+    def forward(self, x):           # x: (B,C,H,W)
+        x = self.proj(x)            # (B,embed_dim,H/P,W/P)
+        B, C, Hp, Wp = x.shape
+        x = x.flatten(2).transpose(1, 2)  # (B, N, C) with N = Hp*Wp
+        return x, (Hp, Wp)
+
+class MLP(nn.Module):
+    def __init__(self, dim, mlp_ratio=4.0, drop=0.0):
+        super().__init__()
+        hidden = int(dim * mlp_ratio)
+        self.fc1 = nn.Linear(dim, hidden)
+        self.act = nn.GELU()
+        self.fc2 = nn.Linear(hidden, dim)
+        self.drop = nn.Dropout(drop)
+    def forward(self, x):
+        x = self.fc2(self.drop(self.act(self.fc1(x))))
+        return self.drop(x)
+
+class TransformerBlock(nn.Module):
+    def __init__(self, dim, n_heads=12, drop=0.0):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn = nn.MultiheadAttention(dim, n_heads, dropout=drop, batch_first=True)
+        self.norm2 = nn.LayerNorm(dim)
+        self.mlp = MLP(dim, mlp_ratio=4.0, drop=drop)
+    def forward(self, x):
+        # Self-attention
+        x = x + self.attn(self.norm1(x), self.norm1(x), self.norm1(x), need_weights=False)[0]
+        x = x + self.mlp(self.norm2(x))
+        return x
+
+class POLViTEncoder(nn.Module):
+    """
+    ViT-like encoder for POL features; match DINOv3 hidden dim and patch size.
+    
+    Args:
+        config: Dict containing configuration parameters:
+            - in_ch: int, input channels (default: 3 for cos2θ, sin2θ, DoLP)
+            - embed_dim: int, embedding dimension (default: 768)
+            - depth: int, number of transformer blocks (default: 4)
+            - n_heads: int, number of attention heads (default: 12)
+            - patch_size: int, patch size for embedding (default: 16)
+            - drop: float, dropout rate (default: 0.0)
+    
+    Returns:
+        tokens: (B, N, embed_dim)  # N = (H/P)*(W/P)
+    """
+    def __init__(self, config: Optional[Dict] = None):
+        super().__init__()
+        
+        # Default configuration
+        default_config = {
+            'in_ch': 3,
+            'embed_dim': 768,
+            'depth': 4,
+            'n_heads': 12,
+            'patch_size': 16,
+            'drop': 0.0
+        }
+        
+        self.config = {**default_config, **(config or {})}
+        
+        self.patch = PatchEmbed(
+            self.config['in_ch'], 
+            self.config['embed_dim'], 
+            self.config['patch_size']
+        )
+        self.pos = None  # initialized at first forward pass
+        self.blocks = nn.ModuleList([
+            TransformerBlock(
+                self.config['embed_dim'], 
+                self.config['n_heads'], 
+                self.config['drop']
+            ) for _ in range(self.config['depth'])
+        ])
+        self.norm = nn.LayerNorm(self.config['embed_dim'])
+
+    def forward(self, x):  # x: (B,3,H,W)
+        x, (Hp, Wp) = self.patch(x)  # (B,N,C)
+        # learnable 2D pos embedding (initialized on first run to match N)
+        N = x.shape[1]
+        if (self.pos is None) or (self.pos.shape[1] != N):
+            self.pos = nn.Parameter(torch.zeros(1, N, x.shape[2], device=x.device))
+            nn.init.trunc_normal_(self.pos, std=0.02)
+        x = x + self.pos
+        for blk in self.blocks:
+            x = blk(x)
+        return self.norm(x)  # (B,N,C)
+
+# ---------- 3) Cross-attention block ----------
+class CrossAttentionBlock(nn.Module):
+    """
+    One cross-attention layer with residual + MLP.
+    Q from x_q (e.g., RGB tokens), K/V from x_kv (e.g., POL tokens).
+    Shapes:
+      x_q:  (B, Nq, C)
+      x_kv: (B, Nk, C)
+    Returns:
+      (B, Nq, C) fused features.
+    """
+    def __init__(self, dim=768, n_heads=12, drop=0.0):
+        super().__init__()
+        self.norm_q = nn.LayerNorm(dim)
+        self.norm_kv = nn.LayerNorm(dim)
+        self.cross_attn = nn.MultiheadAttention(dim, n_heads, dropout=drop, batch_first=True)
+        self.norm_out = nn.LayerNorm(dim)
+        self.mlp = MLP(dim, mlp_ratio=4.0, drop=drop)
+
+    def forward(self, x_q, x_kv, attn_mask=None):
+        q = self.norm_q(x_q)
+        kv = self.norm_kv(x_kv)
+        x, _ = self.cross_attn(q, kv, kv, attn_mask=attn_mask, need_weights=False)
+        x = x_q + x                      # residual after attention
+        x = x + self.mlp(self.norm_out(x))  # residual after MLP
+        return x
+
+# ---------- 4) Simple fusion wrapper ----------
+class RGBPOLCrossFuse(nn.Module):
+    """
+    One-way (RGB<-POL) or two-way (bi-directional) fusion.
+    If bi_directional=True, returns concat([RGB_fused, POL_fused]) projected back to dim.
+    """
+    def __init__(self, dim=768, n_heads=12, drop=0.0, bi_directional=False):
+        super().__init__()
+        self.rgb_from_pol = CrossAttentionBlock(dim, n_heads, drop)
+        self.bi = bi_directional
+        if bi_directional:
+            self.pol_from_rgb = CrossAttentionBlock(dim, n_heads, drop)
+            self.proj = nn.Linear(2*dim, dim)
+
+    def forward(self, rgb_tokens, pol_tokens, attn_mask=None):
+        rgb_fused = self.rgb_from_pol(rgb_tokens, pol_tokens, attn_mask)   # Q=RGB, K/V=POL
+        if not self.bi:
+            return rgb_fused
+        pol_fused = self.pol_from_rgb(pol_tokens, rgb_tokens, attn_mask)   # Q=POL, K/V=RGB
+        fused = torch.cat([rgb_fused, pol_fused], dim=-1)
+        return self.proj(fused)  # (B, N_rgb, dim) if N_rgb == N_pol; else up to you
+
+# ------------------ small helpers ------------------
+
+def _is_instance_or_cfg(x, cls):
+    """Return 'instance' if x is an instance of cls, 'cfg' if dict, else raise."""
+    if isinstance(x, cls):
+        return "instance"
+    if isinstance(x, dict):
+        return "cfg"
+    raise TypeError(f"Expected {cls.__name__} instance or dict config, got {type(x)}.")
+
+def _build(component, cls):
+    """
+    Build a component given either an instance of `cls` or a config dict
+    with kwargs for cls(**config_dict).
+    """
+    kind = _is_instance_or_cfg(component, cls)
+    if kind == "instance":
+        return component
+    return cls(component)  # Pass dict as single argument for config-based constructors
+
+# ------------------ top-level model ------------------
+
+class RGBPOLDecomposer(nn.Module):
+    """
+    RGB + POL decomposition with cross-attention and three DPT decoders.
+
+    Inputs (forward):
+      batch["rgb"] : (B,3,H,W) in [0,1]
+      batch["AoP"] : (B,1,H,W) radians
+      batch["DoP"] : (B,1,H,W) in [0,1]
+
+    Returns:
+      {
+        "specular":  (B,3,H,W),
+        "diffuse":   (B,3,H,W),
+        "highlight": (B,1 or 3,H,W)  # depends on decoder config
+        "recon":     (B,3,H,W),      # typically specular + diffuse
+        "tokens": {
+           "rgb": (B,N,C),
+           "pol": (B,N,C),
+           "cross": (B,N,C)
+        }
+      }
+    """
+
+    def __init__(
+        self,
+        # 1) RGB encoder (DINOv3) — instance or config dict
+        dinov3,
+
+        # 2) POL encoder — instance or configs (preprocess is created inside if not passed)
+        pol_encoder=None,                     # POLViTEncoder instance or dict
+        pol_preprocess=None,                  # PolarizationPreprocess instance or dict
+        pol_cross_attn=None,                  # RGBPOLCrossFuse instance or dict
+
+        # 3) Decoders — three DPTRGBDecoder instances or dict configs
+        spec_decoder=None,                    # DPTRGBDecoder instance or dict
+        diffuse_decoder=None,                 # DPTRGBDecoder instance or dict
+        highlight_decoder=None,               # DPTRGBDecoder instance or dict
+
+        # Optional: if your DINO wrapper needs these hints
+        image_size: int = 896,
+        patch_size: int = 16,
+    ):
+        super().__init__()
+
+        # ---- RGB (DINOv3) ----
+        # Accept either an instance or a DINOv3(**cfg) dict
+        self.dinov3 = _build(dinov3, DINOv3)
+
+        self.image_size = image_size
+        self.patch_size = patch_size
+        self.embed_dim = self.dinov3.feature_dim
+
+        # ---- POL branch ----
+        # Preprocess (AoLP, DoLP) → [cos2θ, sin2θ, DoLP]
+        if pol_preprocess is None:
+            self.pol_pre = PolarizationPreprocess()
+        else:
+            self.pol_pre = _build(pol_preprocess, PolarizationPreprocess)
+
+        # Encoder (ViT-like), align dim/patch with DINO
+        if pol_encoder is None:
+            self.pol_enc = POLViTEncoder(in_ch=3, embed_dim=self.embed_dim, depth=4, n_heads=12, patch_size=patch_size)
+        else:
+            self.pol_enc = _build(pol_encoder, POLViTEncoder)
+
+        # Cross-attention: Q=RGB, K/V=POL
+        if pol_cross_attn is None:
+            self.cross = RGBPOLCrossFuse(dim=self.embed_dim, n_heads=12, drop=0.0, bi_directional=False)
+        else:
+            self.cross = _build(pol_cross_attn, RGBPOLCrossFuse)
+
+        # ---- Decoders (DPTRGBDecoder) ----
+        # Each can control its own out_channels inside the config (e.g., 3 for S/D, 1 for H)
+        if spec_decoder is None:
+            # Minimal default: your DPTRGBDecoder likely needs at least decoder_config / dim / image_size
+            spec_decoder = {"decoder_config": {"use_bn": True, "readout_type": "project"},
+                            "embed_dim": self.embed_dim, "image_size": image_size}
+        if diffuse_decoder is None:
+            diffuse_decoder = {"decoder_config": {"use_bn": True, "readout_type": "project"},
+                               "embed_dim": self.embed_dim, "image_size": image_size}
+        if highlight_decoder is None:
+            # Often a 1-channel mask is useful; set out_channels=1 if your DPTRGBDecoder supports it.
+            highlight_decoder = {"decoder_config": {"use_bn": True, "readout_type": "project", "out_channels": 1},
+                                 "embed_dim": self.embed_dim, "image_size": image_size}
+
+        # Normalize configs → instances
+        def build_dpt(dec):
+            if isinstance(dec, DPTRGBDecoder):
+                return dec
+            if isinstance(dec, dict):
+                # DPTRGBDecoder takes a single config dict
+                config = {
+                    'feature_dim': self.embed_dim,
+                    **dec.get("decoder_config", {})
+                }
+                return DPTRGBDecoder(config)
+            raise TypeError("Decoder must be DPTRGBDecoder instance or dict.")
+
+        self.decS = build_dpt(spec_decoder)
+        self.decD = build_dpt(diffuse_decoder)
+        self.decH = build_dpt(highlight_decoder)
+
+    def _rgb_tokens(self, rgb_preproc):
+        """Extract DINOv3 tokens and infer (Hp, Wp) if wrapper doesn’t return them."""
+        out = self.dinov3(rgb_preproc)
+        tokens = out.get("last_hidden_state", out.get("tokens"))
+        if tokens is None:
+            raise KeyError("DINOv3 wrapper must return 'last_hidden_state' or 'tokens'.")
+        Hp = self.image_size // self.patch_size
+        Wp = self.image_size // self.patch_size
+        return tokens, (Hp, Wp)
+
+    def forward(self, batch):
+        # 1) RGB → DINO tokens
+        rgb_in = self.dinov3.preprocess_image(batch["rgb"])
+        rgb_tokens, grid_hw = self._rgb_tokens(rgb_in)         # (B,N,C), (Hp,Wp)
+
+        # 2) POL → preprocess → POL tokens
+        pol_in = self.pol_pre(batch["AoP"], batch["DoP"])      # (B,3,H,W)
+        pol_tokens = self.pol_enc(pol_in)                      # (B,N,C)
+
+        # 3) CROSS (Q=RGB, K/V=POL)
+        cross_tokens = self.cross(rgb_tokens, pol_tokens)      # (B,N,C)
+        # 5) DPT decoders expect multi-scale hidden states
+        # For now, use the same fused tokens for all scales (this can be improved)
+        hidden_states = [cross_tokens] * 4  # DPT expects 4 scale levels
+        
+        # 6) Decode with three DPTRGBDecoder heads
+        S = self.decS(hidden_states)      # Specular  (B,3,H,W)
+        D = self.decD(hidden_states)      # Diffuse   (B,3,H,W)
+        H = self.decH(hidden_states)      # Highlight (B,3,H,W)
+
+        return {
+            "specular": S,
+            "diffuse": D,
+            "highlight": H,
+            "tokens": {"rgb": rgb_tokens, "pol": pol_tokens, "cross": cross_tokens}
+        }
