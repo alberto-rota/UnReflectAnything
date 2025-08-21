@@ -493,3 +493,363 @@ def pad_to_patch_size(image_tensor, patch_size=16):
         return padded, (h, w)
     else:
         return image_tensor, (h, w)
+    
+    import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Dict, List, Optional, Tuple
+
+
+class DPTReassembleLayer(nn.Module):
+    """
+    Reassemble layer to convert transformer tokens to spatial feature maps.
+    Handles projection, spatial rearrangement, and upsampling/downsampling.
+    """
+    
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int, 
+        scale_factor: float,
+        readout_type: str = "ignore"
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.scale_factor = scale_factor
+        self.readout_type = readout_type
+        
+        # Readout projection if using "project" method
+        if readout_type == "project":
+            self.readout_project = nn.Sequential(
+                nn.Linear(2 * in_channels, in_channels),
+                nn.GELU()
+            )
+        
+        # Channel projection
+        self.proj = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        
+        # Spatial resampling based on scale factor
+        if scale_factor == 4.0:
+            # 4x upsampling: 24x24 -> 96x96
+            self.resample = nn.ConvTranspose2d(
+                out_channels, out_channels,
+                kernel_size=8, stride=4, padding=2, bias=True
+            )
+        elif scale_factor == 2.0:
+            # 2x upsampling: 24x24 -> 48x48
+            self.resample = nn.ConvTranspose2d(
+                out_channels, out_channels,
+                kernel_size=4, stride=2, padding=1, bias=True
+            )
+        elif scale_factor == 1.0:
+            # No resampling: 24x24 -> 24x24
+            self.resample = nn.Identity()
+        elif scale_factor == 0.5:
+            # 0.5x downsampling: 24x24 -> 12x12
+            self.resample = nn.Conv2d(
+                out_channels, out_channels,
+                kernel_size=3, stride=2, padding=1, bias=True
+            )
+    
+    def forward(self, hidden_state: torch.Tensor, patch_h: int, patch_w: int) -> torch.Tensor:
+        """
+        Args:
+            hidden_state: [B, N_tokens, feature_dim] - includes CLS + register + patch tokens
+            patch_h, patch_w: Spatial dimensions of patches
+        Returns:
+            [B, out_channels, H', W'] - Spatial feature map
+        """
+        batch_size = hidden_state.shape[0]
+        
+        # For DINOv3: Remove CLS token (index 0) and register tokens (indices 1-4)
+        # Keep only patch tokens starting from index 5
+        patch_tokens = hidden_state[:, 5:, :]  # [B, patch_h*patch_w, feature_dim]
+        
+        # Handle readout token integration
+        if self.readout_type == "project":
+            # Get CLS token and expand to all spatial positions
+            readout = hidden_state[:, 0:1, :].expand_as(patch_tokens)  # [B, patch_h*patch_w, feature_dim]
+            # Concatenate and project
+            patch_tokens = torch.cat([patch_tokens, readout], dim=-1)  # [B, patch_h*patch_w, 2*feature_dim]
+            patch_tokens = self.readout_project(patch_tokens)  # [B, patch_h*patch_w, feature_dim]
+        elif self.readout_type == "add":
+            # Add CLS token to all patch tokens
+            readout = hidden_state[:, 0:1, :]  # [B, 1, feature_dim]
+            patch_tokens = patch_tokens + readout
+        
+        # Reshape to spatial format
+        patch_tokens = patch_tokens.transpose(1, 2)  # [B, feature_dim, patch_h*patch_w]
+        patch_tokens = patch_tokens.reshape(batch_size, self.in_channels, patch_h, patch_w)  # [B, feature_dim, patch_h, patch_w]
+        
+        # Project channels
+        patch_tokens = self.proj(patch_tokens)  # [B, out_channels, patch_h, patch_w]
+        
+        # Resample spatial resolution
+        output = self.resample(patch_tokens)  # [B, out_channels, H', W']
+        
+        return output
+
+
+class DPTFeatureFusionBlock(nn.Module):
+    """
+    Feature fusion block based on RefineNet architecture.
+    Combines features from different scales using residual connections.
+    """
+    
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int = 256,
+        use_bn: bool = False
+    ):
+        super().__init__()
+        
+        self.residual_conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=not use_bn)
+        self.residual_conv2 = nn.Sequential(
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=not use_bn),
+            nn.BatchNorm2d(out_channels) if use_bn else nn.Identity(),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=not use_bn),
+            nn.BatchNorm2d(out_channels) if use_bn else nn.Identity()
+        )
+        
+        self.relu = nn.ReLU(inplace=True)
+        
+        # Output projection
+        self.out_conv = nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=True)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, in_channels, H, W]
+        Returns:
+            [B, out_channels, H, W]
+        """
+        # Project to output channels
+        residual = self.residual_conv1(x)  # [B, out_channels, H, W]
+        
+        # Residual refinement
+        out = self.residual_conv2(residual)  # [B, out_channels, H, W]
+        out = self.relu(out + residual)  # [B, out_channels, H, W]
+        
+        # Final projection
+        out = self.out_conv(out)  # [B, out_channels, H, W]
+        
+        return out
+
+
+class DPTRGBDecoder(nn.Module):
+    """
+    DPT decoder adapted for RGB output from DINOv3 features.
+    Implements multi-scale reassembly, progressive fusion, and RGB prediction head.
+    """
+    
+    def __init__(
+        self,
+        config: Optional[Dict] = None
+    ):
+        super().__init__()
+        
+        # Default configuration
+        default_config = {
+            'feature_dim': 768,  # DINOv3 ViT-B feature dimension
+            'reassemble_out_channels': [96, 192, 384, 768],  # Neck hidden sizes
+            'reassemble_factors': [4.0, 2.0, 1.0, 0.5],  # Spatial scale factors
+            'fusion_hidden_size': 256,
+            'readout_type': 'ignore',  # 'ignore', 'add', or 'project'
+            'use_bn': False,
+            'output_size': None,  # If None, maintains input size
+        }
+        
+        self.config = {**default_config, **(config or {})}
+        
+        # Create reassemble layers for multi-scale feature extraction
+        self.reassemble_layers = nn.ModuleList([
+            DPTReassembleLayer(
+                in_channels=self.config['feature_dim'],
+                out_channels=out_ch,
+                scale_factor=scale,
+                readout_type=self.config['readout_type']
+            )
+            for out_ch, scale in zip(
+                self.config['reassemble_out_channels'],
+                self.config['reassemble_factors']
+            )
+        ])
+        
+        # Create fusion blocks for progressive feature combination
+        fusion_in_channels = self.config['reassemble_out_channels']
+        self.fusion_blocks = nn.ModuleList([
+            DPTFeatureFusionBlock(
+                in_channels=ch,
+                out_channels=self.config['fusion_hidden_size'],
+                use_bn=self.config['use_bn']
+            )
+            for ch in fusion_in_channels
+        ])
+        
+        # RGB prediction head
+        self.rgb_head = nn.Sequential(
+            # First stage: 256 -> 128 channels with spatial refinement
+            nn.Conv2d(self.config['fusion_hidden_size'], 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128) if self.config['use_bn'] else nn.Identity(),
+            nn.ReLU(inplace=True),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),  # 192x192 -> 384x384
+            
+            # Second stage: 128 -> 64 channels with feature refinement
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64) if self.config['use_bn'] else nn.Identity(),
+            nn.ReLU(inplace=True),
+            
+            # Third stage: 64 -> 32 channels
+            nn.Conv2d(64, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32) if self.config['use_bn'] else nn.Identity(),
+            nn.ReLU(inplace=True),
+            
+            # Final RGB projection
+            nn.Conv2d(32, 3, kernel_size=1),
+            nn.Sigmoid()  # Output in [0, 1] range
+        )
+    
+    def forward(
+        self,
+        hidden_states: List[torch.Tensor],
+        input_height: int,
+        input_width: int
+    ) -> torch.Tensor:
+        """
+        Forward pass through DPT decoder.
+        
+        Args:
+            hidden_states: List of 4 tensors from DINOv3 selected layers
+                          Each tensor: [B, N_tokens, feature_dim] where N_tokens = 5 + (H/16) * (W/16)
+            input_height: Original input image height
+            input_width: Original input image width
+        
+        Returns:
+            rgb_output: [B, 3, H, W] - RGB image in [0, 1] range
+        """
+        batch_size = hidden_states[0].shape[0]
+        
+        # Calculate patch grid dimensions
+        patch_h = input_height // 16  # DINOv3 uses patch_size=16
+        patch_w = input_width // 16
+        
+        # Apply reassemble layers to create multi-scale feature maps
+        reassembled_features = []
+        for i, (hidden_state, reassemble) in enumerate(zip(hidden_states, self.reassemble_layers)):
+            feature_map = reassemble(hidden_state, patch_h, patch_w)
+            reassembled_features.append(feature_map)
+        
+        # Expected spatial dimensions after reassembly (for 384x384 input):
+        # Stage 0: [B, 96, 96, 96]   (4x upsampling from 24x24)
+        # Stage 1: [B, 192, 48, 48]  (2x upsampling from 24x24)
+        # Stage 2: [B, 384, 24, 24]  (no resampling)
+        # Stage 3: [B, 768, 12, 12]  (0.5x downsampling from 24x24)
+        
+        # Progressive fusion from smallest to largest scale
+        # Start with smallest scale (stage 3)
+        fused = self.fusion_blocks[3](reassembled_features[3])  # [B, 256, 12, 12]
+        fused = F.interpolate(fused, scale_factor=2, mode='bilinear', align_corners=False)  # [B, 256, 24, 24]
+        
+        # Add stage 2 features
+        fused = fused + self.fusion_blocks[2](reassembled_features[2])  # [B, 256, 24, 24]
+        fused = F.interpolate(fused, scale_factor=2, mode='bilinear', align_corners=False)  # [B, 256, 48, 48]
+        
+        # Add stage 1 features
+        fused = fused + self.fusion_blocks[1](reassembled_features[1])  # [B, 256, 48, 48]
+        fused = F.interpolate(fused, scale_factor=2, mode='bilinear', align_corners=False)  # [B, 256, 96, 96]
+        
+        # Add stage 0 features
+        fused = fused + self.fusion_blocks[0](reassembled_features[0])  # [B, 256, 96, 96]
+        fused = F.interpolate(fused, scale_factor=2, mode='bilinear', align_corners=False)  # [B, 256, 192, 192]
+        
+        # Apply RGB head
+        rgb_output = self.rgb_head(fused)  # [B, 3, 384, 384]
+        
+        # Resize to original input size if needed
+        if self.config['output_size'] or (rgb_output.shape[-2:] != (input_height, input_width)):
+            target_size = self.config['output_size'] or (input_height, input_width)
+            rgb_output = F.interpolate(
+                rgb_output,
+                size=target_size,
+                mode='bilinear',
+                align_corners=False
+            )
+        
+        return rgb_output
+
+
+class DINOv3toDPTRGB(nn.Module):
+    """
+    Complete model combining DINOv3 encoder with DPT RGB decoder.
+    Compatible with the provided DINOv3 class.
+    """
+    
+    def __init__(
+        self,
+        dinov3_model,
+        decoder_config: Optional[Dict] = None,
+        selected_layers: List[int] = [2, 5, 8, 11]
+    ):
+        super().__init__()
+        
+        self.dinov3 = dinov3_model
+        self.selected_layers = selected_layers
+        
+        # Configure DINOv3 to return selected hidden states
+        self.dinov3.config['return_selected_layers'] = selected_layers
+        self.dinov3.config['return_as_feature_maps'] = False  # We need tokens for reassembly
+        
+        # Initialize decoder with DINOv3's feature dimension
+        decoder_config = decoder_config or {}
+        decoder_config['feature_dim'] = self.dinov3.feature_dim
+        
+        self.decoder = DPTRGBDecoder(decoder_config)
+    
+    def forward(self, rgb_image: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            rgb_image: [B, 3, H, W] - Input RGB image (preprocessed for DINOv3)
+        
+        Returns:
+            rgb_output: [B, 3, H, W] - Predicted RGB image in [0, 1] range
+        """
+        batch_size, _, input_h, input_w = rgb_image.shape
+        
+        # Get DINOv3 features from selected layers
+        dinov3_output = self.dinov3(rgb_image)
+        hidden_states = dinov3_output['selected_hidden_states']  # List of [B, N_tokens, feature_dim]
+        
+        # Pass through DPT decoder
+        rgb_output = self.decoder(hidden_states, input_h, input_w)
+        
+        return rgb_output
+    
+    def freeze_encoder(self):
+        """Freeze DINOv3 encoder parameters for efficient fine-tuning."""
+        for param in self.dinov3.parameters():
+            param.requires_grad = False
+    
+    def unfreeze_encoder(self):
+        """Unfreeze DINOv3 encoder parameters for full fine-tuning."""
+        for param in self.dinov3.parameters():
+            param.requires_grad = True
+    
+    def get_parameter_groups(self, base_lr: float = 1e-4):
+        """
+        Get parameter groups with differential learning rates.
+        
+        Args:
+            base_lr: Base learning rate for the RGB head
+        
+        Returns:
+            List of parameter groups for optimizer
+        """
+        return [
+            {'params': self.dinov3.parameters(), 'lr': base_lr * 0.1},  # Encoder: 10% of base LR
+            {'params': self.decoder.reassemble_layers.parameters(), 'lr': base_lr * 0.5},  # Reassemble: 50%
+            {'params': self.decoder.fusion_blocks.parameters(), 'lr': base_lr * 0.5},  # Fusion: 50%
+            {'params': self.decoder.rgb_head.parameters(), 'lr': base_lr}  # RGB head: 100%
+        ]

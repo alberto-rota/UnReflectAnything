@@ -5,7 +5,7 @@ parameters:
 
   # Project Information
   PROJECT:
-    value: "EndoMatch"  # Name of the project
+    value: "UnReflectAnything"  # Name of the project
 
   RUN:
     value: ""
@@ -32,9 +32,9 @@ parameters:
 
 
   IMAGE_HEIGHT:  
-    value: 874  # Height of the input images
+    value: 448  # Height of the input images
   IMAGE_WIDTH:
-    value: 1132  # Width of the input images
+    value: 448  # Width of the input images
 
   BATCH_SIZE:
     value: 4  # Batch size for training
