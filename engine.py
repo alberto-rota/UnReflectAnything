@@ -41,16 +41,18 @@ except ImportError:
     UTILITIES_AVAILABLE = False
     print("Warning: Some utilities not available")
 
-# Import metrics_for_wandb function if available
-try:
-    from utilities.metrics import metrics_for_wandb
-    METRICS_AVAILABLE = True
-except ImportError:
-    METRICS_AVAILABLE = False
-    # Define a simple fallback function
-    def metrics_for_wandb(metrics, phase):
-        """Simple fallback for metrics formatting"""
-        return {f"{phase}/{k}": v for k, v in metrics.items()}
+
+def metrics_for_wandb(metrics, phase):
+    """Simple fallback for metrics formatting"""
+    formatted_metrics = {}
+    for k, v in metrics.items():
+        if "Step" in k:
+            # Keep Step metrics unchanged
+            formatted_metrics[k] = v
+        else:
+            # Add phase prefix to non-Step metrics
+            formatted_metrics[f"{phase}/{k}"] = v
+    return formatted_metrics
 
 
 class Engine:
@@ -519,6 +521,7 @@ class Engine:
             drop_last=True,
             pin_memory=self.config.PIN_MEMORY,
             prefetch_factor=self.config.PREFETCH_FACTOR,
+            shuffle=self.config.SHUFFLE,
         )
         
         if len(dataloader) == 0:
@@ -534,6 +537,9 @@ class Engine:
         
         base_lr = self.optimizer.param_groups[0]["lr"]
         
+        # Get image logging frequency from config
+        image_log_interval = self.config.get("IMAGE_LOG_INTERVAL", 20)
+        
         with self.choose_if_grad(phase):
             for batch_idx, sample in enumerate(dataloader):
                 
@@ -542,6 +548,13 @@ class Engine:
                 
                 # Calculate step for warmup logic
                 step = self.step["epoch"] * len(dataloader) + batch_idx
+                
+                # Determine if we should log images on this batch
+                log_images_this_batch = (
+                    batch_idx > 0
+                    and batch_idx % image_log_interval == 0
+                    and image_log_interval > 1
+                ) or (batch_idx == len(dataloader) - 1 and not images_logged)
                 
                 # Warmup logic
                 if is_training and step < self.warmup_steps:
@@ -557,7 +570,6 @@ class Engine:
                     "DoP": sample["DoP"].to(self.device),
                     "f_spec": sample["f_spec"].to(self.device),
                 }
-                
                 # Forward pass through the model
                 decomposition = self.model(batch)
                 
@@ -618,6 +630,18 @@ class Engine:
                     ignore_index=True,
                 )
                 
+                # Image logging to wandb
+                if log_images_this_batch and self.wandb:
+                    try:
+                        images = self.create_visualization_images(
+                            batch, decomposition, sample
+                        )
+                        if images:
+                            metrics.update(images)
+                            images_logged = True
+                    except Exception as e:
+                        self.logger.warning(f"Failed to create visualization images: {e}", context=phase.upper())
+                
                 # Console logging
                 if batch_idx % self.config.get("LOG_INTERVAL", 10) == 0:
                     extra_info = "W" if is_training and step < self.warmup_steps else None
@@ -636,7 +660,6 @@ class Engine:
                     self.wandb.log(wandb_metrics)
                 
                 # Memory cleanup
-
                 if 'batch' in locals():
                     del batch
                 if 'decomposition' in locals():
@@ -698,6 +721,106 @@ class Engine:
         """Conditionally use torch.no_grad based on the given mode."""
         with torch.no_grad() if mode in ["Validation", "Test"] else nullcontext():
             yield
+
+    def create_visualization_images(self, batch, decomposition, sample, batch_idx=0):
+        """
+        Creates visualization images for polarization-based reflection removal training.
+        
+        Args:
+            batch (dict): Input batch containing rgb, AoP, DoP, f_spec
+            decomposition (dict): Model output containing specular, diffuse, recon
+            sample (dict): Original sample from dataset
+            batch_idx (int): Batch index to visualize
+            
+        Returns:
+            dict: Dictionary of wandb.Image objects for visualization
+        """
+        try:
+            import wandb
+            from PIL import Image
+            import torchvision.transforms as transforms
+            
+            # Convert tensors to CPU and detach for visualization
+            def to_cpu_image(tensor):
+                if tensor is None:
+                    return None
+                    
+                if tensor.dim() == 4:  # [B, C, H, W]
+                    tensor = tensor[batch_idx]  # Take first batch
+                elif tensor.dim() == 3:  # [C, H, W]
+                    pass
+                elif tensor.dim() == 2:  # [H, W] - single channel
+                    tensor = tensor.unsqueeze(0)  # Add channel dimension
+                else:
+                    return None
+                
+                # Convert to PIL Image
+                tensor = tensor.cpu().detach().clamp(0, 1)
+                to_pil = transforms.ToPILImage()
+                return to_pil(tensor)
+            
+            # Create visualization dictionary
+            visualization_dict = {}
+            
+            # Original RGB image
+            if 'rgb' in batch:
+                rgb_img = to_cpu_image(batch['rgb'])
+                if rgb_img:
+                    visualization_dict[f"{batch_idx}/Input_RGB"] = wandb.Image(rgb_img, caption="Input RGB Image")
+            
+            # Specular component
+            if 'specular' in decomposition:
+                spec_img = to_cpu_image(decomposition['specular'])
+                if spec_img:
+                    visualization_dict[f"{batch_idx}/Specular"] = wandb.Image(spec_img, caption="Predicted Specular Component")
+            
+            # Diffuse component
+            if 'diffuse' in decomposition:
+                diff_img = to_cpu_image(decomposition['diffuse'])
+                if diff_img:
+                    visualization_dict[f"{batch_idx}/Diffuse"] = wandb.Image(diff_img, caption="Predicted Diffuse Component")
+            
+            # Reconstruction
+            if 'recon' in decomposition:
+                recon_img = to_cpu_image(decomposition['recon'])
+                if recon_img:
+                    visualization_dict[f"{batch_idx}/Reconstruction"] = wandb.Image(recon_img, caption="Reconstruction (Specular + Diffuse)")
+            
+            # Polarization data visualization
+            if 'AoP' in batch:
+                aop_img = to_cpu_image(batch['AoP'])
+                if aop_img:
+                    visualization_dict[f"{batch_idx}/AoP"] = wandb.Image(aop_img, caption="Angle of Polarization")
+            
+            if 'DoP' in batch:
+                dop_img = to_cpu_image(batch['DoP'])
+                if dop_img:
+                    visualization_dict[f"{batch_idx}/DoP"] = wandb.Image(dop_img, caption="Degree of Polarization")
+            
+            if 'f_spec' in batch:
+                fspec_img = to_cpu_image(batch['f_spec'])
+                if fspec_img:
+                    visualization_dict[f"{batch_idx}/Specular_Fraction"] = wandb.Image(fspec_img, caption="Specular Fraction")
+            
+            # Ground truth specular/diffuse if available
+            if 'specular' in sample:
+                gt_spec_img = to_cpu_image(sample['specular'])
+                if gt_spec_img:
+                    visualization_dict[f"{batch_idx}/GT_Specular"] = wandb.Image(gt_spec_img, caption="Ground Truth Specular")
+            
+            if 'diffuse' in sample:
+                gt_diff_img = to_cpu_image(sample['diffuse'])
+                if gt_diff_img:
+                    visualization_dict[f"{batch_idx}/GT_Diffuse"] = wandb.Image(gt_diff_img, caption="Ground Truth Diffuse")
+            
+            return visualization_dict
+            
+        except ImportError:
+            self.logger.warning("wandb or PIL not available for image visualization", context="VISUALIZATION")
+            return {}
+        except Exception as e:
+            self.logger.warning(f"Error creating visualization images: {e}", context="VISUALIZATION")
+            return {}
 
     def reinstantiate_model_from_checkpoint(self, checkpoint_path=None):
         """

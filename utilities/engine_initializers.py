@@ -45,10 +45,12 @@ def dataloaders(dataset, config):
     training_dl = torch.utils.data.DataLoader(
         training_ds,
         batch_size=config["BATCH_SIZE"],
+        shuffle=config["SHUFFLE"]
     )
     validation_dl = torch.utils.data.DataLoader(
         validation_ds,
         batch_size=config["BATCH_SIZE"],
+        shuffle=config["SHUFFLE"]
     )
 
     return {
@@ -282,7 +284,8 @@ def wandb(config, model=None, notes="", no_wandb=False):
     stderr_capture = io.StringIO()
     with contextlib.redirect_stderr(stderr_capture):
         wandb_instance = weightsandbiases.init(
-            project=config.get("PROJECT", "UnReflectAnything"),
+            entity=config.get("WANDB_ENTITY", "unreflectanything"),
+            project=config.get("WANDB_PROJECT", "UnReflectAnything"),
             config=config,
             notes=notes,
             resume=("must" if resume_run is not None else "allow"),
@@ -296,7 +299,7 @@ def wandb(config, model=None, notes="", no_wandb=False):
     wandb_links = re.findall(url_pattern, captured_stderr)
     try:
         logger.info(
-            f"Created run [yellow]{wandb_instance.name}[/] in proiect [orange1]{wandb_instance.project}[/]"
+            f"Created run [yellow]{wandb_instance.name}[/] in project [orange1]{wandb_instance.project}[/]"
         )
         logger.info("[yellow]󰙨 Wandb RUN    [/]:", wandb_links[2])
         logger.info("[orange1]󱗼 Wandb PROJECT[/]:", wandb_links[1])
@@ -320,7 +323,7 @@ def wandb(config, model=None, notes="", no_wandb=False):
             "Inliers",
             "MDistMean",
         ]
-    )
+        )
 
     # Model Watcher
     wandb_instance.watch(model, log="all", log_freq=config["MODEL_WATCHER_FREQ_WANDB"])

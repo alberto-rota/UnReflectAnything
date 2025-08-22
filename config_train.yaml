@@ -18,10 +18,12 @@ parameters:
     value: true
   SIMPLIFY_UPSAMPLING:
     value: true
+  SHUFFLE:
+    value: true
   
   # Training configuration
   BATCH_SIZE:
-    value: 4
+    value: 16
   WORKERS:
     value: 4
   PIN_MEMORY:
@@ -60,7 +62,10 @@ parameters:
     value: False
   MODEL_WATCHER_FREQ_WANDB:
     value: 100
-  
+  WANDB_ENTITY:
+    value: "unreflect-anything"
+  WANDB_PROJECT:
+    value: "UnReflectAnything"
   # Gradient accumulation and warmup
   GRADIENT_ACCUMULATION_STEPS:
     value: 1
