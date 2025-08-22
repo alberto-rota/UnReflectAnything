@@ -1,67 +1,42 @@
 parameters:
 
+### WANDB LOGGING
   NOTES: 
     value: ""  # General notes or comments about the training configuration
-
-  # Wandb Project Information
   PROJECT:
     value: "UnReflectAnything"  # Name of the project
-
   RUN:
-    value: ""
-
-  DATASETS:
-    value:
-      SCRREAM:
-        PATH: "/datasets/SCARED"
-        RHO_S: 0.6
-        EPS: 1.0e-8
-
-
-  IMAGE_HEIGHT:  
-    value: 448  # Height of the input images
-  IMAGE_WIDTH:
-    value: 448  # Width of the input images
-
-  BATCH_SIZE:
-    value: 4  # Batch size for training
-  SHUFFLE:
-    value: True  # Whether to shuffle the dataset
-  WORKERS:
-    value: 8  # Number of workers for the dataloader
-  PIN_MEMORY:
-    value: True  # Whether to pin memory for the dataloader
-  PREFETCH_FACTOR:
-    value: 2  # Number of prefetch factor for the dataloader
-  
+    value: "" # Name of the run (used if resuming)
   NO_WANDB:
     value: False # Whether to disable Weights and Biases logging
 
-  # Matching Parameters
+
+### DATA LOADING
+  BATCH_SIZE:
+    value: 16  # Batch size for training
+  IMAGE_HEIGHT:  
+    value: 224  # Height of the input images
+  IMAGE_WIDTH:
+    value: 224  # Width of the input images
+  DATASETS:
+    value:
+      SCRREAM:
+        PATH: "/datasets/SCRREAM"
+        RHO_S: 0.6
+        EPS: 1.0e-8
+  SHUFFLE:
+    value: True  # Whether to shuffle the dataset
+  WORKERS:
+    value: 4  # Number of workers for the dataloader
+  PIN_MEMORY:
+    value: False  # Whether to pin memory for the dataloader
+  PREFETCH_FACTOR:
+    value: 1  # Number of prefetch factor for the dataloader
   DEPTH_SCALE_FACTOR:
-    value: 40 # Scale factor for the depth map
+    value: 1.0e-3  # Scale factor for the depth loss
   DEPTH_BIAS_FACTOR:
-    value: 60 # Bias factor for the depth map
-  TRIPLETS_TO_MINE:
-    value: 32 # Number of triplets to mine for each image
-  PATCH_MATCHING_SCORE_THRESHOLD:
-    value: 0.95 # Matching score threshold
-  PIXEL_MATCHING_SCORE_THRESHOLD:
-    value: 0.75 # # LOWE Score
-  MIN_MATCHES_TO_COLLECT:
-    value: 200 # Minimum number of matches to gather
-  MAX_MATCHES_TO_PROCESS:
-    value: 1000 # Maximum number of matches to process per batch to avoid OOM
-  MAX_EPIPOLAR_DISTANCE:
-    value: 4 # Maximum epipolar distance to consider a match as inlier
-  REFINEMENT_AREA:
-    value: 16 # Area (in Pixels) used to refine the patch matching
-  SCORE_WEIGHTS:
-    value: {
-      DESCRIPTOR: 0.2,
-      REFINEMENT: 0.3,
-      EPIPOLAR: 0.6
-    }
+    value: 1.0e-3  # Bias factor for the depth loss
+
 
   BACKBONE_BRAND: # ["intel","facebook"]
     value: "intel"  # Brand of the backbonde model

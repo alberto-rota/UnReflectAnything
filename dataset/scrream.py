@@ -5,6 +5,9 @@ import numpy as np
 from PIL import Image
 from typing import Dict, Tuple, Optional, List
 from torch.utils.data import Dataset, DataLoader
+from functools import lru_cache
+import warnings
+import torch.nn.functional as F
 
 try:
     import polanalyser as pa
@@ -16,19 +19,12 @@ except ImportError:
 
 class SCRREAM(Dataset):
     """
-    Dataset for loading RGB and polarization images with computed features.
-
-    Expected folder structure:
-    root_dir/
-    ├── scene1/
-    │   ├── rgb/  └── *.png
-    │   ├── pol/  └── *.png
-    │   └── intrinsics.txt
-    ├── scene2/
-    │   ├── rgb/  └── *.png
-    │   ├── pol/  └── *.png
-    │   └── intrinsics.txt
-    ...
+    Optimized version of SCRREAM dataset with performance improvements:
+    1. Reduced tensor/numpy conversions
+    2. Optional caching
+    3. Simplified processing pipeline  
+    4. Batch-friendly operations
+    5. Consistent image sizing for batching
     """
 
     def __init__(
@@ -39,128 +35,158 @@ class SCRREAM(Dataset):
         rgb_ext: str = ".png",
         pol_ext: str = ".png",
         transform=None,
-        # --- NEW: smoothing / robustness controls ---
+        # Image sizing parameters
+        target_size: Optional[Tuple[int, int]] = (874, 1132),  # Default size (H, W)
+        resize_mode: str = "crop",  # "crop", "resize", or "pad"
+        # Performance optimizations
+        use_cache: bool = False,
+        cache_size: int = 100,
+        simplify_upsampling: bool = True,  # Use simple bicubic instead of edge-aware
+        precompute_stokes: bool = False,   # Precompute Stokes parameters
+        # Reduced smoothing options
         smooth_specular: bool = True,
-        smooth_cfg: Optional[Dict] = None,
+        gaussian_sigma: float = 0.0,
+        dolp_min_intensity: float = 0.05,
+        dolp_min_value: float = 0.04,
+        # Scene filtering
         scene_names: Optional[List[str]] = None,
+        ignore_scenes: Optional[List[str]] = None,
     ):
-        """
-        Args:
-            rho_s: Assumed specular DoLP (dielectrics).
-            eps:   Small epsilon to avoid division by zero.
-            smooth_specular: Enable edge-aware upsample + smoothing of f_spec.
-            smooth_cfg: Dict of smoothing params (see defaults below).
-            scene_names: Optional list of scene names to load. If provided and not empty,
-                        only scenes with these names will be loaded.
-        """
         self.root_dir = root_dir
         self.rho_s = rho_s
         self.eps = eps
         self.rgb_ext = rgb_ext
         self.pol_ext = pol_ext
         self.transform = transform
-        self.scene_names = scene_names
-
+        
+        # Image sizing parameters
+        self.target_size = target_size
+        self.resize_mode = resize_mode.lower()
+        if self.resize_mode not in ["crop", "resize", "pad"]:
+            raise ValueError(f"resize_mode must be one of ['crop', 'resize', 'pad'], got {resize_mode}")
+        
+        self.use_cache = use_cache
+        self.simplify_upsampling = simplify_upsampling
+        self.precompute_stokes = precompute_stokes
+        
+        # Simplified smoothing config
         self.smooth_specular = smooth_specular
-        self.smooth_cfg = smooth_cfg or {
-            # Half-res Stokes prefilter (in pixels)
-            "stokes_gauss_sigma": 0.0,
-            # DoLP robustness
-            "dolp_min_intensity": 0.05,   # mask DoLP when S0 < this (0..1)
-            "dolp_min_value": 0.04,       # set DoLP<min to 0
-            # Full-res edge-aware refinement
-            "guided_radius": 8,
-            "guided_eps": 1e-3,
-            # Fallback joint-bilateral if guided not available
-            "bilateral_d": 9,
-            "bilateral_sigma_color": 0.1,
-            "bilateral_sigma_space": 8,
-            # Optional TV denoise on full-res f_spec
-            "use_tv": False,
-            "tv_weight": 0.05,
-            "tv_iters": 30,
-        }
+        self.gaussian_sigma = gaussian_sigma
+        self.dolp_min_intensity = dolp_min_intensity
+        self.dolp_min_value = dolp_min_value
+        
+        self.scene_names = scene_names
+        self.ignore_scenes = ignore_scenes or []
 
         self.scene_pairs = self._find_scene_pairs()
+        
+        # Setup caching if enabled
+        if self.use_cache:
+            self._cache_intrinsics = {}
+            # Make cached methods
+            self._load_intrinsics_cached = lru_cache(maxsize=cache_size)(self._load_intrinsics_impl)
+            if self.precompute_stokes:
+                self._load_pol_cached = lru_cache(maxsize=cache_size)(self._load_and_process_polarization_impl)
 
-    # ----------------------- small helpers -----------------------
-
-    @staticmethod
-    def _to_luminance(rgb: torch.Tensor) -> torch.Tensor:
-        """Convert RGB to luminance. Input: [...,3] in [0,1]."""
-        return 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
-        # return 1/3 * rgb[..., 0] + 1/3 * rgb[..., 1] + 1/3 * rgb[..., 2]
-
-    def _gaussian_blur_np(self, img: np.ndarray, sigma: float) -> np.ndarray:
-        if sigma <= 0:
-            return img
-        k = int(2 * round(3.0 * sigma) + 1)
-        return cv2.GaussianBlur(img, (k, k), sigmaX=sigma, sigmaY=sigma, borderType=cv2.BORDER_REFLECT101)
-
-    def _guided_filter_gray(self, guide_rgb: np.ndarray, src: np.ndarray, radius: int, eps: float) -> np.ndarray:
-        """Prefer OpenCV ximgproc guided filter; fallback to two bilateral passes."""
-        try:
-            import cv2.ximgproc as xip
-            gf = xip.createGuidedFilter(guide_rgb.astype(np.float32), radius, eps)
-            return gf.filter(src.astype(np.float32))
-        except Exception:
-            d = self.smooth_cfg["bilateral_d"]
-            sigmaColor = float(self.smooth_cfg["bilateral_sigma_color"] * 255.0)
-            sigmaSpace = float(self.smooth_cfg["bilateral_sigma_space"])
-            out = cv2.bilateralFilter(src.astype(np.float32), d=d, sigmaColor=sigmaColor, sigmaSpace=sigmaSpace)
-            out = cv2.bilateralFilter(out, d=d, sigmaColor=sigmaColor, sigmaSpace=sigmaSpace)
-            return out
-
-    def _tv_denoise_np(self, img: np.ndarray, weight: float, iters: int) -> np.ndarray:
-        """Simple ROF-TV denoise (on [0,1])."""
-        u = img.astype(np.float32).copy()
-        px = np.zeros_like(u)
-        py = np.zeros_like(u)
-        tau = 0.125
-        lam = float(weight)
-        for _ in range(int(iters)):
-            ux = np.roll(u, -1, axis=1) - u
-            uy = np.roll(u, -1, axis=0) - u
-            px = (px + tau * ux) / (1.0 + tau * np.maximum(1e-12, np.abs(ux)))
-            py = (py + tau * uy) / (1.0 + tau * np.maximum(1e-12, np.abs(uy)))
-            divp = (px - np.roll(px, 1, axis=1)) + (py - np.roll(py, 1, axis=0))
-            u = np.clip((img + lam * divp), 0.0, 1.0)
-        return np.clip(u, 0.0, 1.0)
-
-    def _edge_aware_upsample(self, f_half: torch.Tensor, rgb_full_hw3: torch.Tensor) -> torch.Tensor:
+    def _resize_tensor(self, tensor: torch.Tensor, target_size: Tuple[int, int]) -> torch.Tensor:
         """
-        Upsample half-res f_spec to full-res, refine with guided/joint-bilateral filtering.
-        f_half: [Hh, Wh] torch in [0,1]; rgb_full_hw3: [H, W, 3] torch in [0,1]
+        Resize tensor to target size using specified mode.
+        
+        Args:
+            tensor: Input tensor of shape [C, H, W] or [H, W]
+            target_size: Target size as (H, W)
+            
+        Returns:
+            Resized tensor of shape [C, target_H, target_W] or [target_H, target_W]
         """
-        fh = f_half.detach().cpu().numpy()
-        guide = rgb_full_hw3.detach().cpu().numpy()
+        if tensor.dim() == 2:
+            # Single channel tensor [H, W]
+            tensor = tensor.unsqueeze(0)  # [1, H, W]
+            was_2d = True
+        else:
+            was_2d = False
+            
+        current_size = tensor.shape[-2:]  # [H, W]
+        
+        if self.resize_mode == "crop":
+            # Center crop to target size
+            if current_size[0] > target_size[0]:
+                start_h = (current_size[0] - target_size[0]) // 2
+                end_h = start_h + target_size[0]
+                tensor = tensor[..., start_h:end_h, :]
+            if current_size[1] > target_size[1]:
+                start_w = (current_size[1] - target_size[1]) // 2
+                end_w = start_w + target_size[1]
+                tensor = tensor[..., :, start_w:end_w]
+                
+        elif self.resize_mode == "resize":
+            # Resize to target size using bilinear interpolation
+            tensor = F.interpolate(
+                tensor.unsqueeze(0),  # Add batch dimension
+                size=target_size,
+                mode='bilinear',
+                align_corners=False
+            ).squeeze(0)  # Remove batch dimension
+            
+        elif self.resize_mode == "pad":
+            # Pad to target size with zeros
+            pad_h = max(0, target_size[0] - current_size[0])
+            pad_w = max(0, target_size[1] - current_size[1])
+            
+            if pad_h > 0 or pad_w > 0:
+                # Pad format: (pad_left, pad_right, pad_top, pad_bottom)
+                pad_left = pad_w // 2
+                pad_right = pad_w - pad_left
+                pad_top = pad_h // 2
+                pad_bottom = pad_h - pad_top
+                
+                tensor = F.pad(tensor, (pad_left, pad_right, pad_top, pad_bottom), mode='constant', value=0)
+        
+        if was_2d:
+            tensor = tensor.squeeze(0)  # Remove channel dimension
+            
+        return tensor
 
-        # first, smooth resize
-        H, W, _ = guide.shape
-        f_up = cv2.resize(fh, (W, H), interpolation=cv2.INTER_CUBIC)
+    def _resize_rgb_tensor(self, rgb: torch.Tensor) -> torch.Tensor:
+        """
+        Resize RGB tensor to target size.
+        
+        Args:
+            rgb: RGB tensor of shape [3, H, W] in [0, 1]
+            
+        Returns:
+            Resized RGB tensor of shape [3, target_H, target_W] in [0, 1]
+        """
+        if self.target_size is None:
+            return rgb
+            
+        return self._resize_tensor(rgb, self.target_size)
 
-        # guided refinement
-        f_up = self._guided_filter_gray(
-            guide_rgb=guide,
-            src=f_up,
-            radius=int(self.smooth_cfg["guided_radius"]),
-            eps=float(self.smooth_cfg["guided_eps"]),
-        )
-
-        # optional TV
-        if self.smooth_cfg.get("use_tv", False):
-            f_up = self._tv_denoise_np(
-                f_up, weight=float(self.smooth_cfg["tv_weight"]), iters=int(self.smooth_cfg["tv_iters"])
-            )
-
-        return torch.from_numpy(np.clip(f_up, 0.0, 1.0))
-
-    # --------------------- dataset plumbing ----------------------
+    def _resize_polarization_data(self, pol_data: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """
+        Resize all polarization data tensors to target size.
+        
+        Args:
+            pol_data: Dictionary containing polarization data tensors
+            
+        Returns:
+            Dictionary with all tensors resized to target size
+        """
+        if self.target_size is None:
+            return pol_data
+            
+        resized_data = {}
+        for key, tensor in pol_data.items():
+            resized_data[key] = self._resize_tensor(tensor, self.target_size)
+        return resized_data
 
     def _find_scene_pairs(self) -> List[Tuple[str, str, str]]:
+        """Same as original but could be optimized with os.scandir for large datasets"""
         scene_pairs = []
         for scene_name in os.listdir(self.root_dir):
-            # Filter by scene_names if provided and not empty
+            if scene_name in self.ignore_scenes:
+                continue
+                
             if self.scene_names is not None and len(self.scene_names) > 0:
                 if scene_name not in self.scene_names:
                     continue
@@ -172,17 +198,21 @@ class SCRREAM(Dataset):
             rgb_dir = os.path.join(scene_path, "rgb")
             pol_dir = os.path.join(scene_path, "pol")
             intrinsics_path = os.path.join(scene_path, "intrinsics.txt")
+            
             if not (os.path.exists(rgb_dir) and os.path.exists(pol_dir) and os.path.exists(intrinsics_path)):
                 continue
 
             rgb_files = [f for f in os.listdir(rgb_dir) if f.endswith(self.rgb_ext)]
             pol_files = [f for f in os.listdir(pol_dir) if f.endswith(self.pol_ext)]
+            
             for rgb_file in rgb_files:
                 pol_file = rgb_file.replace(self.rgb_ext, self.pol_ext)
                 if pol_file in pol_files:
-                    scene_pairs.append((os.path.join(rgb_dir, rgb_file),
-                                        os.path.join(pol_dir, pol_file),
-                                        intrinsics_path))
+                    scene_pairs.append((
+                        os.path.join(rgb_dir, rgb_file),
+                        os.path.join(pol_dir, pol_file),
+                        intrinsics_path
+                    ))
         return scene_pairs
 
     def __len__(self) -> int:
@@ -192,263 +222,223 @@ class SCRREAM(Dataset):
         """Get list of scene names that are actually loaded in the dataset."""
         loaded_scenes = set()
         for rgb_path, _, _ in self.scene_pairs:
-            # Extract scene name from path: root_dir/scene_name/rgb/file.png
             scene_name = os.path.basename(os.path.dirname(os.path.dirname(rgb_path)))
             loaded_scenes.add(scene_name)
         return sorted(list(loaded_scenes))
 
-    def _load_intrinsics(self, intrinsics_path: str) -> torch.Tensor:
+    @staticmethod
+    def _to_luminance_torch(rgb: torch.Tensor) -> torch.Tensor:
+        """Convert RGB to luminance staying in torch. Input: [...,3] in [0,1]."""
+        return 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
+
+    def _load_intrinsics_impl(self, intrinsics_path: str) -> torch.Tensor:
+        """Implementation for loading intrinsics (cacheable)"""
         try:
             K = np.loadtxt(intrinsics_path).reshape(3, 3).astype(np.float32)
             return torch.from_numpy(K)
         except Exception as e:
-            print(f"Warning: Could not load intrinsics from {intrinsics_path}: {e}")
+            warnings.warn(f"Could not load intrinsics from {intrinsics_path}: {e}")
             return torch.eye(3, dtype=torch.float32)
 
-    # -------------------- polarization processing --------------------
+    def _load_intrinsics(self, intrinsics_path: str) -> torch.Tensor:
+        """Load intrinsics with optional caching"""
+        if self.use_cache:
+            return self._load_intrinsics_cached(intrinsics_path)
+        else:
+            return self._load_intrinsics_impl(intrinsics_path)
 
-    def _load_and_process_polarization(self, pol_path: str) -> Dict[str, torch.Tensor]:
-        # if POLANALYSER_AVAILABLE:
-        #     return self._load_and_process_polarization_polanalyser(pol_path)
-        # else:
-        #     return self._load_and_process_polarization_manual(pol_path)
-        return self._load_and_process_polarization_manual(pol_path)
+    def _simple_upsample(self, f_spec_half: torch.Tensor, target_size: Tuple[int, int]) -> torch.Tensor:
+        """Simple bicubic upsampling - much faster than edge-aware"""
+        # Use torch interpolation instead of OpenCV
+        f_batch = f_spec_half.unsqueeze(0).unsqueeze(0)  # Add batch and channel dims
+        f_up = torch.nn.functional.interpolate(
+            f_batch, size=target_size, mode='bilinear', align_corners=False
+        )
+        return f_up.squeeze(0).squeeze(0).clamp(0, 1)
 
-    def _load_and_process_polarization_polanalyser(self, pol_path: str) -> Dict[str, torch.Tensor]:
-        # Load composite RGB (0..1), split quadrants
-        pol_rgb = np.asarray(Image.open(pol_path).convert("RGB"), dtype=np.float32) / 255.0
+    def _load_and_process_polarization_impl(self, pol_path: str) -> Dict[str, torch.Tensor]:
+        """Optimized polarization processing staying mostly in torch"""
+        
+        # Load image directly as torch tensor
+        pol_img = Image.open(pol_path).convert("RGB")
+        pol_rgb = torch.from_numpy(np.asarray(pol_img, dtype=np.float32)) / 255.0
+        
         H, W, _ = pol_rgb.shape
         hh, hw = H // 2, W // 2
-        I0_rgb   = pol_rgb[0:hh,    0:hw,    :]
-        I45_rgb  = pol_rgb[0:hh,    hw:W,    :]
-        I90_rgb  = pol_rgb[hh:H,    hw:W,    :]
-        I135_rgb = pol_rgb[hh:H,    0:hw,    :]
+        
+        # Split quadrants
+        I0_rgb   = pol_rgb[:hh, :hw, :]
+        I45_rgb  = pol_rgb[:hh, hw:, :]
+        I90_rgb  = pol_rgb[hh:, hw:, :]
+        I135_rgb = pol_rgb[hh:, :hw, :]
 
-        # to grayscale (luminance) for Stokes
-        I0  = cv2.cvtColor((I0_rgb  * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
-        I45 = cv2.cvtColor((I45_rgb * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
-        I90 = cv2.cvtColor((I90_rgb * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
-        I135= cv2.cvtColor((I135_rgb* 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+        # Convert to luminance (staying in torch)
+        I0   = self._to_luminance_torch(I0_rgb)
+        I45  = self._to_luminance_torch(I45_rgb)
+        I90  = self._to_luminance_torch(I90_rgb)
+        I135 = self._to_luminance_torch(I135_rgb)
 
-        # Stokes (half-res)
-        ang = np.deg2rad([0, 45, 90, 135])
-        stokes3 = pa.calcStokes([I0, I45, I90, I135], ang)   # Hh x Hw x 3
-        img_s0, img_s1, img_s2 = cv2.split(stokes3)
-
-        # --- NEW: Stokes prefilter ---
-        sg = float(self.smooth_cfg["stokes_gauss_sigma"])
-        if sg > 0:
-            img_s0 = self._gaussian_blur_np(img_s0, sg)
-            img_s1 = self._gaussian_blur_np(img_s1, sg)
-            img_s2 = self._gaussian_blur_np(img_s2, sg)
-
-        # DoLP/AoLP from smoothed Stokes
-        stokes3_smooth = cv2.merge([img_s0, img_s1, img_s2])
-        img_intensity = pa.cvtStokesToIntensity(stokes3_smooth)
-        img_dolp      = pa.cvtStokesToDoLP(stokes3_smooth)
-        img_aolp      = pa.cvtStokesToAoLP(stokes3_smooth)
-
-        # --- NEW: mask DoLP in low-intensity or tiny values ---
-        min_I = float(self.smooth_cfg["dolp_min_intensity"])
-        min_d = float(self.smooth_cfg["dolp_min_value"])
-        valid = (img_s0 >= min_I).astype(np.float32)
-        img_dolp = img_dolp * valid
-        img_dolp[img_dolp < min_d] = 0.0
-
-        # 4-component Stokes (S3=0) for extra pol params
-        img_s3 = np.zeros_like(img_s0, dtype=np.float32)
-        stokes4 = np.stack([img_s0, img_s1, img_s2, img_s3], axis=2)
-        img_dop = pa.cvtStokesToDoP(stokes4)
-        img_ell = pa.cvtStokesToEllipticityAngle(stokes4)
-        img_docp= pa.cvtStokesToDoCP(stokes4)
-
-        # Specular fraction (half-res)
-        f_spec = np.clip(img_dolp / max(self.rho_s, 1e-6), 0.0, 1.0)
-
-        # Pack tensors (CxHxW)
-        out = {
-            'I0':   torch.from_numpy(I0_rgb).permute(2, 0, 1).float(),
-            'I45':  torch.from_numpy(I45_rgb).permute(2, 0, 1).float(),
-            'I90':  torch.from_numpy(I90_rgb).permute(2, 0, 1).float(),
-            'I135': torch.from_numpy(I135_rgb).permute(2, 0, 1).float(),
-            'S0':   torch.from_numpy(img_s0)[None].float(),
-            'S1':   torch.from_numpy(img_s1)[None].float(),
-            'S2':   torch.from_numpy(img_s2)[None].float(),
-            'S3':   torch.from_numpy(img_s3)[None].float(),
-            'intensity': torch.from_numpy(img_intensity)[None].float(),
-            'DoLP':      torch.from_numpy(img_dolp)[None].float(),
-            'AoP':       torch.from_numpy(img_aolp)[None].float(),
-            'AoLP':      torch.from_numpy(img_aolp)[None].float(),
-            'DoP':       torch.from_numpy(img_dop)[None].float(),
-            'DoCP':      torch.from_numpy(img_docp)[None].float(),
-            'ellipticity_angle': torch.from_numpy(img_ell)[None].float(),
-            'f_spec':    torch.from_numpy(f_spec)[None].float(),
-        }
-        return out
-
-    def _load_and_process_polarization_manual(self, pol_path: str) -> Dict[str, torch.Tensor]:
-        # Load composite RGB (0..1) as torch
-        pol_rgb = torch.from_numpy(np.asarray(Image.open(pol_path).convert("RGB"), dtype=np.float32)) / 255.0
-        H, W, _ = pol_rgb.shape
-        hh, hw = H // 2, W // 2
-        I0_rgb   = pol_rgb[0:hh,   0:hw,   :]
-        I45_rgb  = pol_rgb[0:hh,   hw:W,   :]
-        I90_rgb  = pol_rgb[hh:H,   hw:W,   :]
-        I135_rgb = pol_rgb[hh:H,   0:hw,   :]
-
-        # luminance for Stokes
-        I0   = self._to_luminance(I0_rgb)
-        I45  = self._to_luminance(I45_rgb)
-        I90  = self._to_luminance(I90_rgb)
-        I135 = self._to_luminance(I135_rgb)
-
-        # Stokes (half-res)
+        # Compute Stokes parameters
         S0 = I0 + I90
         S1 = I0 - I90
         S2 = I45 - I135
 
-        # --- NEW: Stokes prefilter (via numpy/OpenCV for simplicity) ---
-        sg = float(self.smooth_cfg["stokes_gauss_sigma"])
-        if sg > 0:
-            S0_np = self._gaussian_blur_np(S0.cpu().numpy(), sg)
-            S1_np = self._gaussian_blur_np(S1.cpu().numpy(), sg)
-            S2_np = self._gaussian_blur_np(S2.cpu().numpy(), sg)
-            S0, S1, S2 = torch.from_numpy(S0_np), torch.from_numpy(S1_np), torch.from_numpy(S2_np)
+        # Optional Gaussian smoothing (convert to numpy only if needed)
+        # if self.gaussian_sigma > 0:
+        #     # Only convert to numpy for this operation
+        #     S0_np = cv2.GaussianBlur(S0.numpy(), (0, 0), self.gaussian_sigma)
+        #     S1_np = cv2.GaussianBlur(S1.numpy(), (0, 0), self.gaussian_sigma)
+        #     S2_np = cv2.GaussianBlur(S2.numpy(), (0, 0), self.gaussian_sigma)
+        #     S0, S1, S2 = torch.from_numpy(S0_np), torch.from_numpy(S1_np), torch.from_numpy(S2_np)
 
-        # DoLP / AoP from smoothed Stokes
-        R = torch.sqrt(S1 ** 2 + S2 ** 2)
+        # Compute DoLP and AoP
+        R = torch.sqrt(S1**2 + S2**2)
         DoLP = torch.clamp(R / torch.clamp(S0, min=self.eps), 0.0, 1.0)
-        AoP  = 0.5 * torch.atan2(S2, S1)
+        AoP = 0.5 * torch.atan2(S2, S1)
 
-        # --- NEW: mask DoLP in low-intensity / tiny values ---
-        min_I = float(self.smooth_cfg["dolp_min_intensity"])
-        min_d = float(self.smooth_cfg["dolp_min_value"])
-        valid = (S0 >= min_I).float()
-        DoLP = DoLP * valid
-        DoLP = torch.where(DoLP < min_d, torch.zeros_like(DoLP), DoLP)
+        # Apply DoLP masking
+        valid_mask = (S0 >= self.dolp_min_intensity).float()
+        DoLP = DoLP * valid_mask
+        DoLP = torch.where(DoLP < self.dolp_min_value, torch.zeros_like(DoLP), DoLP)
 
-        # Consistency extras
-        S3 = torch.zeros_like(S0)
-        DoP = DoLP.clone()
-        DoCP = torch.zeros_like(DoLP)
-        ellipticity_angle = torch.zeros_like(DoLP)
-
-        # Specular fraction (half-res)
+        # Compute specular fraction
         f_spec = torch.clamp(DoLP / max(self.rho_s, 1e-6), 0.0, 1.0)
 
-        # Pack CxHxW tensors
-        out = {
-            'I0':   I0_rgb.permute(2, 0, 1).float(),
-            'I45':  I45_rgb.permute(2, 0, 1).float(),
-            'I90':  I90_rgb.permute(2, 0, 1).float(),
-            'I135': I135_rgb.permute(2, 0, 1).float(),
-            'S0':   S0[None].float(),
-            'S1':   S1[None].float(),
-            'S2':   S2[None].float(),
-            'S3':   S3[None].float(),
-            'intensity': S0[None].float(),
-            'DoLP': DoLP[None].float(),
-            'AoP':  AoP[None].float(),
-            'AoLP': AoP[None].float(),
-            'DoP':  DoP[None].float(),
-            'DoCP': DoCP[None].float(),
-            'ellipticity_angle': ellipticity_angle[None].float(),
-            'f_spec': f_spec[None].float(),
+        # Additional parameters (simplified)
+        S3 = torch.zeros_like(S0)
+        
+        # Create polarization data dictionary
+        pol_data = {
+            'I0': I0_rgb.permute(2, 0, 1),
+            'I45': I45_rgb.permute(2, 0, 1),
+            'I90': I90_rgb.permute(2, 0, 1),
+            'I135': I135_rgb.permute(2, 0, 1),
+            'S0': S0.unsqueeze(0),
+            'S1': S1.unsqueeze(0),
+            'S2': S2.unsqueeze(0),
+            'S3': S3.unsqueeze(0),
+            'intensity': S0.unsqueeze(0),
+            'DoLP': DoLP.unsqueeze(0),
+            'AoP': AoP.unsqueeze(0),
+            'AoLP': AoP.unsqueeze(0),
+            'DoP': DoLP.unsqueeze(0),
+            'DoCP': torch.zeros_like(DoLP).unsqueeze(0),
+            'ellipticity_angle': torch.zeros_like(DoLP).unsqueeze(0),
+            'f_spec': f_spec.unsqueeze(0),
         }
-        return out
+        
+        # Resize all polarization data to target size if specified
+        if self.target_size is not None:
+            pol_data = self._resize_polarization_data(pol_data)
+        
+        return pol_data
 
-    # -------------------- RGB + separation (full-res) --------------------
-
-    def _process_rgb_scene(self, rgb_path: str, f_spec_half: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """
-        Load full-res RGB and compute specular/diffuse using edge-aware
-        upsampled soft specular map.
-        """
-        rgb = torch.from_numpy(
-            np.asarray(Image.open(rgb_path).convert("RGB"), dtype=np.float32)
-        ) / 255.0  # H x W x 3
-
-        # edge-aware upsample of f_spec to full res
-        if self.smooth_specular:
-            f_full = self._edge_aware_upsample(f_spec_half, rgb)  # H x W
+    def _load_and_process_polarization(self, pol_path: str) -> Dict[str, torch.Tensor]:
+        """Load polarization with optional caching"""
+        if self.use_cache and self.precompute_stokes:
+            return self._load_pol_cached(pol_path)
         else:
-            H, W, _ = rgb.shape
-            f_full = torch.from_numpy(
-                cv2.resize(f_spec_half.cpu().numpy(), (W, H), interpolation=cv2.INTER_LINEAR)
-            )
-        f_full = f_full.clamp(0, 1)
+            return self._load_and_process_polarization_impl(pol_path)
 
-        # compute components (no "*3")
-        rgb_chw = rgb.permute(2, 0, 1)  # 3 x H x W
-        f1 = f_full.unsqueeze(0)        # 1 x H x W
-        I_spec = (f1 * rgb_chw).clamp(0, 1)
+    def _load_rgb_and_separate(self, rgb_path: str, f_spec_half: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Optimized RGB loading and separation"""
+        
+        # Load RGB directly as torch tensor
+        rgb_img = Image.open(rgb_path).convert("RGB")
+        rgb = torch.from_numpy(np.asarray(rgb_img, dtype=np.float32)) / 255.0
+        H, W, _ = rgb.shape
+
+        # Upsample specular fraction
+        if self.simplify_upsampling:
+            f_full = self._simple_upsample(f_spec_half, (H, W))
+        else:
+            # Fall back to original method if needed
+            f_full = self._edge_aware_upsample_original(f_spec_half, rgb)
+
+        # Compute specular/diffuse separation
+        rgb_chw = rgb.permute(2, 0, 1)  # 3xHxW
+        f_expanded = f_full.unsqueeze(0)  # 1xHxW
+        
+        I_spec = (f_expanded * rgb_chw).clamp(0, 1)
         I_diff = (rgb_chw - I_spec).clamp(0, 1)
 
+        # Resize RGB data to target size if specified
+        if self.target_size is not None:
+            rgb_chw = self._resize_rgb_tensor(rgb_chw)
+            I_spec = self._resize_tensor(I_spec, self.target_size)
+            I_diff = self._resize_tensor(I_diff, self.target_size)
+
         return {
-            'rgb': rgb_chw.float(),
-            'specular': I_spec.float(),   # 3 x H x W
-            'diffuse': I_diff.float(),    # 3 x H x W
+            'rgb': rgb_chw,
+            'specular': I_spec,
+            'diffuse': I_diff,
         }
 
-    # ----------------------------- I/O -----------------------------------
+    def _edge_aware_upsample_original(self, f_half: torch.Tensor, rgb_full: torch.Tensor) -> torch.Tensor:
+        """Original edge-aware upsampling (fallback)"""
+        # Convert to numpy for OpenCV operations
+        f_np = f_half.cpu().numpy()
+        rgb_np = rgb_full.cpu().numpy()
+        
+        H, W, _ = rgb_np.shape
+        f_up = cv2.resize(f_np, (W, H), interpolation=cv2.INTER_CUBIC)
+        
+        # Simple bilateral filter instead of guided filter for speed
+        f_up = cv2.bilateralFilter(f_up.astype(np.float32), d=5, sigmaColor=0.1*255, sigmaSpace=5)
+        
+        return torch.from_numpy(np.clip(f_up, 0.0, 1.0))
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        """
-        Returns a dict with polarization (half-res), RGB (full-res),
-        specular/diffuse (full-res), and intrinsics.
-        """
+        """Optimized data loading"""
         rgb_path, pol_path, intrinsics_path = self.scene_pairs[idx]
+        
+        # Load data (potentially from cache)
         intrinsics = self._load_intrinsics(intrinsics_path)
-
         pol_data = self._load_and_process_polarization(pol_path)
-        # pol_data['f_spec'] is [1, Hh, Wh]
-        rgb_data = self._process_rgb_scene(rgb_path, pol_data['f_spec'].squeeze(0))
+        
+        # Get specular fraction for RGB processing
+        f_spec = pol_data['f_spec'].squeeze(0)
+        rgb_data = self._load_rgb_and_separate(rgb_path, f_spec)
 
+        # Combine results
         sample = {**pol_data, **rgb_data, 'intrinsics': intrinsics}
+        
         if self.transform:
             sample = self.transform(sample)
+            
         return sample
 
-    # -------------------- optional visualizations --------------------
 
-    def get_polarization_visualizations(self, idx: int, save_path: Optional[str] = None) -> Dict[str, np.ndarray]:
-        if not POLANALYSER_AVAILABLE:
-            raise ImportError("polanalyser is required for visualizations")
-
-        sample = self[idx]
-        dolp = sample['DoLP'].squeeze(0).cpu().numpy()
-        aolp = sample['AoLP'].squeeze(0).cpu().numpy()
-        dop  = sample.get('DoP', sample['DoLP']).squeeze(0).cpu().numpy()
-        docp = sample.get('DoCP', torch.zeros_like(sample['DoLP'])).squeeze(0).cpu().numpy()
-        ellipt = sample.get('ellipticity_angle', torch.zeros_like(sample['DoLP'])).squeeze(0).cpu().numpy()
-
-        vis = {
-            'dolp_vis': pa.applyColorToDoLP(dolp),
-            'aolp_vis': pa.applyColorToAoLP(aolp),
-            'aolp_light_vis': pa.applyColorToAoLP(aolp, saturation=dolp, value=1.0),
-            'aolp_dark_vis':  pa.applyColorToAoLP(aolp, saturation=dolp, value=0.3),
-            'dop_vis': pa.applyColorToDoP(dop),
-            'top_vis': pa.applyColorToToP(ellipt, dop),
-            'cop_vis': pa.applyColorToCoP(ellipt),
-            'docp_vis': pa.applyColorToDoCP(docp),
-        }
-
-        if save_path:
-            os.makedirs(save_path, exist_ok=True)
-            for name, img in vis.items():
-                cv2.imwrite(os.path.join(save_path, f"{name}.png"),
-                            cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
-        return vis
-
-
-# ---------------- convenience: dataloader ----------------
-
-def create_dataloader(
+# Optimized dataloader function
+def create_optimized_dataloader(
     root_dir: str,
     batch_size: int = 4,
     num_workers: int = 4,
     shuffle: bool = True,
+    use_cache: bool = True,
+    simplify_upsampling: bool = True,
+    target_size: Optional[Tuple[int, int]] = (874, 1132),
+    resize_mode: str = "crop",
     **dataset_kwargs
 ) -> DataLoader:
-    ds = SCRREAM(root_dir, **dataset_kwargs)
-    return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
+    """Create optimized dataloader with performance improvements"""
+    
+    dataset = SCRREAM(
+        root_dir,
+        use_cache=use_cache,
+        simplify_upsampling=simplify_upsampling,
+        target_size=target_size,
+        resize_mode=resize_mode,
+        **dataset_kwargs
+    )
+    
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=True if num_workers > 0 else False,  # Keep workers alive
+        prefetch_factor=2 if num_workers > 0 else 2,  # Prefetch batches
+    )
+

@@ -17,12 +17,14 @@ class DINOv3(nn.Module):
         Args:
             config: dict containing:
                 - model_name: str, DINOv3 model name (default: "facebook/dinov3-vitb16-pretrain-lvd1689m")
-                - image_size: int, input image size (default: 896) 
+                - image_size: int, input image size (default: 896). The input image will be preprocessed to have this size (square)
                 - freeze_backbone: bool, whether to freeze DINOv3 parameters (default: True)
                 - return_last_hidden_state: bool, return last hidden state (default: True)
                 - return_all_hidden_states: bool, return all hidden states (default: False)
                 - return_selected_layers: list[int], specific layer indices to return (default: None)
                 - return_as_feature_maps: bool, reshape patch tokens to spatial format (default: False)
+                - return_cls_token: bool, return CLS token (default: False)
+                - return_register_tokens: bool, return register tokens (default: False)
         """
         super().__init__()
         
@@ -35,6 +37,8 @@ class DINOv3(nn.Module):
             'return_all_hidden_states': False,
             'return_selected_layers': None,
             'return_as_feature_maps': False,
+            'return_cls_token': False,
+            'return_register_tokens': False,
             **config  # Override defaults with user config
         }
         
@@ -58,6 +62,30 @@ class DINOv3(nn.Module):
         patch_h = input_height // self.patch_size
         patch_w = input_width // self.patch_size
         return patch_h, patch_w
+    
+    def extract_cls_token(self, hidden_states):
+        """
+        Extract CLS token from hidden states.
+        
+        Args:
+            hidden_states: [B, N_tokens, feature_dim] - Raw hidden states from DINOv3
+        
+        Returns:
+            [B, feature_dim] - CLS token features
+        """
+        return hidden_states[:, 0]  # CLS token is at index 0
+    
+    def extract_register_tokens(self, hidden_states):
+        """
+        Extract register tokens from hidden states.
+        
+        Args:
+            hidden_states: [B, N_tokens, feature_dim] - Raw hidden states from DINOv3
+        
+        Returns:
+            [B, 4, feature_dim] - Register token features (4 register tokens)
+        """
+        return hidden_states[:, 1:5]  # Register tokens are at indices 1-4
     
     def tokens_to_feature_maps(self, hidden_states, batch_size, patch_h, patch_w):
         """
@@ -92,6 +120,8 @@ class DINOv3(nn.Module):
         Returns:
             dict containing requested outputs based on config:
                 - 'last_hidden_state': [B, N_tokens, feature_dim] or [B, feature_dim, patch_h, patch_w]
+                - 'cls_token': [B, feature_dim] - CLS token features
+                - 'register_tokens': [B, 4, feature_dim] - Register token features (4 tokens)
                 - 'all_hidden_states': List of [B, N_tokens, feature_dim] or [B, feature_dim, patch_h, patch_w]
                 - 'selected_hidden_states': List of selected layer outputs
         """
@@ -119,6 +149,16 @@ class DINOv3(nn.Module):
             if self.config['return_as_feature_maps']:
                 last_hidden = self.tokens_to_feature_maps(last_hidden, batch_size, patch_h, patch_w)
             result['last_hidden_state'] = last_hidden
+        
+        # Return CLS token
+        if self.config['return_cls_token']:
+            cls_token = self.extract_cls_token(outputs.last_hidden_state)  # [B, feature_dim]
+            result['cls_token'] = cls_token
+        
+        # Return register tokens
+        if self.config['return_register_tokens']:
+            register_tokens = self.extract_register_tokens(outputs.last_hidden_state)  # [B, 4, feature_dim]
+            result['register_tokens'] = register_tokens
         
         # Return all hidden states
         if self.config['return_all_hidden_states']:
@@ -520,11 +560,7 @@ class DINOv3toDPTRGB(nn.Module):
             {'params': self.decoder.fusion_blocks.parameters(), 'lr': base_lr * 0.5},  # Fusion: 50%
             {'params': self.decoder.rgb_head.parameters(), 'lr': base_lr}  # RGB head: 100%
         ]
-        
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+    
 
 # ---------- 1) POL preprocessing ----------
 class PolarizationPreprocess(nn.Module):
@@ -820,7 +856,8 @@ class RGBPOLDecomposer(nn.Module):
 
     def _rgb_tokens(self, rgb_preproc):
         """Extract DINOv3 tokens and infer (Hp, Wp) if wrapper doesn’t return them."""
-        out = self.dinov3(rgb_preproc)
+        with torch.no_grad():
+            out = self.dinov3(rgb_preproc)
         tokens = out.get("last_hidden_state", out.get("tokens"))
         if tokens is None:
             raise KeyError("DINOv3 wrapper must return 'last_hidden_state' or 'tokens'.")
