@@ -1,11 +1,4 @@
-# -------------------------------------------------------------------------------------------------#
 
-"""Copyright (c) 2024 Asensus Surgical"""
-
-""" Code Developed by: Alberto Rota """
-""" Supervision: Uriya Levy, Gal Weizman, Stefano Pomati """
-
-# -------------------------------------------------------------------------------------------------#
 
 from typing import Any
 import numpy as np
@@ -103,23 +96,7 @@ def print(*args: Any, **kwargs: Any) -> None:
         nativeprint(*args, **kwargs)
 
 
-def align(input_str, max_length, alignment):
-    if alignment == "left":
-        # Trim the string from the right side if it exceeds the max_length
-        input_str = input_str[:max_length]
-        return input_str.ljust(max_length)
-    elif alignment == "right":
-        # Trim the string from the left side if it exceeds the max_length
-        input_str = input_str[-max_length:]
-        return input_str.rjust(max_length)
-    elif alignment == "center":
-        # For center alignment, take characters from the middle if trimming is needed
-        if len(input_str) > max_length:
-            start = (len(input_str) - max_length) // 2
-            input_str = input_str[start : start + max_length]
-        return input_str.center(max_length)
-    else:
-        raise ValueError("Alignment must be 'left', 'right', or 'center'.")
+
 
 
 def RdGr(value):
@@ -172,20 +149,4 @@ def metrics_for_wandb(metrics_dict: dict, prefix_str: str, separator: str = "/")
     return result
 
 
-def strip_rich_markup(text: str) -> str:
-    """
-    Strip Rich markup tags from a string.
 
-    Args:
-        text (str): Text with Rich markup
-
-    Returns:
-        str: Text with Rich markup tags removed
-    """
-    # Remove [tag]...[/tag] pairs
-    text = re.sub(r"\[([^\]]+)\](.*?)\[/\1\]", r"\2", text)
-
-    # Remove remaining single tags like [tag]
-    text = re.sub(r"\[([^\]]+)\]", "", text)
-
-    return text

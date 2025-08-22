@@ -1,10 +1,4 @@
-""" Copyright (c) 2023 Asensus Surgical """
 
-""" Code Developed by: Alberto Rota """
-""" Supervision: Uriya Levy, Gal Weizman, Stefano Pomati """
-
-# -------------------------------------------------------------------------------------------------#
-# %%
 import torch
 import torch.nn as nn
 import transformers

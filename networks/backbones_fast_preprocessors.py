@@ -1,12 +1,4 @@
-# -------------------------------------------------------------------------------------------------#
 
-""" Copyright (c) 2024 Asensus Surgical """
-
-""" Code Developed by: Alberto Rota """
-""" Supervision: Uriya Levy, Gal Weizman, Stefano Pomati """
-
-
-# -------------------------------------------------------------------------------------------------#
 from dataclasses import dataclass
 from typing import Dict, Tuple, Union, Optional
 import torch

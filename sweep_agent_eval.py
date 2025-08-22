@@ -1,9 +1,4 @@
-"""Copyright (c) 2024 Asensus Surgical"""
 
-""" Code Developed by: Alberto Rota """
-""" Supervision: Uriya Levy, Gal Weizman, Stefano Pomati """
-
-# -------------------------------------------------------------------------------------------------#
 #  MODULES AND DATASET LOADING
 
 import main

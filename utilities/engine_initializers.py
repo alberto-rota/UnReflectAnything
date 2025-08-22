@@ -282,7 +282,7 @@ def wandb(config, model=None, notes="", no_wandb=False):
     stderr_capture = io.StringIO()
     with contextlib.redirect_stderr(stderr_capture):
         wandb_instance = weightsandbiases.init(
-            project=config.get("PROJECT", "EndoMatch"),
+            project=config.get("PROJECT", "UnReflectAnything"),
             config=config,
             notes=notes,
             resume=("must" if resume_run is not None else "allow"),

@@ -7,7 +7,55 @@ from enum import Enum, auto
 from rich.console import Console
 from rich.theme import Theme
 from rich.logging import RichHandler
-from utilities.formatting import align, strip_rich_markup
+
+
+def align(input_str, max_length, alignment):
+    """
+    Align a string to a specified length with the given alignment.
+    
+    Args:
+        input_str (str): The input string to align
+        max_length (int): The maximum length for the string
+        alignment (str): Alignment type - 'left', 'right', or 'center'
+        
+    Returns:
+        str: The aligned string
+    """
+    if alignment == "left":
+        # Trim the string from the right side if it exceeds the max_length
+        input_str = input_str[:max_length]
+        return input_str.ljust(max_length)
+    elif alignment == "right":
+        # Trim the string from the left side if it exceeds the max_length
+        input_str = input_str[-max_length:]
+        return input_str.rjust(max_length)
+    elif alignment == "center":
+        # For center alignment, take characters from the middle if trimming is needed
+        if len(input_str) > max_length:
+            start = (len(input_str) - max_length) // 2
+            input_str = input_str[start : start + max_length]
+        return input_str.center(max_length)
+    else:
+        raise ValueError("Alignment must be 'left', 'right', or 'center'.")
+
+
+def strip_rich_markup(text: str) -> str:
+    """
+    Strip Rich markup tags from a string.
+
+    Args:
+        text (str): Text with Rich markup
+
+    Returns:
+        str: Text with Rich markup tags removed
+    """
+    # Remove [tag]...[/tag] pairs
+    text = re.sub(r"\[([^\]]+)\](.*?)\[/\1\]", r"\2", text)
+
+    # Remove remaining single tags like [tag]
+    text = re.sub(r"\[([^\]]+)\]", "", text)
+
+    return text
 
 
 class LogContext(Enum):

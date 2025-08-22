@@ -51,6 +51,8 @@ class SCRREAM(Dataset):
         # Scene filtering
         scene_names: Optional[List[str]] = None,
         ignore_scenes: Optional[List[str]] = None,
+        # Few images mode for quick testing
+        few_images: bool = False,
     ):
         self.root_dir = root_dir
         self.rho_s = rho_s
@@ -77,8 +79,15 @@ class SCRREAM(Dataset):
         
         self.scene_names = scene_names
         self.ignore_scenes = ignore_scenes or []
+        self.few_images = few_images
 
         self.scene_pairs = self._find_scene_pairs()
+        
+        # Limit to 100 samples if few_images is True
+        if self.few_images and len(self.scene_pairs) > 100:
+            original_count = len(self.scene_pairs)
+            self.scene_pairs = self.scene_pairs[:100]
+            print(f"Few images mode: Limited dataset from {original_count} to 100 samples")
         
         # Setup caching if enabled
         if self.use_cache:
@@ -419,6 +428,7 @@ def create_optimized_dataloader(
     simplify_upsampling: bool = True,
     target_size: Optional[Tuple[int, int]] = (874, 1132),
     resize_mode: str = "crop",
+    few_images: bool = False,
     **dataset_kwargs
 ) -> DataLoader:
     """Create optimized dataloader with performance improvements"""
@@ -429,6 +439,7 @@ def create_optimized_dataloader(
         simplify_upsampling=simplify_upsampling,
         target_size=target_size,
         resize_mode=resize_mode,
+        few_images=few_images,
         **dataset_kwargs
     )
     

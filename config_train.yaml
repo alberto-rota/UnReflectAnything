@@ -51,13 +51,15 @@ parameters:
   
   # Logging configuration
   LOG_INTERVAL:
-    value: 10
+    value: 1
   WANDB_LOG_INTERVAL:
     value: 4
   IMAGE_LOG_INTERVAL:
     value: 20
   NO_WANDB:
-    value: True
+    value: False
+  MODEL_WATCHER_FREQ_WANDB:
+    value: 100
   
   # Gradient accumulation and warmup
   GRADIENT_ACCUMULATION_STEPS:

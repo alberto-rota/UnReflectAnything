@@ -1,11 +1,4 @@
-# -------------------------------------------------------------------------------------------------#
 
-"""Copyright (c) 2024 Asensus Surgical"""
-
-""" Code Developed by: Alberto Rota """
-""" Supervision: Uriya Levy, Gal Weizman, Stefano Pomati """
-
-# -------------------------------------------------------------------------------------------------#
 #  MODULES AND DATASET LOADING
 import torch
 from dotmap import DotMap
@@ -124,6 +117,7 @@ def create_datasets_from_config(config):
         resize_mode=config.get("RESIZE_MODE", "crop"),
         use_cache=config.get("USE_CACHE", True),
         simplify_upsampling=config.get("SIMPLIFY_UPSAMPLING", True),
+        few_images=config.get("FEW_IMAGES", False),
     )
     
     # Create validation dataset
@@ -136,6 +130,7 @@ def create_datasets_from_config(config):
         resize_mode=config.get("RESIZE_MODE", "crop"),
         use_cache=config.get("USE_CACHE", True),
         simplify_upsampling=config.get("SIMPLIFY_UPSAMPLING", True),
+        few_images=config.get("FEW_IMAGES", False),
     )
     
     # Create test dataset (use validation scenes for now)
@@ -148,6 +143,7 @@ def create_datasets_from_config(config):
         resize_mode=config.get("RESIZE_MODE", "crop"),
         use_cache=config.get("USE_CACHE", True),
         simplify_upsampling=config.get("SIMPLIFY_UPSAMPLING", True),
+        few_images=config.get("FEW_IMAGES", False),
     )
     
     logger.info(f"Training dataset: {len(training_dataset)} samples")
@@ -290,7 +286,7 @@ def run_pipeline(mode="train", config=None):
         config.BATCH_SIZE = 1
         config.EPOCHS = 1
         config.NO_WANDB = True
-        config.FEWFRAMES = True
+        config.FEW_IMAGES = True
         logger.info("Boot mode enabled - using minimal parameters for quick testing")
 
     def get_unique_note():

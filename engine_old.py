@@ -1,11 +1,4 @@
-# -------------------------------------------------------------------------------------------------#
 
-"""Copyright (c) 2024 Asensus Surgical"""
-
-""" Co\ Developed by: Alberto Rota """
-""" Supervision: Uriya Levy, Gal Weizman, Stefano Pomati """
-
-# -------------------------------------------------------------------------------------------------#
 
 from readline import redisplay
 import torch

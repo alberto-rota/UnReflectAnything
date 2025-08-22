@@ -1,11 +1,4 @@
-# -------------------------------------------------------------------------------------------------#
 
-""" Copyright (c) 2024 Asensus Surgical """
-
-""" Code Developed by: Alberto Rota """
-""" Supervision: Uriya Levy, Gal Weizman, Stefano Pomati """
-
-# -------------------------------------------------------------------------------------------------#
 
 import numpy as np
 import torch
@@ -660,10 +653,10 @@ def specular_loss(batch, out, recon_loss, weights=None, eps=1e-7):
 
     return {
         "total": total,
-        "ssim": L_ssim,
-        "bce": L_bce,
-        "dice": L_dice,
-        "offmask": L_off,
-        "onmask": L_on,
-        "achro": L_achro
+        "SSIM": L_ssim,
+        "BCE": L_bce,
+        "Dice": L_dice,
+        "OffMask": L_off,
+        "OnMask": L_on,
+        "Achro": L_achro
     }

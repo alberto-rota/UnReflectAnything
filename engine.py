@@ -1,32 +1,17 @@
-# -------------------------------------------------------------------------------------------------#
 
-"""Copyright (c) 2024 Asensus Surgical"""
-
-""" Code Developed by: Alberto Rota """
-""" Supervision: Uriya Levy, Gal Weizman, Stefano Pomati """
-
-# -------------------------------------------------------------------------------------------------#
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import os
-import time
 from rich import print
 import pandas as pd
 import numpy as np
 import wandb
 from contextlib import contextmanager, nullcontext
 import gc
-from typing import Union, Dict, Optional
-import torchvision
-
-# Project specific imports
+from typing import Union, Optional
 from losses import SSIMLoss, specular_loss
-from models import DINOv3, DPTRGBDecoder, RGBPOLDecomposer, POLViTEncoder
-from dataset.scrream import SCRREAM
-from logger import get_logger, LogContext
-
+from logger import get_logger
 # Import optimization utilities
 try:
     import optimization
@@ -45,20 +30,27 @@ except ImportError:
 
 # Optional pipelines and utilities (if available)
 try:
-    from pipelines.depth.depth import DepthPipeline
-    from projections import ReflectionWarp
     DEPTH_AVAILABLE = True
 except ImportError:
     DEPTH_AVAILABLE = False
     print("Warning: Depth pipeline and projections not available")
 
 try:
-    from utilities.visualization import rgb, panelize
-    from utilities import *
     UTILITIES_AVAILABLE = True
 except ImportError:
     UTILITIES_AVAILABLE = False
     print("Warning: Some utilities not available")
+
+# Import metrics_for_wandb function if available
+try:
+    from utilities.metrics import metrics_for_wandb
+    METRICS_AVAILABLE = True
+except ImportError:
+    METRICS_AVAILABLE = False
+    # Define a simple fallback function
+    def metrics_for_wandb(metrics, phase):
+        """Simple fallback for metrics formatting"""
+        return {f"{phase}/{k}": v for k, v in metrics.items()}
 
 
 class Engine:
@@ -137,7 +129,7 @@ class Engine:
         
         init(initialize.schedulers, self.optimizer, config, self.training_dl)
         init(initialize.transforms, self.height, self.width)
-        init(initialize.wandb, config, wrapped_model, notes, no_wandb)
+        init(initialize.wandb, config, self.model, notes, no_wandb)
         init(initialize.tracking_metrics)
         init(initialize.setup_run_directories, self.RUNS_DIR, self.wandb, False)
         self.config["name"] = self.runname
@@ -151,7 +143,6 @@ class Engine:
         initialize.save_hyperparameters_json(self.RUN_DIR, self.config)
         self.logger = get_logger(__name__, log_to_file=True, log_dir=self.RUN_DIR)
 
-        self.logger.info(f"Engine initialized successfully with model on {self.device}", context="ENGINE")
 
 
 
@@ -356,9 +347,13 @@ class Engine:
                     m != "Loss"
                     and "/" not in m
                     and self.metrics[stage][m].iloc[-1] is not None
+                    and not m.startswith("Step/")  # Skip step metrics
+                    and not m.startswith("HyperParameters/")  # Skip hyperparameter metrics
                 ):
+                    # Use full metric name for better readability
+                    display_name = m if len(m) <= 6 else m[:6]
                     metrs += (
-                        f"[yellow]{m[:4]}[/yellow]"
+                        f"[yellow]{display_name}[/yellow]"
                         + "="
                         + align(
                             f"{self.metrics[stage][m].iloc[-1]:.4f}",
@@ -495,7 +490,7 @@ class Engine:
         
         Args:
             phase: "Training", "Validation", or "Test"
-            
+
         Returns:
             Average loss for the epoch (if applicable)
         """
@@ -560,6 +555,7 @@ class Engine:
                     "rgb": sample["rgb"].to(self.device),
                     "AoP": sample["AoP"].to(self.device),
                     "DoP": sample["DoP"].to(self.device),
+                    "f_spec": sample["f_spec"].to(self.device),
                 }
                 
                 # Forward pass through the model
@@ -596,6 +592,32 @@ class Engine:
                 epoch_losses.append(loss_value.item())
                 self.step[f"{phase}_batch"] += 1
                 
+                # Update metrics dataframe (similar to engine_old.py)
+                metrics = {
+                    "Loss": loss_value.item(),
+                    "HyperParameters/LR": self.optimizer.param_groups[0]["lr"],
+                    f"Step/{'val' if phase == 'Validation' else ''}batch": self.step[f"{phase}_batch"],
+                    f"Step/{'idx' if phase == 'Test' else 'epoch'}": self.step["epoch"],
+                }
+                
+                # Add individual loss components if available
+                if 'losses' in locals() and isinstance(losses, dict):
+                    for loss_name, loss_val in losses.items():
+                        if isinstance(loss_val, torch.Tensor) and loss_name != "total":
+                            # Use the loss name directly (without "Loss_" prefix) for better display
+                            metrics[loss_name] = loss_val.item()
+                
+                # Add gradient information if available
+                if 'backward_output' in locals() and backward_output.get("grad_norm") is not None:
+                    metrics["Gradients/GradNorm"] = backward_output["grad_norm"]
+                    metrics["Gradients/WeightNorm"] = backward_output["weight_norm"]
+                
+                # Update the metrics dataframe
+                self.metrics[phase] = pd.concat(
+                    [self.metrics[phase], pd.DataFrame(metrics, index=[0])],
+                    ignore_index=True,
+                )
+                
                 # Console logging
                 if batch_idx % self.config.get("LOG_INTERVAL", 10) == 0:
                     extra_info = "W" if is_training and step < self.warmup_steps else None
@@ -609,20 +631,9 @@ class Engine:
                 
                 # WandB logging
                 if self.wandb and batch_idx % self.logfreq_wandb == 0:
-                    log_dict = {
-                        "epoch": self.step["epoch"],
-                        "batch": batch_idx,
-                        f"loss/{phase.lower()}": loss_value.item(),
-                    }
-                    
-                    # Log gradient information
-                    if backward_output.get("grad_norm") is not None:
-                        log_dict.update({
-                            "gradients/grad_norm": backward_output["grad_norm"],
-                            "gradients/weight_norm": backward_output["weight_norm"],
-                        })
-                    
-                    self.wandb.log(log_dict)
+                    # Use the metrics_for_wandb function to format metrics properly
+                    wandb_metrics = metrics_for_wandb(metrics, phase)
+                    self.wandb.log(wandb_metrics)
                 
                 # Memory cleanup
 
@@ -643,21 +654,25 @@ class Engine:
         avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         self.logger.info(f"Epoch {self.step['epoch']+1} - Average Loss: {avg_loss:.6f}", context=phase.upper())
         
-        # Log epoch metrics to wandb
+        # Log epoch metrics to wandb (similar to engine_old.py)
         if self.wandb:
-            self.wandb.log({
-                f"{phase.lower()}_epoch_loss": avg_loss,
-                "epoch": self.step["epoch"],
-            })
+            epochstr = "idx" if phase == "Test" else "epoch"
+            epoch_metrics = metrics_for_wandb(
+                self.metrics[phase][
+                    self.metrics[phase][f"Step/{epochstr}"] == self.step["epoch"]
+                ].mean(),
+                phase,
+            )
+            # Format epoch metrics properly
+            epoch_metrics = {
+                key.replace(phase, f"{phase}/{epochstr}"): value
+                for key, value in epoch_metrics.items()
+                if phase in key
+            }
+            self.wandb.log(epoch_metrics)
             
         return avg_loss
     
-
-    
-
-    
-
-
     def _save_checkpoint(self, epoch, is_best=False):
         """Save model checkpoint"""
         checkpoint = {
