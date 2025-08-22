@@ -81,7 +81,7 @@ def titlescreen() -> None:
     """
     Prints the title screen from a text file.
     """
-    with open("assets/banner_giant.txt", "r") as f:
+    with open("assets/project_ascii_banner.txt", "r") as f:
         print(f"[white]{f.read()}[/white]")
 
 

@@ -1,0 +1,92 @@
+parameters:
+  # Dataset configuration
+  DATASET_ROOT:
+    value: "/datasets/SCRREAM/"
+  TARGET_SIZE:
+    value: [224, 224]
+  TRAIN_SCENES:
+    value: null  # Use all scenes except validation scenes
+  VAL_SCENES:
+    value: ["scene09_full_00", "scene09_reduced_00"]
+  RHO_S:
+    value: 0.6
+  EPS:
+    value: 1.0e-8
+  RESIZE_MODE:
+    value: "crop"
+  USE_CACHE:
+    value: true
+  SIMPLIFY_UPSAMPLING:
+    value: true
+  
+  # Training configuration
+  BATCH_SIZE:
+    value: 4
+  WORKERS:
+    value: 4
+  PIN_MEMORY:
+    value: true
+  PREFETCH_FACTOR:
+    value: 2
+  
+  # Model configuration
+  LEARNING_RATE:
+    value: 1.0e-4
+  WEIGHT_DECAY:
+    value: 1.0e-5
+  EPOCHS:
+    value: 100
+  
+  # Scheduler configuration
+  STEPWISESCHEDULER_NSTEPS:
+    value: 4
+  STEPWISESCHEDULER_GAMMA:
+    value: 0.5
+  
+  # Early stopping and checkpointing
+  EARLY_STOPPING_PATIENCE:
+    value: 10
+  SAVE_INTERVAL:
+    value: 10
+  
+  # Logging configuration
+  LOG_INTERVAL:
+    value: 10
+  WANDB_LOG_INTERVAL:
+    value: 4
+  IMAGE_LOG_INTERVAL:
+    value: 20
+  NO_WANDB:
+    value: True
+  
+  # Gradient accumulation and warmup
+  GRADIENT_ACCUMULATION_STEPS:
+    value: 1
+  WARMUP_STEPS:
+    value: 0
+  
+  LR_SCHEDULER:
+    value: "stepwise"
+  ONPLATEAUSCHEDULER_PATIENCE:
+    value: 10
+  ONPLATEAUSCHEDULER_FACTOR:
+    value: 0.5
+  EXPONENTIALSCHEDULER_GAMMA:
+    value: 0.5
+  STEPWISESCHEDULER_NSTEPS:
+    value: 2
+
+  # Optimizer switching (optional)
+  SWITCH_OPTIMIZER_EPOCH:
+    value: null
+  OPTIMIZER_BOOTSTRAP_NAME:
+    value: "Adam"
+  OPTIMIZER_REFINING_NAME:
+    value: "Adam"
+  
+  # Notes for this run
+  NOTES:
+    value: "Training run with SCRREAM dataset"
+  
+
+

@@ -1,0 +1,396 @@
+# -------------------------------------------------------------------------------------------------#
+
+"""Copyright (c) 2024 Asensus Surgical"""
+
+""" Code Developed by: Alberto Rota """
+""" Supervision: Uriya Levy, Gal Weizman, Stefano Pomati """
+
+# -------------------------------------------------------------------------------------------------#
+#  MODULES AND DATASET LOADING
+import torch
+from dotmap import DotMap
+import os, yaml, socket, time
+import argparse
+import debugpy
+import ast
+from rich.traceback import install
+from engine import Engine
+from dataset.scrream import SCRREAM
+from models import DINOv3, DPTRGBDecoder, RGBPOLDecomposer, POLViTEncoder
+from logger import get_logger, LogContext
+from dotenv import load_dotenv
+
+logger = get_logger(__name__).set_context("IMPORT")
+load_dotenv()
+
+# Optional utilities (if available)
+try:
+    from utilities import *
+    import dataset as ds
+except ImportError:
+    logger.warning("Some utilities not available", context="WARNING")
+
+
+def create_model_from_config(config, device):
+    """
+    Create the RGBPOLDecomposer model from configuration.
+    
+    Args:
+        config: Configuration dictionary containing model parameters
+        device: Device to place the model on
+        
+    Returns:
+        RGBPOLDecomposer: The initialized model
+    """
+    # Get image dimensions from config
+    target_size = config.get("TARGET_SIZE", (224, 224))
+    if isinstance(target_size, list):
+        target_size = tuple(target_size)
+    
+    # Model configuration
+    dinov3_cfg = {
+        "model_name": "facebook/dinov3-vits16-pretrain-lvd1689m",
+        "image_size": min(target_size),
+        "freeze_backbone": config.get("FREEZE_BACKBONE", True),
+        "return_last_hidden_state": True,
+        "return_as_feature_maps": False,
+    }
+
+    pol_enc_cfg = {
+        "in_ch": 3,
+        "embed_dim": config.get("EMBED_DIM", 384),
+        "depth": config.get("POL_DEPTH", 4),
+        "n_heads": config.get("POL_N_HEADS", 12),
+        "patch_size": config.get("PATCH_SIZE", 16),
+    }
+
+    decoder_cfg = {
+        "use_bn": config.get("USE_BN", True),
+        "readout_type": config.get("READOUT_TYPE", "ignore"),
+        "feature_dim": config.get("FEATURE_DIM", 384),
+        "output_image_size": (min(target_size), min(target_size)),
+    }
+
+    # Create components
+    pol_enc = POLViTEncoder(pol_enc_cfg)
+    dinov3 = DINOv3(dinov3_cfg)
+    decS = DPTRGBDecoder(decoder_cfg)
+    decD = DPTRGBDecoder(decoder_cfg)
+    decH = DPTRGBDecoder(decoder_cfg)
+
+    # Create the main model
+    model = RGBPOLDecomposer(
+        dinov3=dinov3,
+        pol_encoder=pol_enc,
+        pol_preprocess=None,
+        pol_cross_attn=None,
+        spec_decoder=decS,
+        diffuse_decoder=decD,
+        highlight_decoder=decH,
+    ).to(device)
+    
+    logger.info(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters", context="MODEL")
+    return model
+
+
+def create_datasets_from_config(config):
+    """
+    Create training and validation datasets from configuration.
+    
+    Args:
+        config: Configuration dictionary containing dataset parameters
+        
+    Returns:
+        dict: Dictionary containing 'training' and 'validation' datasets
+    """
+    # Get dataset parameters from config
+    dataset_root = config.get("DATASET_ROOT", "/datasets/SCRREAM/")
+    target_size = config.get("TARGET_SIZE", (224, 224))
+    batch_size = config.get("BATCH_SIZE", 4)
+    workers = config.get("WORKERS", 4)
+    
+    # Get scene lists for train/val split
+    train_scenes = config.get("TRAIN_SCENES", None)  # None means use all except validation scenes
+    val_scenes = config.get("VAL_SCENES", ["scene09_full_00", "scene09_reduced_00"])
+    
+    # Create training dataset
+    training_dataset = SCRREAM(
+        root_dir=dataset_root,
+        ignore_scenes=val_scenes if train_scenes is None else None,
+        scene_names=train_scenes,
+        rho_s=config.get("RHO_S", 0.6),
+        eps=config.get("EPS", 1e-8),
+        target_size=target_size,
+        resize_mode=config.get("RESIZE_MODE", "crop"),
+        use_cache=config.get("USE_CACHE", True),
+        simplify_upsampling=config.get("SIMPLIFY_UPSAMPLING", True),
+    )
+    
+    # Create validation dataset
+    validation_dataset = SCRREAM(
+        root_dir=dataset_root,
+        scene_names=val_scenes,
+        rho_s=config.get("RHO_S", 0.6),
+        eps=config.get("EPS", 1e-8),
+        target_size=target_size,
+        resize_mode=config.get("RESIZE_MODE", "crop"),
+        use_cache=config.get("USE_CACHE", True),
+        simplify_upsampling=config.get("SIMPLIFY_UPSAMPLING", True),
+    )
+    
+    # Create test dataset (use validation scenes for now)
+    test_dataset = SCRREAM(
+        root_dir=dataset_root,
+        scene_names=val_scenes,
+        rho_s=config.get("RHO_S", 0.6),
+        eps=config.get("EPS", 1e-8),
+        target_size=target_size,
+        resize_mode=config.get("RESIZE_MODE", "crop"),
+        use_cache=config.get("USE_CACHE", True),
+        simplify_upsampling=config.get("SIMPLIFY_UPSAMPLING", True),
+    )
+    
+    logger.info(f"Training dataset: {len(training_dataset)} samples")
+    logger.info(f"Validation dataset: {len(validation_dataset)} samples")
+    logger.info(f"Test dataset: {len(test_dataset)} samples")
+    logger.info(f"Training scenes: {training_dataset.get_loaded_scenes()}")
+    logger.info(f"Validation scenes: {validation_dataset.get_loaded_scenes()}")
+    logger.info(f"Test scenes: {test_dataset.get_loaded_scenes()}")
+    
+    # Return with correct keys that engine_initializers expects
+    return {
+        "Training": training_dataset,
+        "Validation": validation_dataset,
+        "Test": test_dataset,
+        "workers": workers
+    }
+
+
+def run_pipeline(mode="train", config=None):
+    """
+    Common pipeline for train and test modes.
+
+    Args:
+        mode (str): Operation mode ('train' or 'test')
+    """
+    install(show_locals=False)
+
+    # Argparse
+    parser = argparse.ArgumentParser(description=f"{mode.capitalize()} the network")
+    parser.add_argument(
+        "--nodebug", "-nd", action="store_false", help="Disable debug mode"
+    )
+    parser.add_argument(
+        "--record",
+        "-r",
+        action="store_true",
+        help="Save the session for comparison",
+    )
+    parser.add_argument("--stop", "-s", action="store_true", help="Stop VM when done")
+    parser.add_argument(
+        "--boot",
+        "-b",
+        action="store_true",
+        help="Run in boot mode with minimal parameters",
+    )
+    parser.add_argument(
+        "--config",
+        "-c",
+        type=str,
+        default=f"config_{mode}.yaml",
+        help="Path to the config file",
+    )
+
+    # Parse known and unknown arguments
+    args, unknown = parser.parse_known_args()
+
+    if args.nodebug:
+        debugpy.listen(("localhost", 5678))
+    
+    # Show title screen if available
+    try:
+        titlescreen()
+    except:
+        logger.info("=" * 50, context="INFO")
+        logger.info("UnReflectAnything - Reflection Removal Training", context="INFO")
+        logger.info("=" * 50, context="INFO")
+
+
+    logger.info(f"Torch Version: {torch.__version__}")
+    logger.info(f"Python Version: {os.sys.version.split()[0]}")
+    logger.info(f"CUDA version: {torch.version.cuda}")
+    logger.info(f"CUDNN version: {torch.backends.cudnn.version()}")
+    
+    # Get CPU info
+    try:
+        cpu_affinity = os.sched_getaffinity(os.getpid())
+        NUM_WORKERS = len(list(cpu_affinity))
+        logger.info(f"Cores available: {NUM_WORKERS} {sorted(list(cpu_affinity))}")
+    except Exception as e:
+        NUM_WORKERS = 4
+        logger.info(f"Using default workers: {NUM_WORKERS}", context="INFO")
+    
+    logger.info(f"CUDA available: {torch.cuda.is_available()}")
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ACCELERATED = torch.cuda.is_available()
+
+    if config is None:
+        CONFIG_PATH = args.config
+
+        # Load the configuration file
+        with open(CONFIG_PATH, "r") as f:
+            config_yaml = yaml.safe_load(f)
+        config_parameters = config_yaml["parameters"]
+        config_dict = {
+            k: v.get("value") for k, v in config_parameters.items() if v is not None
+        }
+    else:
+        config_dict = config
+
+    # Process the unknown command-line arguments
+    additional_args = {}
+    for arg in unknown:
+        if arg.startswith("--"):
+            key_value = arg.lstrip("--").split("=", 1)
+            if len(key_value) == 2:
+                key, value = key_value
+                additional_args[key.upper()] = value
+            else:
+                key = key_value[0]
+                additional_args[key.upper()] = None
+
+    # Override parameters in the configuration with command-line arguments
+    for key, value in additional_args.items():
+        if key in config_dict:
+            orig_value = config_dict[key]
+            orig_type = type(orig_value)
+            try:
+                if orig_type == bool:
+                    if value.lower() in ("true", "1", "yes"):
+                        new_value = True
+                    elif value.lower() in ("false", "0", "no"):
+                        new_value = False
+                    else:
+                        raise ValueError(f"Cannot parse boolean value: {value}")
+                elif orig_type == list:
+                    new_value = ast.literal_eval(value)
+                else:
+                    new_value = orig_type(value)
+                config_dict[key] = new_value
+            except Exception as e:
+                print(f"Could not convert value for {key}: {value}, error: {e}")
+        else:
+            print(f"Warning: Unknown parameter {key}")
+
+    # Convert the configuration dictionary to a DotMap for easy access
+    config = DotMap(config_dict)
+
+    # Override parameters if boot mode is enabled
+    if args.boot:
+        config.BATCH_SIZE = 1
+        config.EPOCHS = 1
+        config.NO_WANDB = True
+        config.FEWFRAMES = True
+        logger.info("Boot mode enabled - using minimal parameters for quick testing")
+
+    def get_unique_note():
+        notes_past_file = os.path.join("assets", "notes_past.txt")
+        existing_notes = set()
+        if os.path.exists(notes_past_file):
+            with open(notes_past_file, "r") as f:
+                existing_notes = set(line.strip() for line in f if line.strip())
+
+        while True:
+            print()
+            note = input("Describe this run: ").strip()
+            if note == " ":
+                return note
+            if not note:
+                continue
+            if note in existing_notes:
+                print("Already in Use")
+            else:
+                with open(notes_past_file, "a") as f:
+                    f.write(note + "\n")
+                return note
+
+    # Check if 'NOTES' is empty or not
+    config.RECORD = args.record
+    if args.record:
+        if not config.get("NOTES"):
+            config.NOTES = get_unique_note()
+        else:
+            if not config.NOTES.strip():
+                config.NOTES = get_unique_note()
+            else:
+                notes_past_file = os.path.join("assets", "notes_past.txt")
+                existing_notes = set()
+                if os.path.exists(notes_past_file):
+                    with open(notes_past_file, "r") as f:
+                        existing_notes = set(line.strip() for line in f if line.strip())
+                if config.NOTES in existing_notes:
+                    config.NOTES = get_unique_note()
+                else:
+                    with open(notes_past_file, "a") as f:
+                        f.write(config.NOTES + "\n")
+
+    # Run the appropriate function based on mode
+    try:
+        if mode == "train":
+            # Create model
+            model = create_model_from_config(config, DEVICE)
+            
+            # Create datasets for training
+            dataset = create_datasets_from_config(config)
+            
+            # Initialize engine
+            engine = Engine(
+                model=model,  # Pass the created model
+                dataset=dataset,
+                config=config,
+                no_wandb=config.get("NO_WANDB", False),
+                notes=config.get("NOTES", ""),
+            )
+            
+            # Train the model
+            engine.trainloop()
+            
+            # Load best model and test
+            engine.reinstantiate_model_from_checkpoint()
+            engine.test()
+            
+        elif mode == "test":
+            # Create model
+            model = create_model_from_config(config, DEVICE)
+            
+            # Create datasets for testing
+            dataset = create_datasets_from_config(config)
+            
+            # Initialize engine
+            engine = Engine(
+                model=model,  # Pass the created model
+                dataset=dataset,
+                config=config,
+                no_wandb=config.get("NO_WANDB", False),
+                notes=config.get("NOTES", ""),
+            )
+            
+            # Load best model and test
+            engine.reinstantiate_model_from_checkpoint()
+            engine.test()
+            
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+    except Exception as e:
+        raise e
+    finally:
+        if args.stop and socket.gethostname() == "alberto-vm-03":
+            print("\n[red]!!! Stopping VM in 60 seconds !!![/red]")
+            try:
+                time.sleep(60)
+            except KeyboardInterrupt:
+                print("\nVM stop aborted.")
+            else:
+                os.system(
+                    "gcloud compute instances stop alberto-vm-03 --zone=us-central1-a"
+                )

@@ -143,3 +143,51 @@ def mat2euler(mat: torch.Tensor) -> torch.Tensor:
         result = result.squeeze(0)
 
     return result
+
+
+def Tdist(T1: torch.Tensor, T2: torch.Tensor, angle_mode: str = "radians"):
+    """
+    Computes the rotation angle and translation distance between two 4x4 transformation matrices.
+    Supports batched inputs.
+
+    Args:
+        T1: (N, 4, 4) or (4, 4) tensor, first transformation matrix
+        T2: (N, 4, 4) or (4, 4) tensor, second transformation matrix
+        angle_mode: str, either "radians" or "degrees"
+
+    Returns:
+        angle: (N,) or scalar tensor, rotation angle in specified mode
+        distance: (N,) or scalar tensor, Euclidean distance between translations
+    """
+
+    # Ensure input is a batch
+    if T1.dim() == 2:
+        T1 = T1.unsqueeze(0)
+        T2 = T2.unsqueeze(0)
+
+    # Extract translation components
+    t1 = T1[:, :3, 3]  # (N, 3)
+    t2 = T2[:, :3, 3]  # (N, 3)
+
+    # Compute Euclidean distance
+    distance = torch.norm(t2 - t1, dim=1)  # (N,)
+
+    # Extract rotation components
+    R1 = T1[:, :3, :3]  # (N, 3, 3)
+    R2 = T2[:, :3, :3]  # (N, 3, 3)
+
+    # Compute relative rotation matrix
+    R_rel = R2 @ R1.transpose(-1, -2)  # (N, 3, 3)
+
+    # Compute rotation angle using trace formula: cos(theta) = (trace(R) - 1) / 2
+    trace_R = torch.diagonal(R_rel, dim1=-2, dim2=-1).sum(-1)  # (N,)
+    angle = torch.acos(torch.clamp((trace_R - 1) / 2, -1.0, 1.0))  # (N,)
+
+    # Convert to degrees if required
+    if angle_mode == "degrees":
+        angle = torch.rad2deg(angle)
+
+    # If input was not batched, return scalars instead of tensors
+    if angle.shape[0] == 1:
+        return angle.item(), distance.item()
+    return angle, distance

@@ -1,0 +1,706 @@
+# -------------------------------------------------------------------------------------------------#
+
+"""Copyright (c) 2024 Asensus Surgical"""
+
+""" Code Developed by: Alberto Rota """
+""" Supervision: Uriya Levy, Gal Weizman, Stefano Pomati """
+
+# -------------------------------------------------------------------------------------------------#
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import os
+import time
+from rich import print
+import pandas as pd
+import numpy as np
+import wandb
+from contextlib import contextmanager, nullcontext
+import gc
+from typing import Union, Dict, Optional
+import torchvision
+
+# Project specific imports
+from losses import SSIMLoss, specular_loss
+from models import DINOv3, DPTRGBDecoder, RGBPOLDecomposer, POLViTEncoder
+from dataset.scrream import SCRREAM
+from logger import get_logger, LogContext
+
+# Import optimization utilities
+try:
+    import optimization
+    OPTIMIZATION_AVAILABLE = True
+except ImportError:
+    OPTIMIZATION_AVAILABLE = False
+    print("Warning: Optimization utilities not available")
+
+# Import engine initializers
+try:
+    import utilities.engine_initializers as initialize
+    ENGINE_INITIALIZERS_AVAILABLE = True
+except ImportError:
+    ENGINE_INITIALIZERS_AVAILABLE = False
+    print("Warning: Engine initializers not available")
+
+# Optional pipelines and utilities (if available)
+try:
+    from pipelines.depth.depth import DepthPipeline
+    from projections import ReflectionWarp
+    DEPTH_AVAILABLE = True
+except ImportError:
+    DEPTH_AVAILABLE = False
+    print("Warning: Depth pipeline and projections not available")
+
+try:
+    from utilities.visualization import rgb, panelize
+    from utilities import *
+    UTILITIES_AVAILABLE = True
+except ImportError:
+    UTILITIES_AVAILABLE = False
+    print("Warning: Some utilities not available")
+
+
+class Engine:
+    def __init__(
+        self,
+        model: Union[nn.Module, str, None],
+        dataset: dict,
+        config: dict,
+        notes: str = "",
+        no_wandb: bool = False,
+        **kwargs,
+    ):
+        """
+        Initializes the Engine object for polarization-based reflection removal training.
+
+        Args:
+            model (nn.Module): The RGBPOLDecomposer model to be trained or model config.
+            dataset (dict): Dictionary containing 'training', 'validation', and optionally 'test' datasets.
+            config (dict): Dictionary containing config like BATCH_SIZE, LEARNING_RATE, etc.
+            notes (str, optional): Additional notes for the training session. Defaults to "".
+            no_wandb (bool): Whether to disable wandb logging.
+            **kwargs: Additional keyword arguments.
+        """
+        # Set memory-efficient settings
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.autograd.set_detect_anomaly(False)  # Disable for performance
+        
+        # Store configuration
+        self.config = config
+        self.config["NOTES"] = notes
+        self.no_wandb = no_wandb
+
+        # Initialize device and directories
+        device_dirs = initialize.device_and_directories()
+        self.device = device_dirs["device"]
+        self.RUNS_DIR = device_dirs["runs_dir"]
+
+        # Function to set attributes from initialization functions
+        def init(init_func, *args, **kwargs):
+            result = init_func(*args, **kwargs)
+            for key, value in result.items():
+                setattr(self, key, value)
+            return result
+
+        # Initialize the model
+        self.model = model
+        
+        # Initialize all components using engine_initializers
+        init(initialize.dataloaders, dataset, config)
+        init(initialize.dimensions, self.training_dl, config)
+        init(initialize.hyperparameters, config)
+        
+        # Create a simple wrapper for the model to work with engine_initializers
+        # The engine_initializers expect a model with specific attributes
+        class ModelWrapper:
+            def __init__(self, model):
+                self.model = model
+                # Add any required attributes that engine_initializers might expect
+                self.parameters = model.parameters
+                self.to = model.to
+                self.train = model.train
+                self.eval = model.eval
+                self.state_dict = model.state_dict
+                self.load_state_dict = model.load_state_dict
+                
+        wrapped_model = ModelWrapper(self.model)
+        
+        init(initialize.optimizers, wrapped_model, config)
+        init(initialize.loss_functions, config)
+        
+        # Initialize polarization-specific losses
+        self.recon_loss = SSIMLoss()
+        
+        init(initialize.schedulers, self.optimizer, config, self.training_dl)
+        init(initialize.transforms, self.height, self.width)
+        init(initialize.wandb, config, wrapped_model, notes, no_wandb)
+        init(initialize.tracking_metrics)
+        init(initialize.setup_run_directories, self.RUNS_DIR, self.wandb, False)
+        self.config["name"] = self.runname
+
+        # Initialize early stopping
+        self.earlystopping = initialize.earlystopping(
+            self.earlystopping_patience, self.MODELS_DIR, self.runname
+        )
+
+        # Save hyperparameters to json
+        initialize.save_hyperparameters_json(self.RUN_DIR, self.config)
+        self.logger = get_logger(__name__, log_to_file=True, log_dir=self.RUN_DIR)
+
+        self.logger.info(f"Engine initialized successfully with model on {self.device}", context="ENGINE")
+
+
+
+    def trainloop(self):
+        """
+        The main training loop that runs through all epochs, trains the model,
+        validates it, and handles early stopping and saving of the model.
+        """
+        for e in range(self.epochs):
+            ### TRAINING + VALIDATION FOR EACH EPOCH
+            self.train()  # Train the model for one epoch
+            training_status = self.validate()  # Train the model for one epoch
+
+            self.csv_log_metrics()
+            
+            # Save checkpoint every few epochs
+            if (e + 1) % self.config.get("SAVE_INTERVAL", 10) == 0:
+                self._save_checkpoint(e)
+
+            ### BREAK IF EARLYSTOP
+            if training_status == "EARLYSTOP":
+                break  # Exit the training loop if early stopping condition is met
+
+        # Log locations of important data at the end of training
+        self.logger.info("TRAINING COMPLETE", context="SAVE")
+        self.logger.info(
+            f"Run directory: {os.path.abspath(self.RUN_DIR)}", context="SAVE"
+        )
+        self.logger.info(
+            f"Checkpoints  : {os.path.abspath(self.MODELS_DIR)}", context="SAVE"
+        )
+        self.logger.info(f"Metrics      :", context="SAVE")
+        self.logger.info(
+            f"Training     : {os.path.abspath(os.path.join(self.RUN_DIR, 'training_metrics.csv'))}",
+            context="SAVE",
+        )
+        self.logger.info(
+            f"Validation   : {os.path.abspath(os.path.join(self.RUN_DIR, 'validation_metrics.csv'))}",
+            context="SAVE",
+        )
+
+        # Remove unused IMAGES_DIR if it exists and is empty
+        images_dir = os.path.join(self.RUN_DIR, "images")
+        if os.path.exists(images_dir) and not os.listdir(images_dir):
+            try:
+                os.rmdir(images_dir)
+                self.logger.info(
+                    f"Removed unused directory: {images_dir}", context="SAVE"
+                )
+            except OSError:
+                pass
+
+    def train(self):
+        """Training phase for one epoch"""
+        return self.run_epoch(phase="Training")
+
+    def validate(self):
+        """Validation phase for one epoch"""
+        result = self.run_epoch(phase="Validation")
+        
+        # Early stopping logic
+        if result is not None:
+            self.step["epoch"] += 1  # Increasing epoch counter
+            self.LRschedulerPlateau.step(float(result))
+            self.earlystopping(
+                float(result),
+                self.model,
+                self.step["epoch"] - 1,
+            )
+            if self.earlystopping.early_stop:
+                self.logger.info(">> [EARLYSTOPPING]: Patience Reached, Stopping Training", context="TRAINING")
+                return "EARLYSTOP"
+            return "IMPROVED"
+        return "CONTINUE"
+
+    def test(self):
+        """Test phase"""
+        result = self.run_epoch(phase="Test")
+        if self.wandb is not None:
+            self.log_tests()
+        return result
+
+    def log_tests(self):
+        """
+        Logs the test metrics to Weights and Biases.
+        """
+        self.logger.info(">> TEST REPORT", context="TEST")
+        self.logger.info(self.metrics["Test"].describe(), context="TEST")
+        self.metrics["Test"].to_csv(os.path.join(self.RUN_DIR, "test_metrics.csv"))
+        if self.wandb:
+            self.wandb.log({"Test/Summary": wandb.Table(dataframe=self.metrics["Test"])})
+
+        # Log locations of important data
+        self.logger.info(">> RUN DATA LOCATIONS", context="SAVE")
+        self.logger.info(f"Run data directory: {os.path.abspath(self.RUN_DIR)}", context="SAVE")
+        self.logger.info(f"Models saved at: {os.path.abspath(self.MODELS_DIR)}", context="SAVE")
+        self.logger.info(f"Metrics CSV files:", context="SAVE")
+        self.logger.info(
+            f"  - Training: {os.path.abspath(os.path.join(self.RUN_DIR, 'training_metrics.csv'))}",
+            context="SAVE",
+        )
+        self.logger.info(
+            f"  - Validation: {os.path.abspath(os.path.join(self.RUN_DIR, 'validation_metrics.csv'))}",
+            context="SAVE",
+        )
+        self.logger.info(
+            f"  - Test: {os.path.abspath(os.path.join(self.RUN_DIR, 'test_metrics.csv'))}",
+            context="SAVE",
+        )
+
+        # Log WandB URLs again for convenience
+        if hasattr(self.wandb, "url") and self.wandb.url:
+            self.logger.info(f"WandB run URL: {self.wandb.url}", context="WANDB")
+            project_url = self.wandb.url.rsplit("/", 1)[0]
+            self.logger.info(f"WandB project URL: {project_url}", context="WANDB")
+
+    def csv_log_metrics(self):
+        """Save metrics to CSV files"""
+        if not self.metrics["Training"].empty:
+            self.metrics["Training"].to_csv(
+                os.path.join(self.RUN_DIR, "training_metrics.csv")
+            )
+        if not self.metrics["Validation"].empty:
+            self.metrics["Validation"].to_csv(
+                os.path.join(self.RUN_DIR, "validation_metrics.csv")
+            )
+
+    def console_log_metrics(
+        self,
+        stage,
+        epoch=None,
+        batch_idx=None,
+        dataloader_len=None,
+        extra_info=None,
+    ):
+        """
+        Print metrics and status information for training, validation, or test.
+
+        Parameters:
+        -----------
+        stage : str
+            The current stage ('Training', 'Validation', or 'Test').
+        epoch : int, optional
+            Current epoch number.
+        batch_idx : int, optional
+            Current batch index.
+        dataloader_len : int, optional
+            Length of the dataloader being used.
+        extra_info : str, optional
+            Additional information to display in the phase indicator.
+        """
+        # Simple alignment function (since we don't have the original utilities)
+        def align(text, width, direction="left"):
+            if direction == "left":
+                return f"{text:<{width}}"
+            elif direction == "right":
+                return f"{text:>{width}}"
+            else:  # center
+                return f"{text:^{width}}"
+        
+        epoch_batch_info = align(
+            f"E {str(epoch+1)}/{self.epochs} ", 10, "right"
+        ) + align(f"B {str(batch_idx+1)}/{dataloader_len} ", 10, "left")
+        
+        if extra_info is not None:
+            phase_indicator = f"[purple]{extra_info}[/purple]"
+        
+        # Print header with run name and status information
+        if "offline" in self.runname:
+            printedrunname = "run"
+        else:
+            printedrunname = f'{self.runname.split("-")[0][0]}{self.runname.split("-")[1][0]}{self.runname.split("-")[2]}'
+        
+        metricstring = (
+            align(f"{printedrunname}:", 6, "right")
+            + epoch_batch_info
+        )
+
+        # Generate metrics string
+        metrs = ""
+        # Print metrics from the appropriate metrics dictionary
+        if stage in self.metrics.keys():
+            # First print the Loss column if it exists
+            if (
+                "Loss" in self.metrics[stage].columns
+                and self.metrics[stage]["Loss"].iloc[-1] is not None
+            ):
+                metrs += (
+                    f"[yellow]Loss[/yellow]"
+                    + "="
+                    + align(
+                        f"{self.metrics[stage]['Loss'].iloc[-1]:.4f}",
+                        6,
+                        "left",
+                    )
+                    + " "
+                )
+
+            # Then print other columns that don't have a "/" in their name
+            for m in self.metrics[stage].columns:
+                if (
+                    m != "Loss"
+                    and "/" not in m
+                    and self.metrics[stage][m].iloc[-1] is not None
+                ):
+                    metrs += (
+                        f"[yellow]{m[:4]}[/yellow]"
+                        + "="
+                        + align(
+                            f"{self.metrics[stage][m].iloc[-1]:.4f}",
+                            6,
+                            "left",
+                        )
+                        + " "
+                    )
+        self.logger.info(metricstring + metrs, context=stage.upper())
+
+    def log_loaded_paths(self, paths, phase):
+        """Log loaded file paths for debugging"""
+        if hasattr(self, 'paths_file'):
+            with open(self.paths_file, mode="a") as file:
+                file.write(f"{self.step[f'{phase}_batch']},{paths}\n")
+
+    def backward_pass(self, loss_tensor, accumulate_gradients=False, phase="Training"):
+        """
+        Performs the backward pass, including gradient calculation, clipping, and optimization steps.
+
+        Args:
+            loss_tensor (torch.Tensor): The loss tensor to backpropagate
+            accumulate_gradients (bool): If True, will update weights after backpropagation
+                                        assuming gradient accumulation is complete
+            phase (str): Current phase ("Training", "Validation", "Test")
+
+        Returns:
+            dict: A dictionary containing gradient norms and error status
+        """
+        if phase != "Training":
+            loss_tensor.detach()
+            torch.cuda.empty_cache()
+            return {
+                "grad_norm": np.nan,
+                "weight_norm": np.nan,
+            }
+
+        ERROR_IN_BACKWARD_PASS = False
+        try:
+            loss_tensor.backward()
+        except RuntimeError as e:
+            self.logger.error(
+                f">> [ERROR]: {e} - Skipping batch {self.step['Training_batch']} in epoch {self.step['epoch']}"
+            )
+            ERROR_IN_BACKWARD_PASS = True
+
+        # Calculate gradient and weight norms using the matching pipeline model
+        if OPTIMIZATION_AVAILABLE:
+            grad_norm, weight_norm = optimization.get_norms(
+                self.model.parameters()
+            )
+        else:
+            # Fallback calculation
+            grad_norm = 0.0
+            weight_norm = 0.0
+            for param in self.model.parameters():
+                if param.grad is not None:
+                    grad_norm += param.grad.data.norm(2).item() ** 2
+                weight_norm += param.data.norm(2).item() ** 2
+            grad_norm = grad_norm ** 0.5
+            weight_norm = weight_norm ** 0.5
+
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+        # Step only if warmup phase is finished and we are backpropagating the accumulated gradients
+        if accumulate_gradients:
+            if not ERROR_IN_BACKWARD_PASS:
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+            self.LRscheduler.step()
+
+        loss_tensor.detach()
+        torch.cuda.empty_cache()
+
+        return {
+            "ERROR_IN_BACKWARD_PASS": ERROR_IN_BACKWARD_PASS,
+            "grad_norm": grad_norm,
+            "weight_norm": weight_norm,
+        }
+
+    def switch_optimizer(self, current_epoch):
+        """
+        Switches the optimizer if the current epoch matches the switch epoch and
+        the bootstrap and refining optimizers are different.
+
+        Args:
+            current_epoch (int): The current epoch number
+
+        Returns:
+            bool: True if the optimizer was switched, False otherwise
+        """
+        if (
+            current_epoch == self.switch_optimizer_epoch
+            and self.optimizer_bootstrap_name != self.optimizer_refining_name
+        ):
+            self.logger.info(
+                f">> [OPTIMIZER]: "
+                f"Switching from [{self.optimizer_bootstrap_name}] to [{self.optimizer_refining_name}]"
+            )
+            self.in_optswitch_phase = True
+            if OPTIMIZATION_AVAILABLE:
+                self.optimizer = getattr(optimization, self.optimizer_refining_name)(
+                    self.model.parameters(),
+                    lr=self.learning_rate,
+                    weight_decay=self.weight_decay,
+                )
+            else:
+                # Fallback optimizer creation
+                if self.optimizer_refining_name == "Adam":
+                    self.optimizer = torch.optim.Adam(
+                        self.model.parameters(),
+                        lr=self.learning_rate,
+                        weight_decay=self.weight_decay,
+                    )
+                elif self.optimizer_refining_name == "AdamW":
+                    self.optimizer = torch.optim.AdamW(
+                        self.model.parameters(),
+                        lr=self.learning_rate,
+                        weight_decay=self.weight_decay,
+                    )
+                else:
+                    self.logger.warning(f"Unknown optimizer {self.optimizer_refining_name}", context="TRAINING")
+                    return False
+            return True
+        return False
+
+
+
+    def run_epoch(self, phase: str) -> Optional[float]:
+        """
+        Run one epoch of training, validation, or test.
+        Adapted for polarization-based reflection removal with memory optimizations.
+        
+        Args:
+            phase: "Training", "Validation", or "Test"
+            
+        Returns:
+            Average loss for the epoch (if applicable)
+        """
+        # Phase setup
+        is_training = phase == "Training"
+        is_validation = phase == "Validation"
+        is_test = phase == "Test"
+        
+        if is_training:
+            self.model.train()
+        else:
+            self.model.eval()
+            
+        # Get dataset from the initialized dataset structure
+        dataset = self.dataset[phase]
+        
+        if dataset is None:
+            self.logger.warning(f"No dataset available for {phase}", context=phase.upper())
+            return None
+            
+        # Create dataloader using the initialized parameters
+        dataloader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            num_workers=self.config.WORKERS,
+            drop_last=True,
+            pin_memory=self.config.PIN_MEMORY,
+            prefetch_factor=self.config.PREFETCH_FACTOR,
+        )
+        
+        if len(dataloader) == 0:
+            self.logger.warning(f"Empty dataloader, skipping epoch.", context=phase.upper())
+            return None
+            
+        epoch_losses = []
+        images_logged = False
+        
+        # Switch optimizer if needed (for training)
+        if is_training:
+            self.switch_optimizer(self.step["epoch"])
+        
+        base_lr = self.optimizer.param_groups[0]["lr"]
+        
+        with self.choose_if_grad(phase):
+            for batch_idx, sample in enumerate(dataloader):
+                
+                # Memory management - clear cache at start
+                torch.cuda.empty_cache()
+                
+                # Calculate step for warmup logic
+                step = self.step["epoch"] * len(dataloader) + batch_idx
+                
+                # Warmup logic
+                if is_training and step < self.warmup_steps:
+                    warmup_factor = step / self.warmup_steps
+                    current_lr = base_lr * warmup_factor
+                    for param_group in self.optimizer.param_groups:
+                        param_group["lr"] = current_lr
+                
+                # Create batch dictionary for the model
+                batch = {
+                    "rgb": sample["rgb"].to(self.device),
+                    "AoP": sample["AoP"].to(self.device),
+                    "DoP": sample["DoP"].to(self.device),
+                }
+                
+                # Forward pass through the model
+                decomposition = self.model(batch)
+                
+                # Compute reconstruction
+                recon = (decomposition["specular"] + decomposition["diffuse"])
+                recon = recon / recon.max()
+                recon = torch.clamp(recon, 0, 1)
+                decomposition["recon"] = recon
+                
+                # Compute losses using the specular_loss function
+                losses = specular_loss(batch, decomposition, recon_loss=self.recon_loss)
+                loss_value = losses["total"]
+                
+                # Backward pass for training
+                if is_training:
+                    try:
+                        # Check if we should accumulate gradients
+                        accumulate_gradients = (step >= self.warmup_steps and (batch_idx + 1) % self.gradient_accumulation_steps == 0)
+                        
+                        # Use the backward_pass method
+                        backward_output = self.backward_pass(
+                            loss_value,
+                            accumulate_gradients=accumulate_gradients,
+                            phase=phase
+                        )
+                        
+                    except Exception as e:
+                        self.logger.error(f"Error in backward pass: {e}", context=phase.upper())
+                        continue
+                
+                # Track metrics
+                epoch_losses.append(loss_value.item())
+                self.step[f"{phase}_batch"] += 1
+                
+                # Console logging
+                if batch_idx % self.config.get("LOG_INTERVAL", 10) == 0:
+                    extra_info = "W" if is_training and step < self.warmup_steps else None
+                    self.console_log_metrics(
+                        stage=phase,
+                        epoch=self.step["epoch"],
+                        batch_idx=batch_idx,
+                        dataloader_len=len(dataloader),
+                        extra_info=extra_info
+                    )
+                
+                # WandB logging
+                if self.wandb and batch_idx % self.logfreq_wandb == 0:
+                    log_dict = {
+                        "epoch": self.step["epoch"],
+                        "batch": batch_idx,
+                        f"loss/{phase.lower()}": loss_value.item(),
+                    }
+                    
+                    # Log gradient information
+                    if backward_output.get("grad_norm") is not None:
+                        log_dict.update({
+                            "gradients/grad_norm": backward_output["grad_norm"],
+                            "gradients/weight_norm": backward_output["weight_norm"],
+                        })
+                    
+                    self.wandb.log(log_dict)
+                
+                # Memory cleanup
+
+                if 'batch' in locals():
+                    del batch
+                if 'decomposition' in locals():
+                    del decomposition
+                if 'recon' in locals():
+                    del recon
+                if 'losses' in locals():
+                    del losses
+                if 'backward_output' in locals():
+                    del backward_output
+                torch.cuda.empty_cache()
+                gc.collect()
+        
+        # Compute average loss for epoch
+        avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
+        self.logger.info(f"Epoch {self.step['epoch']+1} - Average Loss: {avg_loss:.6f}", context=phase.upper())
+        
+        # Log epoch metrics to wandb
+        if self.wandb:
+            self.wandb.log({
+                f"{phase.lower()}_epoch_loss": avg_loss,
+                "epoch": self.step["epoch"],
+            })
+            
+        return avg_loss
+    
+
+    
+
+    
+
+
+    def _save_checkpoint(self, epoch, is_best=False):
+        """Save model checkpoint"""
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
+            'config': self.config,
+        }
+        
+        # Save regular checkpoint
+        checkpoint_path = os.path.join(self.MODELS_DIR, f'checkpoint_epoch_{epoch+1}.pth')
+        torch.save(checkpoint, checkpoint_path)
+        
+        # Save best checkpoint
+        if is_best:
+            best_path = os.path.join(self.MODELS_DIR, 'best_model.pth')
+            torch.save(checkpoint, best_path)
+            self.logger.info(f"Saved best model at epoch {epoch+1}", context="SAVE")
+
+    @contextmanager
+    def choose_if_grad(self, mode):
+        """Conditionally use torch.no_grad based on the given mode."""
+        with torch.no_grad() if mode in ["Validation", "Test"] else nullcontext():
+            yield
+
+    def reinstantiate_model_from_checkpoint(self, checkpoint_path=None):
+        """
+        Reinstantiate the model from checkpoint.
+        """
+        if checkpoint_path is None:
+            # Try to load best model
+            checkpoint_path = os.path.join(self.MODELS_DIR, 'best_model.pth')
+            
+        if not os.path.exists(checkpoint_path):
+            self.logger.warning(f"Checkpoint not found at {checkpoint_path}", context="SAVE")
+            return
+            
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            self.logger.info(f"Model reinstantiated from checkpoint: {checkpoint_path}", context="SAVE")
+        except Exception as e:
+            self.logger.error(f"Error loading checkpoint: {e}", context="SAVE")

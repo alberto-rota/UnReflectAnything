@@ -17,7 +17,7 @@ import torchvision
 import cv2
 from rich import print
 from logger import get_logger
-
+import optimization
 logger = get_logger(__name__)
 
 
@@ -45,12 +45,10 @@ def dataloaders(dataset, config):
     training_dl = torch.utils.data.DataLoader(
         training_ds,
         batch_size=config["BATCH_SIZE"],
-        sampler=training_ds.sampler,
     )
     validation_dl = torch.utils.data.DataLoader(
         validation_ds,
         batch_size=config["BATCH_SIZE"],
-        sampler=validation_ds.sampler,
     )
 
     return {
@@ -69,30 +67,16 @@ def dimensions(training_dl, config):
     """Extract dimensions from the training data"""
     # Extract frame dimensions
     input_shape = next(iter(training_dl))[
-        "framestack"
+        "rgb"
     ].shape  # [batch_size, channels, height, width]
-    sample_shape = next(iter(training_dl))["framestack"].shape[
+    sample_shape = next(iter(training_dl))["rgb"].shape[
         1:
     ]  # [channels, height, width]
     height = sample_shape[-2]  # Image height
     width = sample_shape[-1]  # Image width
     channels = 3  # Number of image channels
-    batch_size = next(iter(training_dl))["framestack"].shape[0]  # Batch size
+    batch_size = next(iter(training_dl))["rgb"].shape[0]  # Batch size
 
-    # Matching parameters
-    triplets_to_mine = config.get("TRIPLETS_TO_MINE", 50)  # Number of triplets to mine
-    patch_matching_score_threshold = config.get(
-        "PATCH_MATCHING_SCORE_THRESHOLD", 0.95
-    )  # Matching score threshold
-    pixel_matching_score_threshold = config.get(
-        "PIXEL_MATCHING_SCORE_THRESHOLD", 0.95
-    )  # Matching score threshold
-    min_matches_to_collect = config.get(
-        "MIN_MATCHES_TO_COLLECT", 50
-    )  # Minimum number of matches to collect
-    inlier_patch_ratio = config.get(
-        "MAX_EPIPOLAR_DISTANCE", 1
-    )  # Distance (in patches) to consider a match as inlier
 
     return {
         "input_shape": input_shape,
@@ -100,12 +84,7 @@ def dimensions(training_dl, config):
         "height": height,
         "width": width,
         "channels": channels,
-        "batch_size": batch_size,
-        "triplets_to_mine": triplets_to_mine,
-        "patch_matching_score_threshold": patch_matching_score_threshold,
-        "pixel_matching_score_threshold": pixel_matching_score_threshold,
-        "min_matches_to_collect": min_matches_to_collect,
-        "inlier_patch_ratio": inlier_patch_ratio,
+        "batch_size": batch_size
     }
 
 

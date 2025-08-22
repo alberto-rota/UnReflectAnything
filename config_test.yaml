@@ -1,0 +1,52 @@
+parameters:
+  # Dataset configuration
+  DATASET_ROOT:
+    value: "/datasets/SCRREAM/"
+  TARGET_SIZE:
+    value: [224, 224]
+  TRAIN_SCENES:
+    value: null  # Use all scenes except validation scenes
+  VAL_SCENES:
+    value: ["scene09_full_00", "scene09_reduced_00"]
+  RHO_S:
+    value: 0.6
+  EPS:
+    value: 1e-8
+  RESIZE_MODE:
+    value: "crop"
+  USE_CACHE:
+    value: true
+  SIMPLIFY_UPSAMPLING:
+    value: true
+  
+  # Test configuration
+  BATCH_SIZE:
+    value: 4
+  WORKERS:
+    value: 4
+  PIN_MEMORY:
+    value: true
+  PREFETCH_FACTOR:
+    value: 2
+  
+  # Model configuration (will be loaded from checkpoint)
+  LEARNING_RATE:
+    value: 1e-4
+  WEIGHT_DECAY:
+    value: 1e-5
+  EPOCHS:
+    value: 1  # Not used for testing
+  
+  # Logging configuration
+  LOG_INTERVAL:
+    value: 1
+  WANDB_LOG_INTERVAL:
+    value: 1
+  IMAGE_LOG_INTERVAL:
+    value: 1
+  NO_WANDB:
+    value: false
+  
+  # Notes for this run
+  NOTES:
+    value: "Test run with SCRREAM dataset"
