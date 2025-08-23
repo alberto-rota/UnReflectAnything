@@ -702,7 +702,7 @@ class Engine:
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict(),
+            # 'scheduler_state_dict': self.scheduler.state_dict(),
             'config': self.config,
         }
         
