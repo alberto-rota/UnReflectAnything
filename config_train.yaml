@@ -1,29 +1,49 @@
 parameters:
   # Dataset configuration
-  DATASET_ROOT:
-    value: "/datasets/SCRREAM/"
-  TARGET_SIZE:
-    value: [224, 224]
-  TRAIN_SCENES:
-    value: null  # Use all scenes except validation scenes
-  VAL_SCENES:
-    value: ["scene09_full_00", "scene09_reduced_00"]
-  RHO_S:
-    value: 0.6
-  EPS:
-    value: 1.0e-8
-  RESIZE_MODE:
-    value: "crop"
-  USE_CACHE:
-    value: true
-  SIMPLIFY_UPSAMPLING:
-    value: true
-  SHUFFLE:
-    value: true
+  DATASETS:
+    value:
+      SCRREAM:
+        ROOT_DIR: "/datasets/SCRREAM/"
+        TRAIN_SCENES: []
+        POLARIZATION_FORMAT: "single_file_clock"
+        VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
+        RHO_S: 0.6
+        EPS: 1.0e-8
+        TARGET_SIZE: [224,224]
+        RESIZE_MODE: "crop"
+        USE_CACHE: True
+        SIMPLIFY_UPSAMPLING: True
+        FEW_IMAGES: False
+        
+      HOUSECAT6D:
+        ROOT_DIR: "/datasets/HouseCat6D/"
+        TRAIN_SCENES: []
+        POLARIZATION_FORMAT: "single_file_clock"
+        VAL_SCENES: "val"
+        RHO_S: 0.6
+        EPS: 1.0e-8
+        TARGET_SIZE: [224,224]
+        RESIZE_MODE: "crop"
+        USE_CACHE: True
+        SIMPLIFY_UPSAMPLING: True
+        FEW_IMAGES: False
+
+      POLARGB:
+        ROOT_DIR: "/datasets/PolaRGB/"
+        TRAIN_SCENES: "train"
+        POLARIZATION_FORMAT: "separate_files"
+        VAL_SCENES: "test"
+        RHO_S: 0.6
+        EPS: 1.0e-8
+        TARGET_SIZE: [224,224]
+        RESIZE_MODE: "crop"
+        USE_CACHE: True
+        SIMPLIFY_UPSAMPLING: True
+        FEW_IMAGES: False
   
   # Training configuration
   BATCH_SIZE:
-    value: 16
+    value: 20
   WORKERS:
     value: 4
   PIN_MEMORY:
@@ -35,7 +55,7 @@ parameters:
   LEARNING_RATE:
     value: 1.0e-4
   WEIGHT_DECAY:
-    value: 1.0e-5
+    value: 1.0e-6
   EPOCHS:
     value: 100
   
@@ -47,7 +67,7 @@ parameters:
   
   # Early stopping and checkpointing
   EARLY_STOPPING_PATIENCE:
-    value: 10
+    value: 20
   SAVE_INTERVAL:
     value: 10
   
@@ -68,7 +88,7 @@ parameters:
     value: "UnReflectAnything"
   # Gradient accumulation and warmup
   GRADIENT_ACCUMULATION_STEPS:
-    value: 1
+    value: 2
   WARMUP_STEPS:
     value: 0
   
@@ -77,7 +97,7 @@ parameters:
   ONPLATEAUSCHEDULER_PATIENCE:
     value: 10
   ONPLATEAUSCHEDULER_FACTOR:
-    value: 0.5
+    value: 0.1
   EXPONENTIALSCHEDULER_GAMMA:
     value: 0.5
   STEPWISESCHEDULER_NSTEPS:
@@ -93,7 +113,7 @@ parameters:
   
   # Notes for this run
   NOTES:
-    value: "Training run with SCRREAM dataset"
+    value: ""
   
 
 

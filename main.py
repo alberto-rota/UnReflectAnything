@@ -8,11 +8,10 @@ import debugpy
 import ast
 from rich.traceback import install
 from engine import Engine
-from dataset.scrream import SCRREAM
+from dataset.rgbp import load_config_and_create_datasets
 from models import DINOv3, DPTRGBDecoder, RGBPOLDecomposer, POLViTEncoder
-from logger import get_logger, LogContext
 from dotenv import load_dotenv
-
+from logger import get_logger
 logger = get_logger(__name__).set_context("IMPORT")
 load_dotenv()
 
@@ -86,80 +85,45 @@ def create_model_from_config(config, device):
     return model
 
 
-def create_datasets_from_config(config):
+def create_datasets_from_config(config, config_path):
     """
-    Create training and validation datasets from configuration.
+    Create training and validation datasets from configuration using the new system.
+    
+    This function now uses the improved dataset creation system that:
+    - Reads from YAML config files with DATASETS section
+    - Supports multiple datasets (SCRREAM, HOUSECAT6D, etc.)
+    - Creates dataset-specific classes
+    - Returns ConcatDatasets for multi-dataset training
     
     Args:
-        config: Configuration dictionary containing dataset parameters
+        config: Configuration dictionary (DotMap) containing dataset parameters
+        config_path: Path to the YAML config file for direct loading
         
     Returns:
-        dict: Dictionary containing 'training' and 'validation' datasets
+        dict: Dictionary containing datasets with keys expected by Engine
     """
-    # Get dataset parameters from config
-    dataset_root = config.get("DATASET_ROOT", "/datasets/SCRREAM/")
-    target_size = config.get("TARGET_SIZE", (224, 224))
-    batch_size = config.get("BATCH_SIZE", 4)
-    workers = config.get("WORKERS", 4)
-    
-    # Get scene lists for train/val split
-    train_scenes = config.get("TRAIN_SCENES", None)  # None means use all except validation scenes
-    val_scenes = config.get("VAL_SCENES", ["scene09_full_00", "scene09_reduced_00"])
-    
-    # Create training dataset
-    training_dataset = SCRREAM(
-        root_dir=dataset_root,
-        ignore_scenes=val_scenes if train_scenes is None else None,
-        scene_names=train_scenes,
-        rho_s=config.get("RHO_S", 0.6),
-        eps=config.get("EPS", 1e-8),
-        target_size=target_size,
-        resize_mode=config.get("RESIZE_MODE", "crop"),
-        use_cache=config.get("USE_CACHE", True),
-        simplify_upsampling=config.get("SIMPLIFY_UPSAMPLING", True),
-        few_images=config.get("FEW_IMAGES", False),
-    )
-    
-    # Create validation dataset
-    validation_dataset = SCRREAM(
-        root_dir=dataset_root,
-        scene_names=val_scenes,
-        rho_s=config.get("RHO_S", 0.6),
-        eps=config.get("EPS", 1e-8),
-        target_size=target_size,
-        resize_mode=config.get("RESIZE_MODE", "crop"),
-        use_cache=config.get("USE_CACHE", True),
-        simplify_upsampling=config.get("SIMPLIFY_UPSAMPLING", True),
-        few_images=config.get("FEW_IMAGES", False),
-    )
-    
-    # Create test dataset (use validation scenes for now)
-    test_dataset = SCRREAM(
-        root_dir=dataset_root,
-        scene_names=val_scenes,
-        rho_s=config.get("RHO_S", 0.6),
-        eps=config.get("EPS", 1e-8),
-        target_size=target_size,
-        resize_mode=config.get("RESIZE_MODE", "crop"),
-        use_cache=config.get("USE_CACHE", True),
-        simplify_upsampling=config.get("SIMPLIFY_UPSAMPLING", True),
-        few_images=config.get("FEW_IMAGES", False),
-    )
-    
-    logger.info(f"Training dataset: {len(training_dataset)} samples")
-    logger.info(f"Validation dataset: {len(validation_dataset)} samples")
-    logger.info(f"Test dataset: {len(test_dataset)} samples")
-    logger.info(f"Training scenes: {training_dataset.get_loaded_scenes()}")
-    logger.info(f"Validation scenes: {validation_dataset.get_loaded_scenes()}")
-    logger.info(f"Test scenes: {test_dataset.get_loaded_scenes()}")
-    
-    # Return with correct keys that engine_initializers expects
-    return {
-        "Training": training_dataset,
-        "Validation": validation_dataset,
-        "Test": test_dataset,
-        "workers": workers
-    }
+    try:
+        # Use the new dataset creation system
+        datasets = load_config_and_create_datasets(config_path)
+        
+        # Convert keys to match what Engine expects (capitalize first letter)
+        result = {
+            "Training": datasets.get('training'),
+            "Validation": datasets.get('validation'), 
+            "Test": datasets.get('test'),
+            "workers": config.get("WORKERS", 4)
+        }
+                
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to create datasets using new system: {e}")
+        logger.warning("This may be due to:")
+        logger.warning("1. Missing or incorrect DATASETS section in config file")
+        logger.warning("2. Invalid dataset root directories")
+        logger.warning("3. Missing dataset classes")
+        logger.warning("Please check your config_train.yaml file structure")
+        raise
 
 
 def run_pipeline(mode="train", config=None):
@@ -242,6 +206,9 @@ def run_pipeline(mode="train", config=None):
         }
     else:
         config_dict = config
+        # If config is passed directly, we still need a config path for the new dataset system
+        # Use the default config file path
+        CONFIG_PATH = args.config
 
     # Process the unknown command-line arguments
     additional_args = {}
@@ -286,7 +253,11 @@ def run_pipeline(mode="train", config=None):
         config.BATCH_SIZE = 1
         config.EPOCHS = 1
         config.NO_WANDB = True
-        config.FEW_IMAGES = True
+        # Set FEW_IMAGES to True for all datasets in boot mode
+        if hasattr(config, 'DATASETS') and config.DATASETS is not None:
+            for dataset_name, dataset_config in config.DATASETS.items():
+                if isinstance(dataset_config, dict):
+                    dataset_config['FEW_IMAGES'] = True
         logger.info("Boot mode enabled - using minimal parameters for quick testing")
 
     def get_unique_note():
@@ -337,7 +308,7 @@ def run_pipeline(mode="train", config=None):
             model = create_model_from_config(config, DEVICE)
             
             # Create datasets for training
-            dataset = create_datasets_from_config(config)
+            dataset = create_datasets_from_config(config, CONFIG_PATH)
             
             # Initialize engine
             engine = Engine(
@@ -360,7 +331,7 @@ def run_pipeline(mode="train", config=None):
             model = create_model_from_config(config, DEVICE)
             
             # Create datasets for testing
-            dataset = create_datasets_from_config(config)
+            dataset = create_datasets_from_config(config, CONFIG_PATH)
             
             # Initialize engine
             engine = Engine(

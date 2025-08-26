@@ -105,7 +105,7 @@ def hyperparameters(config):
 
     # Training control parameters
     earlystopping_patience = config.get(
-        "EARLYSTOPPING_PATIENCE", 5
+        "EARLY_STOPPING_PATIENCE", 5
     )  # Early stopping patience, default to 5 epochs
     actual_epoch_time = 0  # Initialize actual epoch time
     optimizer_bootstrap_name = config.get(

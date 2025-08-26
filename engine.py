@@ -763,55 +763,43 @@ class Engine:
             visualization_dict = {}
             
             # Original RGB image
-            if 'rgb' in batch:
-                rgb_img = to_cpu_image(batch['rgb'])
-                if rgb_img:
-                    visualization_dict[f"{batch_idx}/Input_RGB"] = wandb.Image(rgb_img, caption="Input RGB Image")
-            
             # Specular component
             if 'specular' in decomposition:
                 spec_img = to_cpu_image(decomposition['specular'])
                 if spec_img:
-                    visualization_dict[f"{batch_idx}/Specular"] = wandb.Image(spec_img, caption="Predicted Specular Component")
+                    visualization_dict[f"/PRED_Specular"] = wandb.Image(spec_img, caption="Predicted Specular Component")
             
             # Diffuse component
             if 'diffuse' in decomposition:
                 diff_img = to_cpu_image(decomposition['diffuse'])
                 if diff_img:
-                    visualization_dict[f"{batch_idx}/Diffuse"] = wandb.Image(diff_img, caption="Predicted Diffuse Component")
+                    visualization_dict[f"/PRED_Diffuse"] = wandb.Image(diff_img, caption="Predicted Diffuse Component")
             
             # Reconstruction
             if 'recon' in decomposition:
                 recon_img = to_cpu_image(decomposition['recon'])
                 if recon_img:
-                    visualization_dict[f"{batch_idx}/Reconstruction"] = wandb.Image(recon_img, caption="Reconstruction (Specular + Diffuse)")
+                    visualization_dict[f"/PRED_Reconstruction"] = wandb.Image(recon_img, caption="Reconstruction (Specular + Diffuse)")
             
-            # Polarization data visualization
-            if 'AoP' in batch:
-                aop_img = to_cpu_image(batch['AoP'])
-                if aop_img:
-                    visualization_dict[f"{batch_idx}/AoP"] = wandb.Image(aop_img, caption="Angle of Polarization")
+            if 'rgb' in batch:
+                rgb_img = to_cpu_image(batch['rgb'])
+                if rgb_img:
+                    visualization_dict[f"/GT_RGB"] = wandb.Image(rgb_img, caption="Input RGB Image")
             
-            if 'DoP' in batch:
-                dop_img = to_cpu_image(batch['DoP'])
-                if dop_img:
-                    visualization_dict[f"{batch_idx}/DoP"] = wandb.Image(dop_img, caption="Degree of Polarization")
-            
+            # Ground truth specular/diffuse if available
             if 'f_spec' in batch:
                 fspec_img = to_cpu_image(batch['f_spec'])
                 if fspec_img:
-                    visualization_dict[f"{batch_idx}/Specular_Fraction"] = wandb.Image(fspec_img, caption="Specular Fraction")
-            
-            # Ground truth specular/diffuse if available
+                    visualization_dict[f"/GT_FSpec"] = wandb.Image(fspec_img, caption="Specular Fraction")
             if 'specular' in sample:
                 gt_spec_img = to_cpu_image(sample['specular'])
                 if gt_spec_img:
-                    visualization_dict[f"{batch_idx}/GT_Specular"] = wandb.Image(gt_spec_img, caption="Ground Truth Specular")
+                    visualization_dict[f"/GT_Specular"] = wandb.Image(gt_spec_img, caption="Ground Truth Specular")
             
             if 'diffuse' in sample:
                 gt_diff_img = to_cpu_image(sample['diffuse'])
                 if gt_diff_img:
-                    visualization_dict[f"{batch_idx}/GT_Diffuse"] = wandb.Image(gt_diff_img, caption="Ground Truth Diffuse")
+                    visualization_dict[f"/GT_Diffuse"] = wandb.Image(gt_diff_img, caption="Ground Truth Diffuse")
             
             return visualization_dict
             
