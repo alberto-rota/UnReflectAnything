@@ -1,5 +1,3 @@
-
-
 import torch
 import torch.nn as nn
 import os
@@ -13,48 +11,8 @@ from typing import Union, Optional
 from losses import SSIMLoss, specular_loss
 from logger import get_logger
 import shutil
-# Import optimization utilities
-try:
-    import optimization
-    OPTIMIZATION_AVAILABLE = True
-except ImportError:
-    OPTIMIZATION_AVAILABLE = False
-    print("Warning: Optimization utilities not available")
-
-# Import engine initializers
-try:
-    import utilities.engine_initializers as initialize
-    ENGINE_INITIALIZERS_AVAILABLE = True
-except ImportError:
-    ENGINE_INITIALIZERS_AVAILABLE = False
-    print("Warning: Engine initializers not available")
-
-# Optional pipelines and utilities (if available)
-try:
-    DEPTH_AVAILABLE = True
-except ImportError:
-    DEPTH_AVAILABLE = False
-    print("Warning: Depth pipeline and projections not available")
-
-try:
-    UTILITIES_AVAILABLE = True
-except ImportError:
-    UTILITIES_AVAILABLE = False
-    print("Warning: Some utilities not available")
-
-
-def metrics_for_wandb(metrics, phase):
-    """Simple fallback for metrics formatting"""
-    formatted_metrics = {}
-    for k, v in metrics.items():
-        if "Step" in k:
-            # Keep Step metrics unchanged
-            formatted_metrics[k] = v
-        else:
-            # Add phase prefix to non-Step metrics
-            formatted_metrics[f"{phase}/{k}"] = v
-    return formatted_metrics
-
+import optimization
+import utilities.engine_initializers as initialize
 
 class Engine:
     def __init__(
@@ -108,28 +66,8 @@ class Engine:
         init(initialize.dataloaders, dataset, config)
         init(initialize.dimensions, self.training_dl, config)
         init(initialize.hyperparameters, config)
-        
-        # Create a simple wrapper for the model to work with engine_initializers
-        # The engine_initializers expect a model with specific attributes
-        class ModelWrapper:
-            def __init__(self, model):
-                self.model = model
-                # Add any required attributes that engine_initializers might expect
-                self.parameters = model.parameters
-                self.to = model.to
-                self.train = model.train
-                self.eval = model.eval
-                self.state_dict = model.state_dict
-                self.load_state_dict = model.load_state_dict
-                
-        wrapped_model = ModelWrapper(self.model)
-        
-        init(initialize.optimizers, wrapped_model, config)
+        init(initialize.optimizers, self.model, config)
         init(initialize.loss_functions, config)
-        
-        # Initialize polarization-specific losses
-        self.recon_loss = SSIMLoss()
-        
         init(initialize.schedulers, self.optimizer, config, self.training_dl)
         init(initialize.transforms, self.height, self.width)
         init(initialize.wandb, config, self.model, notes, no_wandb)
@@ -142,6 +80,9 @@ class Engine:
             self.earlystopping_patience, self.MODELS_DIR, self.runname
         )
 
+        # Initialize polarization-specific losses
+        self.recon_loss = SSIMLoss()
+        
         # Save hyperparameters to json
         initialize.save_hyperparameters_json(self.RUN_DIR, self.config)
         self.logger = get_logger(__name__, log_to_file=True, log_dir=self.RUN_DIR)
@@ -409,21 +350,9 @@ class Engine:
             ERROR_IN_BACKWARD_PASS = True
 
         # Calculate gradient and weight norms using the matching pipeline model
-        if OPTIMIZATION_AVAILABLE:
-            grad_norm, weight_norm = optimization.get_norms(
-                self.model.parameters()
-            )
-        else:
-            # Fallback calculation
-            grad_norm = 0.0
-            weight_norm = 0.0
-            for param in self.model.parameters():
-                if param.grad is not None:
-                    grad_norm += param.grad.data.norm(2).item() ** 2
-                weight_norm += param.data.norm(2).item() ** 2
-            grad_norm = grad_norm ** 0.5
-            weight_norm = weight_norm ** 0.5
-
+        grad_norm, weight_norm = optimization.get_norms(
+            self.model.parameters()
+        )
         # Gradient clipping
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
 
@@ -463,29 +392,11 @@ class Engine:
                 f"Switching from [{self.optimizer_bootstrap_name}] to [{self.optimizer_refining_name}]"
             )
             self.in_optswitch_phase = True
-            if OPTIMIZATION_AVAILABLE:
-                self.optimizer = getattr(optimization, self.optimizer_refining_name)(
-                    self.model.parameters(),
-                    lr=self.learning_rate,
-                    weight_decay=self.weight_decay,
-                )
-            else:
-                # Fallback optimizer creation
-                if self.optimizer_refining_name == "Adam":
-                    self.optimizer = torch.optim.Adam(
-                        self.model.parameters(),
-                        lr=self.learning_rate,
-                        weight_decay=self.weight_decay,
-                    )
-                elif self.optimizer_refining_name == "AdamW":
-                    self.optimizer = torch.optim.AdamW(
-                        self.model.parameters(),
-                        lr=self.learning_rate,
-                        weight_decay=self.weight_decay,
-                    )
-                else:
-                    self.logger.warning(f"Unknown optimizer {self.optimizer_refining_name}", context="TRAINING")
-                    return False
+            self.optimizer = getattr(optimization, self.optimizer_refining_name)(
+                self.model.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay,
+            )
             return True
         return False
 
@@ -578,12 +489,30 @@ class Engine:
                 }
                 # Forward pass through the model
                 decomposition = self.model(batch)
+                specular = decomposition["specular"]  # [B, C, H, W]
+                diffuse = decomposition["diffuse"]    # [B, C, H, W]
                 
-                # Compute reconstruction
-                recon = (decomposition["specular"] + decomposition["diffuse"])
-                recon = recon / recon.max()
-                recon = torch.clamp(recon, 0, 1)
-                decomposition["recon"] = recon
+                ### Compositing Specular and Diffuse RGBA
+                if specular.shape[1] == 4 and diffuse.shape[1] == 4:  # RGBA format
+                    # For RGBA, use alpha compositing with diffuse as background, specular as foreground
+                    spec_rgb = specular[:, :3]  # [B, 3, H, W] - foreground RGB
+                    spec_alpha = specular[:, 3:4]  # [B, 1, H, W] - foreground alpha
+                    diff_rgb = diffuse[:, :3]  # [B, 3, H, W] - background RGB
+                    diff_alpha = diffuse[:, 3:4]  # [B, 1, H, W] - background alpha
+                    
+                    # Alpha compositing: C_out = C_fg * α_fg + C_bg * α_bg * (1 - α_fg)
+                    # Final alpha: α_out = α_fg + α_bg * (1 - α_fg)
+                    recon_rgb = spec_rgb * spec_alpha + diff_rgb * diff_alpha * (1 - spec_alpha)
+                    recon_alpha = spec_alpha + diff_alpha * (1 - spec_alpha)
+                    recon_alpha = torch.clamp(recon_alpha, 0, 1)
+                    decomposition["recon"] = recon_rgb
+                    # recon = torch.cat([recon_rgb, recon_alpha], dim=1)  # [B, 4, H, W]
+                else:  # RGB format
+                    # Simple addition for RGB
+                    recon = specular + diffuse  # [B, 3, H, W]
+                    recon = recon / recon.max()
+                    recon = torch.clamp(recon, 0, 1)
+                    decomposition["recon"] = recon
                 
                 # Compute losses using the specular_loss function
                 losses = specular_loss(batch, decomposition, recon_loss=self.recon_loss)
@@ -836,3 +765,16 @@ class Engine:
             self.logger.info(f"Model reinstantiated from checkpoint: {checkpoint_path}", context="SAVE")
         except Exception as e:
             self.logger.error(f"Error loading checkpoint: {e}", context="SAVE")
+
+
+def metrics_for_wandb(metrics, phase):
+    """Simple fallback for metrics formatting"""
+    formatted_metrics = {}
+    for k, v in metrics.items():
+        if "Step" in k:
+            # Keep Step metrics unchanged
+            formatted_metrics[k] = v
+        else:
+            # Add phase prefix to non-Step metrics
+            formatted_metrics[f"{phase}/{k}"] = v
+    return formatted_metrics

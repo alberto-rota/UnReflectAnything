@@ -205,38 +205,45 @@ def loss_functions(config):
 
 def schedulers(optimizer, config, training_dl):
     """Initialize learning rate schedulers"""
-    batches_per_epoch = len(training_dl)  # int: number of batches per epoch
-    n_epochs = config.get("EPOCHS")  # int: number of epochs
-    n_peaks = config.get("COSINESCHEDULER_NPERIODS", 1)  # int: number of cosine peaks
-    T_max = (n_epochs * batches_per_epoch) // n_peaks // 2 - 1  # int: steps per peak
-    lr_schedulers = {
-        "cosine": torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=T_max  # T_max: int, number of steps per cosine cycle
-        ),
-        "stepwise": torch.optim.lr_scheduler.StepLR(
+    scheduler_config = config.get("LR_SCHEDULER")
+    assert len(scheduler_config.keys()) == 2, "Only one scheduler (+OnPlateau)can be used at a time"
+    
+    if scheduler_config.get("ONPLATEAU"):
+        onplateau_scheduler = scheduler_config.get("ONPLATEAU")
+        # Plateau scheduler
+        LRschedulerPlateau = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            "min",
+            patience=onplateau_scheduler["PATIENCE"],
+            factor=onplateau_scheduler["FACTOR"],
+        )
+    if scheduler_config.get("STEPWISE"):
+        stepwise_scheduler = scheduler_config.get("STEPWISE")
+        LRscheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,
             step_size=config["EPOCHS"]
             * len(training_dl)
-            // config["STEPWISESCHEDULER_NSTEPS"],
-            gamma=config["STEPWISESCHEDULER_GAMMA"],
-        ),
-        "exponential": torch.optim.lr_scheduler.ExponentialLR(
+            // stepwise_scheduler["N_STEPS"],
+            gamma=stepwise_scheduler["GAMMA"],
+        )
+    if scheduler_config.get("COSINE"):
+        cosine_scheduler = scheduler_config.get("COSINE")
+        batches_per_epoch = len(training_dl)  # int: number of batches per epoch
+        n_epochs = config.get("EPOCHS")  # int: number of epochs
+        n_peaks = cosine_scheduler.get("N_PERIODS", 1)  # int: number of cosine peaks
+        T_max = (n_epochs * batches_per_epoch) // n_peaks // 2 - 1  # int: steps per peak
+        cosine_scheduler = scheduler_config.get("COSINE")
+        LRscheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            gamma=config["EXPONENTIALSCHEDULER_GAMMA"],
-        ),
-    }
-
-    # Select the appropriate scheduler
-    LRscheduler = lr_schedulers[config["LR_SCHEDULER"].lower()]
-
-    # Plateau scheduler
-    LRschedulerPlateau = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        "min",
-        patience=config["ONPLATEAUSCHEDULER_PATIENCE"],
-        factor=config["ONPLATEAUSCHEDULER_FACTOR"],
-    )
-
+            T_max=T_max  # T_max: int, number of steps per cosine cycle
+        )
+    if scheduler_config.get("EXPONENTIAL"):
+        exponential_scheduler = scheduler_config.get("EXPONENTIAL")
+        LRscheduler = torch.optim.lr_scheduler.ExponentialLR(
+            optimizer,
+            gamma=exponential_scheduler["GAMMA"],
+        )
+    
     return {
         "LRscheduler": LRscheduler,
         "LRschedulerPlateau": LRschedulerPlateau,

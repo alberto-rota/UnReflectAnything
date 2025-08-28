@@ -320,7 +320,7 @@ class CustomLogger:
 _loggers = {}
 
 
-def get_logger(module_name, log_to_file=True, log_dir="./runs/temporary"):
+def get_logger(module_name, log_to_file=True, log_dir="/home/alberto/UnReflectAnything/runs/temporary"):
     """
     Get or create a logger for the specified module.
 

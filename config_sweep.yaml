@@ -39,7 +39,6 @@ parameters:
         USE_CACHE: True
         SIMPLIFY_UPSAMPLING: True
         FEW_IMAGES: False
-        
       HOUSECAT6D:
         ROOT_DIR: "/datasets/HouseCat6D/"
         TRAIN_SCENES: []
@@ -52,7 +51,6 @@ parameters:
         USE_CACHE: True
         SIMPLIFY_UPSAMPLING: True
         FEW_IMAGES: False
-
       POLARGB:
         ROOT_DIR: "/datasets/PolaRGB/"
         TRAIN_SCENES: "train"
@@ -79,11 +77,11 @@ parameters:
   
   ### OPTIMIZATION ###
   LEARNING_RATE:
-    value: 1.0e-4
+    values: [1.0e-3, 1.0e-4, 1.0e-5]
   WEIGHT_DECAY:
-    value: 1.0e-7
+    value: 1.0e-6
   EPOCHS:
-    value: 100
+    value: 30
   GRADIENT_ACCUMULATION_STEPS:
     value: 4
   WARMUP_STEPS:
@@ -125,7 +123,7 @@ parameters:
   WANDB_LOG_INTERVAL:
     value: 4
   IMAGE_LOG_INTERVAL:
-    value: 100
+    value: 20
   NO_WANDB:
     value: False
   MODEL_WATCHER_FREQ_WANDB:
@@ -135,8 +133,16 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "With Alpha Compositing strategies"
+    value: ""
 
-  
+### WANDB SWEEP CONFIG ###
+method: grid
+metric:
+  goal: minimize
+  name: Validation/epoch/Loss
+
+program: sweep_agent.py
+
+project: UnReflectAnything  
 
 
