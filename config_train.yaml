@@ -40,7 +40,8 @@ parameters:
         USE_CACHE: True
         SIMPLIFY_UPSAMPLING: True
         FEW_IMAGES: False
-  
+  SHUFFLE:
+    value: True
   # Training configuration
   BATCH_SIZE:
     value: 20

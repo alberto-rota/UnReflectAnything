@@ -420,17 +420,8 @@ class RGBP_Dataset(Dataset):
         S1 = I0 - I90
         S2 = I45 - I135
 
-        # Optional Gaussian smoothing (convert to numpy only if needed)
-        # if self.gaussian_sigma > 0:
-        #     # Only convert to numpy for this operation
-        #     S0_np = cv2.GaussianBlur(S0.numpy(), (0, 0), self.gaussian_sigma)
-        #     S1_np = cv2.GaussianBlur(S1.numpy(), (0, 0), self.gaussian_sigma)
-        #     S2_np = cv2.GaussianBlur(S2.numpy(), (0, 0), self.gaussian_sigma)
-        #     S0, S1, S2 = torch.from_numpy(S0_np), torch.from_numpy(S1_np), torch.from_numpy(S2_np)
-
         # Compute DoLP and AoP
-        R = torch.sqrt(S1**2 + S2**2)
-        DoLP = torch.clamp(R / torch.clamp(S0, min=self.eps), 0.0, 1.0)
+        DoLP = torch.clamp(torch.sqrt(S1**2 + S2**2) / torch.clamp(S0, min=self.eps), 0.0, 1.0)
         AoP = 0.5 * torch.atan2(S2, S1)
 
         # Apply DoLP masking
