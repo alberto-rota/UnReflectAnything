@@ -23,6 +23,7 @@ parameters:
         READOUT_TYPE: "ignore"  
         USE_BN: False
         OUTPUT_IMAGE_SIZE: [224,224]
+        OUTPUT_CHANNELS: 4
 
   DATASETS:
     value:

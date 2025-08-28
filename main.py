@@ -9,7 +9,7 @@ import ast
 from rich.traceback import install
 from engine import Engine
 from dataset.rgbp import load_config_and_create_datasets
-from models import DINOv3, DPTRGBDecoder, RGBPOLDecomposer, POLViTEncoder
+from models import RGBPOLDecomposer
 from dotenv import load_dotenv
 from logger import get_logger
 logger = get_logger(__name__).set_context("IMPORT")
@@ -18,7 +18,6 @@ load_dotenv()
 # Optional utilities (if available)
 try:
     from utilities import *
-    import dataset as ds
 except ImportError:
     logger.warning("Some utilities not available", context="WARNING")
 
@@ -72,16 +71,6 @@ def create_model_from_config(config, device):
         "n_heads": pol_encoder_config.get("N_HEADS", 12),
         "patch_size": pol_encoder_config.get("PATCH_SIZE", 16),
     }
-    
-    # Decoder configuration
-    decoder_config = model_config.get("DECODER", {})
-    decoder_cfg = {
-        "use_bn": decoder_config.get("USE_BN", True),
-        "readout_type": decoder_config.get("READOUT_TYPE", "ignore"),
-        "feature_dim": decoder_config.get("FEATURE_DIM", 384),
-        "output_image_size": decoder_config.get("OUTPUT_IMAGE_SIZE", min(target_size)),
-    }
-
     # Cross-attention configuration
     cross_attn_config = model_config.get("CROSS_ATTN", {})
     cross_attn_cfg = {
@@ -90,6 +79,17 @@ def create_model_from_config(config, device):
         "dropout": cross_attn_config.get("DROPOUT", 0.1),
         "bi_directional": cross_attn_config.get("BI_DIRECTIONAL", False)
     }
+    
+    # Decoder configuration
+    decoder_config = model_config.get("DECODER", {})
+    decoder_cfg = {
+        "use_bn": decoder_config.get("USE_BN", True),
+        "readout_type": decoder_config.get("READOUT_TYPE", "ignore"),
+        "feature_dim": decoder_config.get("FEATURE_DIM", 384),
+        "output_image_size": decoder_config.get("OUTPUT_IMAGE_SIZE", min(target_size)),
+        "output_channels": decoder_config.get("OUTPUT_CHANNELS", 3),
+    }
+
 
     # Create the main model
     model = RGBPOLDecomposer(

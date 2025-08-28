@@ -312,28 +312,6 @@ class DPTReassembleLayer(nn.Module):
         """
         batch_size = hidden_state.shape[0]
 
-        # For DINOv3: Remove CLS token (index 0) and register tokens (indices 1-4)
-        # Keep only patch tokens starting from index 5
-        # patch_tokens = hidden_state[:, 5:, :]  # [B, patch_h*patch_w, feature_dim]
-
-        # # Handle readout token integration
-        # if self.readout_type == "project":
-        #     # Get CLS token and expand to all spatial positions
-        #     readout = hidden_state[:, 0:1, :].expand_as(
-        #         patch_tokens
-        #     )  # [B, patch_h*patch_w, feature_dim]
-        #     # Concatenate and project
-        #     patch_tokens = torch.cat(
-        #         [patch_tokens, readout], dim=-1
-        #     )  # [B, patch_h*patch_w, 2*feature_dim]
-        #     patch_tokens = self.readout_project(
-        #         patch_tokens
-        #     )  # [B, patch_h*patch_w, feature_dim]
-        # elif self.readout_type == "add":
-        #     # Add CLS token to all patch tokens
-        #     readout = hidden_state[:, 0:1, :]  # [B, 1, feature_dim]
-        #     patch_tokens = patch_tokens + readout
-
         # Reshape to spatial format
         patch_tokens = hidden_state.transpose(1, 2)  # [B, feature_dim, patch_h*patch_w]
         patch_tokens = patch_tokens.reshape(
@@ -398,7 +376,7 @@ class DPTFeatureFusionBlock(nn.Module):
         return out
 
 
-class DPTRGBDecoder(nn.Module):
+class DPT_Decoder(nn.Module):
     """
     DPT decoder adapted for RGB output from DINOv3 features.
     Implements multi-scale reassembly, progressive fusion, and RGB prediction head.
@@ -415,6 +393,7 @@ class DPTRGBDecoder(nn.Module):
             "readout_type": "ignore",  # 'ignore', 'add', or 'project'
             "use_bn": False,
             "output_image_size": (448, 448),  # If None, maintains input size
+            "output_channels": 3, # Set to 4 for RGBA output
         }
 
         self.config = {**default_config, **(config or {})}
@@ -467,7 +446,7 @@ class DPTRGBDecoder(nn.Module):
             nn.BatchNorm2d(32) if self.config["use_bn"] else nn.Identity(),
             nn.ReLU(inplace=True),
             # Final RGB projection
-            nn.Conv2d(32, 3, kernel_size=1),
+            nn.Conv2d(32, self.config["output_channels"], kernel_size=1),
             nn.Sigmoid(),  # Output in [0, 1] range
         )
 
@@ -553,96 +532,6 @@ class DPTRGBDecoder(nn.Module):
             )
 
         return rgb_output
-
-
-class DINOv3toDPTRGB(nn.Module):
-    """
-    Complete model combining DINOv3 encoder with DPT RGB decoder.
-    Compatible with the provided DINOv3 class.
-    """
-
-    def __init__(
-        self,
-        dinov3_model,
-        decoder_config: Optional[Dict] = None,
-        selected_layers: List[int] = [2, 5, 8, 11],
-    ):
-        super().__init__()
-
-        self.dinov3 = dinov3_model
-        self.selected_layers = selected_layers
-
-        # Configure DINOv3 to return selected hidden states
-        self.dinov3.config["return_selected_layers"] = selected_layers
-        self.dinov3.config["return_as_feature_maps"] = (
-            False  # We need tokens for reassembly
-        )
-
-        # Initialize decoder with DINOv3's feature dimension
-        decoder_config = decoder_config or {}
-        decoder_config["feature_dim"] = self.dinov3.feature_dim
-
-        self.decoder = DPTRGBDecoder(decoder_config)
-
-    def forward(self, rgb_image: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            rgb_image: [B, 3, H, W] - Input RGB image (preprocessed for DINOv3)
-
-        Returns:
-            rgb_output: [B, 3, H, W] - Predicted RGB image in [0, 1] range
-        """
-        batch_size, _, input_h, input_w = rgb_image.shape
-
-        # Get DINOv3 features from selected layers
-        dinov3_output = self.dinov3(rgb_image)
-        hidden_states = dinov3_output[
-            "selected_hidden_states"
-        ]  # List of [B, N_tokens, feature_dim]
-
-        # Pass through DPT decoder
-        rgb_output = self.decoder(hidden_states, input_h, input_w)
-
-        return rgb_output
-
-    def freeze_encoder(self):
-        """Freeze DINOv3 encoder parameters for efficient fine-tuning."""
-        for param in self.dinov3.parameters():
-            param.requires_grad = False
-
-    def unfreeze_encoder(self):
-        """Unfreeze DINOv3 encoder parameters for full fine-tuning."""
-        for param in self.dinov3.parameters():
-            param.requires_grad = True
-
-    def get_parameter_groups(self, base_lr: float = 1e-4):
-        """
-        Get parameter groups with differential learning rates.
-
-        Args:
-            base_lr: Base learning rate for the RGB head
-
-        Returns:
-            List of parameter groups for optimizer
-        """
-        return [
-            {
-                "params": self.dinov3.parameters(),
-                "lr": base_lr * 0.1,
-            },  # Encoder: 10% of base LR
-            {
-                "params": self.decoder.reassemble_layers.parameters(),
-                "lr": base_lr * 0.5,
-            },  # Reassemble: 50%
-            {
-                "params": self.decoder.fusion_blocks.parameters(),
-                "lr": base_lr * 0.5,
-            },  # Fusion: 50%
-            {
-                "params": self.decoder.rgb_head.parameters(),
-                "lr": base_lr,
-            },  # RGB head: 100%
-        ]
 
 
 # ---------- 1) POL preprocessing ----------
@@ -854,8 +743,6 @@ class RGBPOLCrossFuse(nn.Module):
 
 
 # ------------------ small helpers ------------------
-
-
 def _is_instance_or_cfg(x, cls):
     """Return 'instance' if x is an instance of cls, 'cfg' if dict, else raise."""
     if isinstance(x, cls):
@@ -910,10 +797,10 @@ class RGBPOLDecomposer(nn.Module):
         pol_encoder=None,  # POLViTEncoder instance or dict
         pol_preprocess=None,  # PolarizationPreprocess instance or dict
         pol_cross_attn=None,  # RGBPOLCrossFuse instance or dict
-        # 3) Decoders — three DPTRGBDecoder instances or dict configs
-        spec_decoder=None,  # DPTRGBDecoder instance or dict
-        diffuse_decoder=None,  # DPTRGBDecoder instance or dict
-        highlight_decoder=None,  # DPTRGBDecoder instance or dict
+        # 3) Decoders — three DPT_Decoder instances or dict configs
+        spec_decoder=None,  # DPT_Decoder instance or dict
+        diffuse_decoder=None,  # DPT_Decoder instance or dict
+        highlight_decoder=None,  # DPT_Decoder instance or dict
         # Optional: if your DINO wrapper needs these hints
         patch_size: int = 16,
     ):
@@ -966,10 +853,10 @@ class RGBPOLDecomposer(nn.Module):
                 ]
             )
 
-        # ---- Decoders (DPTRGBDecoder) ----
+        # ---- Decoders (DPT_Decoder) ----
         # Each can control its own out_channels inside the config (e.g., 3 for S/D, 1 for H)
         if spec_decoder is None:
-            # Minimal default: your DPTRGBDecoder likely needs at least decoder_config / dim / image_size
+            # Minimal default: your DPT_Decoder likely needs at least decoder_config / dim / image_size
             spec_decoder = {
                 "decoder_config": {"use_bn": True, "readout_type": "project"},
                 "embed_dim": self.embed_dim,
@@ -982,7 +869,7 @@ class RGBPOLDecomposer(nn.Module):
                 "image_size": self.image_size,
             }
         if highlight_decoder is None:
-            # Often a 1-channel mask is useful; set out_channels=1 if your DPTRGBDecoder supports it.
+            # Often a 1-channel mask is useful; set out_channels=1 if your DPT_Decoder supports it.
             highlight_decoder = {
                 "decoder_config": {
                     "use_bn": True,
@@ -995,16 +882,16 @@ class RGBPOLDecomposer(nn.Module):
 
         # Normalize configs → instances
         def build_dpt(dec):
-            if isinstance(dec, DPTRGBDecoder):
+            if isinstance(dec, DPT_Decoder):
                 return dec
             if isinstance(dec, dict):
-                # DPTRGBDecoder takes a single config dict
+                # DPT_Decoder takes a single config dict
                 config = {
                     "feature_dim": self.embed_dim,
                     **dec,
                 }
-                return DPTRGBDecoder(config)
-            raise TypeError("Decoder must be DPTRGBDecoder instance or dict.")
+                return DPT_Decoder(config)
+            raise TypeError("Decoder must be DPT_Decoder instance or dict.")
         self.decS = build_dpt(spec_decoder)
         self.decD = build_dpt(diffuse_decoder)
         self.decH = build_dpt(highlight_decoder)
@@ -1035,7 +922,7 @@ class RGBPOLDecomposer(nn.Module):
         for i in range(4):
             cross_tokens.append(self.cross[i](rgb_tokens[i], pol_tokens[i]))
 
-        # 6) Decode with three DPTRGBDecoder heads
+        # 6) Decode with three DPT_Decoder heads
         S = self.decS(cross_tokens)  # Specular  (B,3,H,W)
         D = self.decD(cross_tokens)  # Diffuse   (B,3,H,W)
         H = self.decH(cross_tokens)  # Highlight (B,3,H,W)
@@ -1048,3 +935,272 @@ class RGBPOLDecomposer(nn.Module):
             "pol_tokens": pol_tokens, 
             "cross_tokens": cross_tokens,
         }
+
+class RGBDistillDecomposer(nn.Module):
+    """
+    RGB with cross-attention and three DPT decoders.
+
+    Inputs (forward):
+      batch["rgb"] : (B,3,H,W) in [0,1]
+
+    Returns:
+      {
+        "specular":  (B,3,H,W),
+        "diffuse":   (B,3,H,W),
+        "highlight": (B,1 or 3,H,W)  # depends on decoder config
+        "recon":     (B,3,H,W),      # typically specular + diffuse
+        "tokens": {
+           "rgb": (B,N,C),
+        }
+      }
+    """
+
+    def __init__(
+        self,
+        # 1) RGB encoder (DINOv3) — instance or config dict
+        dinov3,
+        # 3) Decoders — three DPT_Decoder instances or dict configs
+        spec_decoder=None,  # DPT_Decoder instance or dict
+        diffuse_decoder=None,  # DPT_Decoder instance or dict
+        highlight_decoder=None,  # DPT_Decoder instance or dict
+        # Optional: if your DINO wrapper needs these hints
+        patch_size: int = 16,
+    ):
+        super().__init__()
+
+        # ---- RGB (DINOv3) ----
+        # Accept either an instance or a DINOv3(**cfg) dict
+        self.dinov3 = _build(dinov3, DINOv3)
+
+        self.image_size = self.dinov3.config["image_size"]
+        self.patch_size = patch_size
+        self.embed_dim = self.dinov3.feature_dim
+
+        # ---- Decoders (DPT_Decoder) ----
+        # Each can control its own out_channels inside the config (e.g., 3 for S/D, 1 for H)
+        if spec_decoder is None:
+            # Minimal default: your DPT_Decoder likely needs at least decoder_config / dim / image_size
+            spec_decoder = {
+                "decoder_config": {"use_bn": True, "readout_type": "project"},
+                "embed_dim": self.embed_dim,
+                "image_size": self.image_size,
+            }
+        if diffuse_decoder is None:
+            diffuse_decoder = {
+                "decoder_config": {"use_bn": True, "readout_type": "project"},
+                "embed_dim": self.embed_dim,
+                "image_size": self.image_size,
+            }
+        if highlight_decoder is None:
+            # Often a 1-channel mask is useful; set out_channels=1 if your DPT_Decoder supports it.
+            highlight_decoder = {
+                "decoder_config": {
+                    "use_bn": True,
+                    "readout_type": "project",
+                    "out_channels": 1,
+                },
+                "embed_dim": self.embed_dim,
+                "image_size": self.image_size,
+            }
+
+        # Normalize configs → instances
+        def build_dpt(dec):
+            if isinstance(dec, DPT_Decoder):
+                return dec
+            if isinstance(dec, dict):
+                # DPT_Decoder takes a single config dict
+                config = {
+                    "feature_dim": self.embed_dim,
+                    **dec,
+                }
+                return DPT_Decoder(config)
+            raise TypeError("Decoder must be DPT_Decoder instance or dict.")
+        self.decS = build_dpt(spec_decoder)
+        self.decD = build_dpt(diffuse_decoder)
+        self.decH = build_dpt(highlight_decoder)
+
+    def _rgb_tokens(self, rgb_preproc):
+        """Extract DINOv3 tokens and infer (Hp, Wp) if wrapper doesn’t return them."""
+        with torch.no_grad():
+            out = self.dinov3(rgb_preproc)
+        tokens = out.get("last_hidden_state", out.get("tokens"))
+        if tokens is None:
+            raise KeyError(
+                "DINOv3 wrapper must return 'last_hidden_state' or 'tokens'."
+            )
+        Hp = self.image_size // self.patch_size
+        Wp = self.image_size // self.patch_size
+        return tokens, (Hp, Wp)
+
+    def forward(self, batch):
+        # 1) RGB → DINO tokens
+        rgb_in = self.dinov3.preprocess_image(batch["rgb"])
+        rgb_tokens = self.dinov3(rgb_in)["selected_hidden_states"]
+
+        # 6) Decode with three DPT_Decoder heads
+        S = self.decS(rgb_tokens)  # Specular  (B,3,H,W)
+        D = self.decD(rgb_tokens)  # Diffuse   (B,3,H,W)
+        H = self.decH(rgb_tokens)  # Highlight (B,3,H,W)
+
+        return {
+            "specular": S,
+            "diffuse": D,
+            "highlight": H,
+            "rgb_tokens": rgb_tokens, 
+        }
+
+
+def get_model_parameter_summary(model):
+    """
+    Generate a comprehensive parameter summary for RGBPOLDecomposer or RGBDistillDecomposer models.
+    
+    Args:
+        model: RGBPOLDecomposer or RGBDistillDecomposer instance
+        
+    Returns:
+        dict: Detailed parameter summary with counts and breakdowns
+    """
+    if not isinstance(model, (RGBPOLDecomposer, RGBDistillDecomposer)):
+        raise ValueError("Model must be RGBPOLDecomposer or RGBDistillDecomposer")
+    
+    def count_parameters(module, trainable_only=False):
+        """Count parameters in a module."""
+        if trainable_only:
+            return sum(p.numel() for p in module.parameters() if p.requires_grad)
+        else:
+            return sum(p.numel() for p in module.parameters())
+    
+    def count_parameters_by_name(module, name_patterns):
+        """Count parameters for modules matching name patterns."""
+        total_params = 0
+        trainable_params = 0
+        
+        for name, child in module.named_modules():
+            if any(pattern in name for pattern in name_patterns):
+                total_params += sum(p.numel() for p in child.parameters())
+                trainable_params += sum(p.numel() for p in child.parameters() if p.requires_grad)
+        
+        return total_params, trainable_params
+    
+    # Initialize summary
+    summary = {
+        "model_type": model.__class__.__name__,
+        "total_parameters": 0,
+        "trainable_parameters": 0,
+        "frozen_parameters": 0,
+        "components": {}
+    }
+    
+    # RGB Encoder (DINOv3)
+    dinov3_total, dinov3_trainable = count_parameters(model.dinov3, trainable_only=False), count_parameters(model.dinov3, trainable_only=True)
+    summary["components"]["rgb_encoder"] = {
+        "total": dinov3_total,
+        "trainable": dinov3_trainable,
+        "frozen": dinov3_total - dinov3_trainable,
+        "description": "DINOv3 backbone for RGB feature extraction"
+    }
+    
+    # POL components (only for RGBPOLDecomposer)
+    if isinstance(model, RGBPOLDecomposer):
+        # POL Preprocessing
+        pol_pre_total, pol_pre_trainable = count_parameters(model.pol_pre, trainable_only=False), count_parameters(model.pol_pre, trainable_only=True)
+        summary["components"]["pol_preprocessing"] = {
+            "total": pol_pre_total,
+            "trainable": pol_pre_trainable,
+            "frozen": pol_pre_total - pol_pre_trainable,
+            "description": "Polarization preprocessing (AoLP, DoLP → [cos2θ, sin2θ, DoLP])"
+        }
+        
+        # POL Encoder
+        pol_enc_total, pol_enc_trainable = count_parameters(model.pol_enc, trainable_only=False), count_parameters(model.pol_enc, trainable_only=True)
+        summary["components"]["pol_encoder"] = {
+            "total": pol_enc_total,
+            "trainable": pol_enc_trainable,
+            "frozen": pol_enc_total - pol_enc_trainable,
+            "description": "POLViT encoder for polarization feature extraction"
+        }
+        
+        # Cross-attention modules
+        cross_total, cross_trainable = count_parameters(model.cross, trainable_only=False), count_parameters(model.cross, trainable_only=True)
+        summary["components"]["cross_attention"] = {
+            "total": cross_total,
+            "trainable": cross_trainable,
+            "frozen": cross_total - cross_trainable,
+            "description": "RGB-POL cross-attention fusion modules"
+        }
+    
+    # Decoders
+    decoders = {
+        "specular_decoder": model.decS,
+        "diffuse_decoder": model.decD,
+        "highlight_decoder": model.decH
+    }
+    
+    for name, decoder in decoders.items():
+        dec_total, dec_trainable = count_parameters(decoder, trainable_only=False), count_parameters(decoder, trainable_only=True)
+        summary["components"][name] = {
+            "total": dec_total,
+            "trainable": dec_trainable,
+            "frozen": dec_total - dec_trainable,
+            "description": f"DPT decoder for {name.replace('_decoder', '')} component"
+        }
+    
+    # Calculate totals
+    summary["total_parameters"] = sum(comp["total"] for comp in summary["components"].values())
+    summary["trainable_parameters"] = sum(comp["trainable"] for comp in summary["components"].values())
+    summary["frozen_parameters"] = summary["total_parameters"] - summary["trainable_parameters"]
+    
+    return summary
+
+
+def print_model_parameter_summary(model, detailed=True):
+    """
+    Print a formatted parameter summary for RGBPOLDecomposer or RGBDistillDecomposer models.
+    
+    Args:
+        model: RGBPOLDecomposer or RGBDistillDecomposer instance
+        detailed: Whether to print detailed breakdown by component
+    """
+    summary = get_model_parameter_summary(model)
+    
+    print(f"\n{'='*60}")
+    print(f"MODEL PARAMETER SUMMARY: {summary['model_type']}")
+    print(f"{'='*60}")
+    
+    # Overall statistics
+    print(f"\n📊 OVERALL STATISTICS:")
+    print(f"   Total Parameters:     {summary['total_parameters']:,}")
+    print(f"   Trainable Parameters: {summary['trainable_parameters']:,}")
+    print(f"   Frozen Parameters:    {summary['frozen_parameters']:,}")
+    print(f"   Trainable Ratio:      {summary['trainable_parameters']/summary['total_parameters']*100:.1f}%")
+    
+    if detailed:
+        print(f"\n🔍 DETAILED BREAKDOWN:")
+        print(f"{'Component':<25} {'Total':<12} {'Trainable':<12} {'Frozen':<12} {'Ratio':<8}")
+        print(f"{'-'*25} {'-'*12} {'-'*12} {'-'*12} {'-'*8}")
+        
+        for comp_name, comp_data in summary["components"].items():
+            ratio = comp_data["trainable"] / comp_data["total"] * 100 if comp_data["total"] > 0 else 0
+            print(f"{comp_name:<25} {comp_data['total']:<12,} {comp_data['trainable']:<12,} {comp_data['frozen']:<12,} {ratio:<7.1f}%")
+        
+        print(f"\n📝 COMPONENT DESCRIPTIONS:")
+        for comp_name, comp_data in summary["components"].items():
+            print(f"   • {comp_name}: {comp_data['description']}")
+    
+    print(f"\n{'='*60}")
+
+
+def get_model_size_mb(model):
+    """
+    Calculate model size in MB (approximate).
+    
+    Args:
+        model: RGBPOLDecomposer or RGBDistillDecomposer instance
+        
+    Returns:
+        float: Model size in MB
+    """
+    summary = get_model_parameter_summary(model)
+    # Assuming float32 (4 bytes per parameter)
+    size_mb = summary["total_parameters"] * 4 / (1024 * 1024)
+    return size_mb
