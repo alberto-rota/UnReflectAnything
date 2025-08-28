@@ -1,5 +1,29 @@
 parameters:
-  # Dataset configuration
+  
+  MODEL:
+    value:
+      RGB_ENCODER:
+        ENCODER: "facebook/dinov3-vits16-pretrain-lvd1689m"
+        IMAGE_SIZE: 224
+        RETURN_SELECTED_LAYERS: [3, 6, 9,12]
+      POL_ENCODER:
+        EMBED_DIM: 384
+        DEPTH: 4
+        N_HEADS: 12
+        PATCH_SIZE: 16
+      CROSS_ATTN:
+        EMBED_DIM: 384
+        N_HEADS: 12
+        DROPOUT: 0.1
+        BI_DIRECTIONAL: False
+      DECODER:
+        FEATURE_DIM: 384  
+        REASSEMBLE_OUT_CHANNELS: [48, 96, 192, 384] 
+        REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5] 
+        READOUT_TYPE: "ignore"  
+        USE_BN: False
+        OUTPUT_IMAGE_SIZE: [224,224]
+
   DATASETS:
     value:
       SCRREAM:
@@ -42,7 +66,6 @@ parameters:
         FEW_IMAGES: False
   SHUFFLE:
     value: True
-  # Training configuration
   BATCH_SIZE:
     value: 20
   WORKERS:

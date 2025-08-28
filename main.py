@@ -34,51 +34,71 @@ def create_model_from_config(config, device):
     Returns:
         RGBPOLDecomposer: The initialized model
     """
-    # Get image dimensions from config
-    target_size = config.get("TARGET_SIZE", (224, 224))
+    # Access model configuration from the nested structure
+    model_config = config.get("MODEL", {})#.get("value", {})
+    
+    # Get image dimensions from config (check multiple possible locations)
+    target_size = None
+    for dataset_name in ["SCRREAM", "HOUSECAT6D", "POLARGB"]:
+        dataset_config = config.get("DATASETS", {}).get("value", {}).get(dataset_name, {})
+        if "TARGET_SIZE" in dataset_config:
+            target_size = dataset_config["TARGET_SIZE"]
+            break
+    
+    if target_size is None:
+        target_size = (224, 224)  # Default fallback
+    
     if isinstance(target_size, list):
         target_size = tuple(target_size)
     
-    # Model configuration
+    # RGB Encoder configuration
+    rgb_encoder_config = model_config.get("RGB_ENCODER", {})
     dinov3_cfg = {
-        "model_name": "facebook/dinov3-vits16-pretrain-lvd1689m",
-        "image_size": min(target_size),
-        "freeze_backbone": config.get("FREEZE_BACKBONE", True),
-        "return_last_hidden_state": True,
+        "model_name": rgb_encoder_config.get("ENCODER", "facebook/dinov3-vits16-pretrain-lvd1689m"),
+        "image_size": rgb_encoder_config.get("IMAGE_SIZE", min(target_size)),
+        "freeze_backbone": rgb_encoder_config.get("FREEZE_BACKBONE", True),
+        "return_selected_layers": rgb_encoder_config.get("RETURN_SELECTED_LAYERS", [3, 6, 9, 12]),
+        "return_last_hidden_state": rgb_encoder_config.get("RETURN_LAST_HIDDEN_STATE", False),
         "return_as_feature_maps": False,
+        "return_cls_token": False,
     }
 
+    # POL Encoder configuration
+    pol_encoder_config = model_config.get("POL_ENCODER", {})
     pol_enc_cfg = {
         "in_ch": 3,
-        "embed_dim": config.get("EMBED_DIM", 384),
-        "depth": config.get("POL_DEPTH", 4),
-        "n_heads": config.get("POL_N_HEADS", 12),
-        "patch_size": config.get("PATCH_SIZE", 16),
+        "embed_dim": pol_encoder_config.get("EMBED_DIM", 384),
+        "depth": pol_encoder_config.get("DEPTH", 4),
+        "n_heads": pol_encoder_config.get("N_HEADS", 12),
+        "patch_size": pol_encoder_config.get("PATCH_SIZE", 16),
     }
-
+    
+    # Decoder configuration
+    decoder_config = model_config.get("DECODER", {})
     decoder_cfg = {
-        "use_bn": config.get("USE_BN", True),
-        "readout_type": config.get("READOUT_TYPE", "ignore"),
-        "feature_dim": config.get("FEATURE_DIM", 384),
-        "output_image_size": (min(target_size), min(target_size)),
+        "use_bn": decoder_config.get("USE_BN", True),
+        "readout_type": decoder_config.get("READOUT_TYPE", "ignore"),
+        "feature_dim": decoder_config.get("FEATURE_DIM", 384),
+        "output_image_size": decoder_config.get("OUTPUT_IMAGE_SIZE", min(target_size)),
     }
 
-    # Create components
-    pol_enc = POLViTEncoder(pol_enc_cfg)
-    dinov3 = DINOv3(dinov3_cfg)
-    decS = DPTRGBDecoder(decoder_cfg)
-    decD = DPTRGBDecoder(decoder_cfg)
-    decH = DPTRGBDecoder(decoder_cfg)
+    # Cross-attention configuration
+    cross_attn_config = model_config.get("CROSS_ATTN", {})
+    cross_attn_cfg = {
+        "embed_dim": cross_attn_config.get("EMBED_DIM", 384),
+        "n_heads": cross_attn_config.get("N_HEADS", 12),
+        "dropout": cross_attn_config.get("DROPOUT", 0.1),
+        "bi_directional": cross_attn_config.get("BI_DIRECTIONAL", False)
+    }
 
     # Create the main model
     model = RGBPOLDecomposer(
-        dinov3=dinov3,
-        pol_encoder=pol_enc,
-        pol_preprocess=None,
-        pol_cross_attn=None,
-        spec_decoder=decS,
-        diffuse_decoder=decD,
-        highlight_decoder=decH,
+        dinov3=dinov3_cfg,
+        pol_encoder=pol_enc_cfg,
+        pol_cross_attn=cross_attn_cfg,
+        spec_decoder=decoder_cfg,
+        diffuse_decoder=decoder_cfg,
+        highlight_decoder=decoder_cfg,
     ).to(device)
     
     logger.info(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters", context="MODEL")
@@ -124,6 +144,84 @@ def create_datasets_from_config(config, config_path):
         logger.warning("3. Missing dataset classes")
         logger.warning("Please check your config_train.yaml file structure")
         raise
+
+
+def load_and_process_config(config_path, config=None, unknown_args=None, boot_mode=False):
+    """
+    Load and process configuration from file or direct input.
+    
+    Args:
+        config_path (str): Path to the YAML configuration file
+        config (dict, optional): Direct configuration dictionary (overrides file loading)
+        unknown_args (list, optional): List of unknown command-line arguments to process
+        boot_mode (bool): Whether to enable boot mode with minimal parameters
+        
+    Returns:
+        DotMap: Processed configuration object
+    """
+    if config is None:
+        # Load the configuration file
+        with open(config_path, "r") as f:
+            config_yaml = yaml.safe_load(f)
+        config_parameters = config_yaml["parameters"]
+        config_dict = {
+            k: v.get("value") for k, v in config_parameters.items() if v is not None
+        }
+    else:
+        config_dict = config
+
+    # Process the unknown command-line arguments
+    if unknown_args:
+        additional_args = {}
+        for arg in unknown_args:
+            if arg.startswith("--"):
+                key_value = arg.lstrip("--").split("=", 1)
+                if len(key_value) == 2:
+                    key, value = key_value
+                    additional_args[key.upper()] = value
+                else:
+                    key = key_value[0]
+                    additional_args[key.upper()] = None
+
+        # Override parameters in the configuration with command-line arguments
+        for key, value in additional_args.items():
+            if key in config_dict:
+                orig_value = config_dict[key]
+                orig_type = type(orig_value)
+                try:
+                    if orig_type == bool:
+                        if value.lower() in ("true", "1", "yes"):
+                            new_value = True
+                        elif value.lower() in ("false", "0", "no"):
+                            new_value = False
+                        else:
+                            raise ValueError(f"Cannot parse boolean value: {value}")
+                    elif orig_type == list:
+                        new_value = ast.literal_eval(value)
+                    else:
+                        new_value = orig_type(value)
+                    config_dict[key] = new_value
+                except Exception as e:
+                    print(f"Could not convert value for {key}: {value}, error: {e}")
+            else:
+                print(f"Warning: Unknown parameter {key}")
+
+    # Convert the configuration dictionary to a DotMap for easy access
+    config = DotMap(config_dict)
+
+    # Override parameters if boot mode is enabled
+    if boot_mode:
+        config.BATCH_SIZE = 1
+        config.EPOCHS = 1
+        config.NO_WANDB = True
+        # Set FEW_IMAGES to True for all datasets in boot mode
+        if hasattr(config, 'DATASETS') and config.DATASETS is not None:
+            for dataset_name, dataset_config in config.DATASETS.items():
+                if isinstance(dataset_config, dict):
+                    dataset_config['FEW_IMAGES'] = True
+        logger.info("Boot mode enabled - using minimal parameters for quick testing")
+    
+    return config
 
 
 def run_pipeline(mode="train", config=None):
@@ -194,71 +292,14 @@ def run_pipeline(mode="train", config=None):
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ACCELERATED = torch.cuda.is_available()
 
-    if config is None:
-        CONFIG_PATH = args.config
-
-        # Load the configuration file
-        with open(CONFIG_PATH, "r") as f:
-            config_yaml = yaml.safe_load(f)
-        config_parameters = config_yaml["parameters"]
-        config_dict = {
-            k: v.get("value") for k, v in config_parameters.items() if v is not None
-        }
-    else:
-        config_dict = config
-        # If config is passed directly, we still need a config path for the new dataset system
-        # Use the default config file path
-        CONFIG_PATH = args.config
-
-    # Process the unknown command-line arguments
-    additional_args = {}
-    for arg in unknown:
-        if arg.startswith("--"):
-            key_value = arg.lstrip("--").split("=", 1)
-            if len(key_value) == 2:
-                key, value = key_value
-                additional_args[key.upper()] = value
-            else:
-                key = key_value[0]
-                additional_args[key.upper()] = None
-
-    # Override parameters in the configuration with command-line arguments
-    for key, value in additional_args.items():
-        if key in config_dict:
-            orig_value = config_dict[key]
-            orig_type = type(orig_value)
-            try:
-                if orig_type == bool:
-                    if value.lower() in ("true", "1", "yes"):
-                        new_value = True
-                    elif value.lower() in ("false", "0", "no"):
-                        new_value = False
-                    else:
-                        raise ValueError(f"Cannot parse boolean value: {value}")
-                elif orig_type == list:
-                    new_value = ast.literal_eval(value)
-                else:
-                    new_value = orig_type(value)
-                config_dict[key] = new_value
-            except Exception as e:
-                print(f"Could not convert value for {key}: {value}, error: {e}")
-        else:
-            print(f"Warning: Unknown parameter {key}")
-
-    # Convert the configuration dictionary to a DotMap for easy access
-    config = DotMap(config_dict)
-
-    # Override parameters if boot mode is enabled
-    if args.boot:
-        config.BATCH_SIZE = 1
-        config.EPOCHS = 1
-        config.NO_WANDB = True
-        # Set FEW_IMAGES to True for all datasets in boot mode
-        if hasattr(config, 'DATASETS') and config.DATASETS is not None:
-            for dataset_name, dataset_config in config.DATASETS.items():
-                if isinstance(dataset_config, dict):
-                    dataset_config['FEW_IMAGES'] = True
-        logger.info("Boot mode enabled - using minimal parameters for quick testing")
+    # Load and process configuration
+    CONFIG_PATH = args.config
+    config = load_and_process_config(
+        config_path=CONFIG_PATH,
+        config=config,
+        unknown_args=unknown,
+        boot_mode=args.boot
+    )
 
     def get_unique_note():
         notes_past_file = os.path.join("assets", "notes_past.txt")
