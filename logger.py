@@ -320,7 +320,7 @@ class CustomLogger:
 _loggers = {}
 
 
-def get_logger(module_name, log_to_file=False, log_dir=None):
+def get_logger(module_name, log_to_file=True, log_dir="./runs/temporary"):
     """
     Get or create a logger for the specified module.
 
@@ -338,7 +338,14 @@ def get_logger(module_name, log_to_file=False, log_dir=None):
     log_file = None
     if log_to_file:
         # logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+        # Ensure log directory exists
+        os.makedirs(log_dir, exist_ok=True)
+        
         log_file = os.path.join(log_dir, f"{module_name.split('.')[-1]}.log")
+        
+        # Remove existing log file if it exists
+        if os.path.exists(log_file):
+            os.remove(log_file)
 
     logger = CustomLogger(module_name, log_file)
     _loggers[module_name] = logger
