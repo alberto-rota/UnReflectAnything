@@ -320,18 +320,19 @@ class CustomLogger:
 _loggers = {}
 
 
-def get_logger(module_name, log_to_file=True, log_dir="/home/alberto/UnReflectAnything/runs/temporary"):
+def get_logger(module_name, log_to_file=True, relative_log_dir="runs/temporary"):
     """
     Get or create a logger for the specified module.
 
     Args:
         module_name (str): Name of the module
         log_to_file (bool): Whether to log to a file in addition to console
-        log_dir (str, optional): Directory for log files if log_to_file is True
+        relative_log_dir (str, optional): Directory for log files if log_to_file is True
 
     Returns:
         CustomLogger: The logger instance
     """
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), relative_log_dir)
     if module_name in _loggers:
         return _loggers[module_name]
 

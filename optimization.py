@@ -219,12 +219,11 @@ class EarlyStopping:
     def __init__(
         self,
         patience=3,
-        hard_patience=5,
         verbose=False,
         delta=0,
         runname=None,
         checkpointpath="checkpoints",
-        bucket_name="alberto-bucket",  # New parameter for GCS bucket
+        bucket_name=None,  # Will use GCS_BUCKET_NAME environment variable if None
     ):
         """
         Args:
@@ -249,11 +248,20 @@ class EarlyStopping:
         self.runname = runname
 
         # Initialize GCS client if bucket_name is provided
-        self.bucket_name = bucket_name
-        if bucket_name:
+        if bucket_name is None:
+            try:
+                from utilities.dev_utils import get_gcs_bucket_name
+                self.bucket_name = get_gcs_bucket_name()
+            except (ImportError, ValueError) as e:
+                print(f"Warning: Could not get bucket name from environment: {str(e)}")
+                self.bucket_name = None
+        else:
+            self.bucket_name = bucket_name
+            
+        if self.bucket_name:
             try:
                 self.storage_client = storage.Client()
-                self.bucket = self.storage_client.bucket(bucket_name)
+                self.bucket = self.storage_client.bucket(self.bucket_name)
             except Exception as e:
                 print(f"Warning: Could not initialize GCS client: {str(e)}")
                 self.bucket = None

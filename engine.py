@@ -73,15 +73,9 @@ class Engine:
         init(initialize.wandb, config, self.model, notes, no_wandb)
         init(initialize.tracking_metrics)
         init(initialize.setup_run_directories, self.RUNS_DIR, self.wandb, False)
+        init(initialize.earlystopping, self.earlystopping_patience, self.MODELS_DIR, self.runname)
         self.config["name"] = self.runname
 
-        # Initialize early stopping
-        self.earlystopping = initialize.earlystopping(
-            self.earlystopping_patience, self.MODELS_DIR, self.runname
-        )
-
-        # Initialize polarization-specific losses
-        self.recon_loss = SSIMLoss()
         
         # Save hyperparameters to json
         initialize.save_hyperparameters_json(self.RUN_DIR, self.config)
@@ -93,6 +87,8 @@ class Engine:
             if log_file.endswith(".log"):
                 shutil.move(os.path.join(TEMPORARY_LOG_DIR, log_file), os.path.join(self.RUN_DIR, log_file))
 
+        # Initialize polarization-specific losses
+        self.recon_loss = SSIMLoss()
 
 
     def trainloop(self):
@@ -103,16 +99,16 @@ class Engine:
         for e in range(self.epochs):
             ### TRAINING + VALIDATION FOR EACH EPOCH
             self.train()  # Train the model for one epoch
-            training_status = self.validate()  # Train the model for one epoch
+            is_overfitting = self.validate()  # Train the model for one epoch
 
-            self.csv_log_metrics()
+            self.csv_log_metrics() # Log the metrics to csv
             
             # Save checkpoint every few epochs
             if (e + 1) % self.config.get("SAVE_INTERVAL", 10) == 0:
                 self._save_checkpoint(e)
 
             ### BREAK IF EARLYSTOP
-            if training_status == "EARLYSTOP":
+            if is_overfitting == "EARLYSTOP":
                 break  # Exit the training loop if early stopping condition is met
 
         # Log locations of important data at the end of training
@@ -354,7 +350,7 @@ class Engine:
             self.model.parameters()
         )
         # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.GRADIENT_CLIPPING_MAX_NORM)
 
         # Step only if warmup phase is finished and we are backpropagating the accumulated gradients
         if accumulate_gradients:
@@ -539,7 +535,7 @@ class Engine:
                 epoch_losses.append(loss_value.item())
                 self.step[f"{phase}_batch"] += 1
                 
-                # Update metrics dataframe (similar to engine_old.py)
+                # Update metrics dataframe 
                 metrics = {
                     "Loss": loss_value.item(),
                     "HyperParameters/LR": self.optimizer.param_groups[0]["lr"],
@@ -588,10 +584,16 @@ class Engine:
                         extra_info=extra_info
                     )
                 
-                # WandB logging
+                # WandB logging the batch metrics
                 if self.wandb and batch_idx % self.logfreq_wandb == 0:
                     # Use the metrics_for_wandb function to format metrics properly
                     wandb_metrics = metrics_for_wandb(metrics, phase)
+                    # Add the batch number
+                    if phase == "Training":
+                        batch_str = "batch"
+                    elif phase == "Validation":
+                        batch_str = "valbatch"
+                    wandb_metrics[f"Step/{batch_str}"] = self.step[f"{phase}_batch"]
                     self.wandb.log(wandb_metrics)
                 
                 # Memory cleanup
@@ -612,7 +614,7 @@ class Engine:
         avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         self.logger.info(f"Epoch {self.step['epoch']+1} - Average Loss: {avg_loss:.6f}", context=phase.upper())
         
-        # Log epoch metrics to wandb (similar to engine_old.py)
+        # Log epoch metrics to wandb
         if self.wandb:
             epochstr = "idx" if phase == "Test" else "epoch"
             epoch_metrics = metrics_for_wandb(
@@ -627,6 +629,7 @@ class Engine:
                 for key, value in epoch_metrics.items()
                 if phase in key
             }
+            epoch_metrics[f"Step/{epochstr}"] = self.step["epoch"]
             self.wandb.log(epoch_metrics)
             
         return avg_loss

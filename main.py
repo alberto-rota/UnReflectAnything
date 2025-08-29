@@ -263,7 +263,7 @@ def run_pipeline(mode="train", config=None):
     args, unknown = parser.parse_known_args()
 
     if args.nodebug:
-        debugpy.listen(("localhost", 5678))
+        debugpy.listen(("localhost", int(os.getenv("DEBUGPY_PORT"))))
     
     # Show title screen if available
     try:

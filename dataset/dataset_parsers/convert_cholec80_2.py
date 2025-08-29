@@ -7,9 +7,21 @@ import shutil
 from concurrent.futures import ProcessPoolExecutor
 import math
 
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+def get_gcs_bucket_name():
+    """Get the GCS bucket name from environment variables."""
+    bucket_name = os.environ.get("GCS_BUCKET_NAME")
+    if bucket_name is None:
+        raise ValueError("GCS_BUCKET_NAME environment variable is not set. Please set it in your .env file.")
+    return bucket_name
+
 # Define constants
-SOURCE_BUCKET = "gs://alberto-bucket/CHOLEC80_vids/videos/"
-DEST_BUCKET = "gs://alberto-bucket/CHOLEC80_frames/"
+BUCKET_NAME = get_gcs_bucket_name()
+SOURCE_BUCKET = f"gs://{BUCKET_NAME}/CHOLEC80_vids/videos/"
+DEST_BUCKET = f"gs://{BUCKET_NAME}/CHOLEC80_frames/"
 VIDEO_NUMBERS = ["78", "79", "80"]  # Specific videos to process
 NUM_CORES = 8  # Number of cores to use for parallel processing
 MAX_STORAGE_PERCENT = 70  # Maximum percentage of available storage to use

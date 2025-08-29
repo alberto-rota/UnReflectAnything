@@ -1,5 +1,6 @@
 parameters:
-  ### MODEL ARCHITECTURE ###
+
+  ### MODEL ARCHITECTURE                                                        
   MODEL:
     value:
       RGB_ENCODER:
@@ -88,7 +89,8 @@ parameters:
     value: 4
   WARMUP_STEPS:
     value: 0
-  
+  GRADIENT_CLIPPING_MAX_NORM:
+    value: 1.0
   LR_SCHEDULER: 
     value: 
       ONPLATEAU:

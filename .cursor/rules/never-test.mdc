@@ -1,0 +1,6 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+Always aim at writing code and making modifications that are functional without the need to also write a test script that you execute in agent mode. You should never do that and always focus on writing good quality functional code that I will test myself

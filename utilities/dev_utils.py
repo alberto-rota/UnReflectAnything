@@ -16,6 +16,19 @@ import tempfile
 import os
 
 
+def get_gcs_bucket_name() -> str:
+    """
+    Get the GCS bucket name from environment variables.
+    
+    Returns:
+        str: The bucket name from GCS_BUCKET_NAME environment variable
+    """
+    bucket_name = os.environ.get("GCS_BUCKET_NAME")
+    if bucket_name is None:
+        raise ValueError("GCS_BUCKET_NAME environment variable is not set. Please set it in your .env file.")
+    return bucket_name
+
+
 def copy_layer(layer):
     # Get the class of the layer
     layer_class = type(layer)
@@ -417,13 +430,13 @@ def rgb_to_lab(rgb):
 
 
 def download_from_gcs(
-    model_name: str, bucket_name: str = "alberto-bucket", destination_file_path: str = None
+    model_name: str, bucket_name: str = None, destination_file_path: str = None
 ) -> str:
     """
     Downloads a file from Google Cloud Storage bucket
 
     Args:
-        bucket_name (str): Name of the GCS bucket
+        bucket_name (str, optional): Name of the GCS bucket. If None, uses GCS_BUCKET_NAME environment variable
         model_name (str): Path to the file in GCS bucket
         destination_file_path (str, optional): Local path to save the file.
                                              If None, uses a temporary file
@@ -431,11 +444,15 @@ def download_from_gcs(
     Returns:
         str: Path to the downloaded file, or None if download failed
     """
+    
+    # Use environment variable if bucket_name is not provided
+    if bucket_name is None:
+        bucket_name = get_gcs_bucket_name()
 
     # Initialize the GCS client
     storage_client = storage.Client()
 
-    # Get the bucker
+    # Get the bucket
     bucket = storage_client.bucket(bucket_name)
 
     # Get the blob

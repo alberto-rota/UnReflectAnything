@@ -275,7 +275,7 @@ def wandb(config, model=None, notes="", no_wandb=False):
     if "RUN" in config:
         try:
             resume_run = weightsandbiases.Api().runs(
-                path=f'{weightsandbiases.api.default_entity}/{config.get("PROJECT", "MONO3D")}',
+                path=f'{weightsandbiases.api.default_entity}/{config.get("PROJECT","UnReflectAnything")}',
                 filters={"display_name": config["RUN"]},
             )
             run_id = resume_run[0].id
@@ -357,48 +357,6 @@ def _define_wandb_metrics():
     weightsandbiases.define_metric("Validation/epoch*", step_metric="Step/epoch")
 
 
-def tracking_metrics():
-    """Initialize step counters and metrics tracking"""
-    # Metric trend tracking
-    epoch_loss_trend_training = []
-    epoch_loss_trend_validation = []
-
-    # Summary metrics
-    summary_train = []
-    summary_val = []
-    summary_test = []
-
-    # Create dataframes for metrics
-    metrics = {
-        "Training": pd.DataFrame(),
-        "Validation": pd.DataFrame(),
-        "Test": pd.DataFrame(),
-    }
-
-    # Track loaded data
-    loaded_paths = []
-    startedat = datetime.datetime.now()
-
-    return {
-        "step": {
-            "Training_batch": 0,
-            "Validation_batch": 0,
-            "Test_batch": 0,
-            "epoch": 0,
-            "idx": 0,
-            "summary": 0,
-        },
-        "epoch_loss_trend_training": epoch_loss_trend_training,
-        "epoch_loss_trend_validation": epoch_loss_trend_validation,
-        "summary_train": summary_train,
-        "summary_val": summary_val,
-        "summary_test": summary_test,
-        "metrics": metrics,
-        "loaded_paths": loaded_paths,
-        "startedat": startedat,
-    }
-
-
 def setup_run_directories(runs_dir, wandb_instance=None, savelocally=False):
     """Set up directories for storing run artifacts"""
     # Get run name from wandb or generate a new one
@@ -439,27 +397,6 @@ def earlystopping(patience, models_dir, runname=None):
     )
 
     return earlystopping
-
-
-def matching_pipeline(config, model, device):
-    """Initialize the matching pipeline and compute dimensions"""
-    # Create matching pipeline
-    matchingPipeline = MatchingPipeline(config, model, device=device)
-
-    # Compute embedding dimensions
-    embed_dim, seq_len = matchingPipeline.embed_dim, matchingPipeline.seq_len
-
-    # Compute patch size
-    height = matchingPipeline.height
-    width = matchingPipeline.width
-    patch_size = int((height * width / seq_len) ** 0.5)
-
-    return {
-        "matchingPipeline": matchingPipeline,
-        "embed_dim": embed_dim,
-        "seq_len": seq_len,
-        "patch_size": patch_size,
-    }
 
 
 def save_hyperparameters_json(run_dir, config):

@@ -308,14 +308,14 @@ class DepthEstimator(FeatureExtractor):
     def fromArtifact(
         self,
         model_name,
-        bucket="alberto-bucket",
+        bucket=None,
         device="cuda",
     ):
         """
         Loads a PyTorch model from Google Cloud Storage or local checkpoint
 
         Args:
-            bucket (str): Name of the GCS bucket
+            bucket (str, optional): Name of the GCS bucket. If None, uses GCS_BUCKET_NAME environment variable
             model_name (str): Path to the model file in the bucket
             device (str): Device to load the model on ('cuda' or 'cpu')
 
