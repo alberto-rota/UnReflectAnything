@@ -1,0 +1,156 @@
+parameters:
+
+  NOTES: 
+    value: ""  # General notes or comments about the training configuration
+
+  # Wandb Project Information
+  PROJECT:
+    value: "UnReflectAnything"  # Name of the project
+
+  RUN:
+    value: ""
+
+  DATASETS:
+    value:
+      SCRREAM:
+        PATH: "/datasets/SCARED"
+        RHO_S: 0.6
+        EPS: 1.0e-8
+
+
+  IMAGE_HEIGHT:  
+    value: 448  # Height of the input images
+  IMAGE_WIDTH:
+    value: 448  # Width of the input images
+
+  BATCH_SIZE:
+    value: 4  # Batch size for training
+  SHUFFLE:
+    value: True  # Whether to shuffle the dataset
+  WORKERS:
+    value: 8  # Number of workers for the dataloader
+  PIN_MEMORY:
+    value: True  # Whether to pin memory for the dataloader
+  PREFETCH_FACTOR:
+    value: 2  # Number of prefetch factor for the dataloader
+  
+  NO_WANDB:
+    value: False # Whether to disable Weights and Biases logging
+
+  # Matching Parameters
+  DEPTH_SCALE_FACTOR:
+    value: 40 # Scale factor for the depth map
+  DEPTH_BIAS_FACTOR:
+    value: 60 # Bias factor for the depth map
+  TRIPLETS_TO_MINE:
+    value: 32 # Number of triplets to mine for each image
+  PATCH_MATCHING_SCORE_THRESHOLD:
+    value: 0.95 # Matching score threshold
+  PIXEL_MATCHING_SCORE_THRESHOLD:
+    value: 0.75 # # LOWE Score
+  MIN_MATCHES_TO_COLLECT:
+    value: 200 # Minimum number of matches to gather
+  MAX_MATCHES_TO_PROCESS:
+    value: 1000 # Maximum number of matches to process per batch to avoid OOM
+  MAX_EPIPOLAR_DISTANCE:
+    value: 4 # Maximum epipolar distance to consider a match as inlier
+  REFINEMENT_AREA:
+    value: 16 # Area (in Pixels) used to refine the patch matching
+  SCORE_WEIGHTS:
+    value: {
+      DESCRIPTOR: 0.2,
+      REFINEMENT: 0.3,
+      EPIPOLAR: 0.6
+    }
+
+  BACKBONE_BRAND: # ["intel","facebook"]
+    value: "intel"  # Brand of the backbonde model
+  BACKBONE_SIZE: 
+    value: "large"  # Size of the backbone model
+  RESAMPLED_PATCH_SIZE:
+    value: 8   # Patch size after bilinear interpolation (DINOv2 patch size = 16)
+
+  # Optimization Parameters
+  EPOCHS:
+    value: 100  # Number of training epochs
+  OPTIMIZER_BOOTSTRAP_NAME:
+    value: "Adam"  # Optimizer for the bootstrap phase
+  OPTIMIZER_REFINING_NAME:
+    value: "Adam"  # Optimizer for the refining phase
+  SWITCH_OPTIMIZER_EPOCH: #[int]
+    value: 0  # Epoch at which to switch the optimizer
+  LEARNING_RATE:
+    value: 1.0e-5  # Learning rate for the optimizer  
+  WEIGHT_DECAY:
+    value: 1.0e-7  # Weight decay for the optimizer
+  GRADIENT_ACCUMULATION_STEPS:
+    value: 1 # Number of gradient accumulation steps
+  EARLYSTOPPING_PATIENCE: #[int]
+    value: 50  # Patience for early stopping
+  WARMUP_STEPS:
+    value: 20  # Number of warmup steps
+
+  # Loss Functions
+  LOSS_WEIGHT:
+    value: {
+      Odometry: 0.1,
+      Fundamental: 1.0,
+      Depth: 1.0,
+        Photometric: 1.0,
+          SSIM: 0.85,
+          L1: 0.15,
+        Edge: 0.0,
+    }
+  LOSS_WEIGHT_DECAYS:
+    value: {
+      Frobenious: 0.0,
+      Epipolar: 0.0,
+      Fundamental: 0.0,
+      Rank2: 0.0,
+      Odometry: 0.0,
+      SSIM: 0.0,
+      L1: 0.0,
+      Photometric: 0.0,
+      Edge: 0.0,
+      Depth: 0.0,
+    }
+
+  # Learning Rate Schedulers  
+  LR_SCHEDULER: # [""]
+    value: "stepwise"  # Type of learning rate scheduler
+
+  # Cosine Scheduler Parameters
+  COSINESCHEDULER_NPERIODS:
+    value: 4  # Periods of the cosine scheduler
+
+  # Stepwise Scheduler Parameters
+  STEPWISESCHEDULER_NSTEPS:
+    value: 3  # Number of steps for the stepwise scheduler
+  STEPWISESCHEDULER_GAMMA:
+    value: 0.5  # Gamma value for the stepwise scheduler
+
+  # OnPlateau Scheduler Parameters
+  ONPLATEAUSCHEDULER_PATIENCE:
+    value: 25  # Patience for the on-plateau scheduler
+  ONPLATEAUSCHEDULER_FACTOR:
+    value: 1.0e-1  # Factor for the on-plateau scheduler
+
+  # Exponential Scheduler Parameters
+  EXPONENTIALSCHEDULER_GAMMA:
+    value: 1.04  # Gamma value for the exponential scheduler
+
+  # Monitoring Parameters [Set values to 0 or negative to disable]
+  LOG_FREQ_WANDB:
+    value: 10  # Frequency of logging to Weights and Biases
+  MODEL_WATCHER_FREQ_WANDB:
+    value: 5  # Frequency of logging watched model parameters to Weights and Biases
+  LOG_FREQ_RERUN:
+    value: -1  # Frequency of rerun logging (disabled if set to 0 or negative)
+
+  LOSS_THRESHOLDS_WANDB:
+    value: {
+      Epipolar: 1,
+      Odometry: 30
+    }
+
+

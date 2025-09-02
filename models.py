@@ -466,7 +466,6 @@ class DPT_Decoder(nn.Module):
         Returns:
             rgb_output: [B, 3, H, W] - RGB image in [0, 1] range
         """
-        batch_size = hidden_states[0].shape[0]
         input_height, input_width = self.out_image_size
         # Calculate patch grid dimensions
         patch_h = input_height // 16  # DINOv3 uses patch_size=16
@@ -1168,14 +1167,14 @@ def print_model_parameter_summary(model, detailed=True):
     print(f"{'='*60}")
     
     # Overall statistics
-    print(f"\n📊 OVERALL STATISTICS:")
+    print("\n📊 OVERALL STATISTICS:")
     print(f"   Total Parameters:     {summary['total_parameters']:,}")
     print(f"   Trainable Parameters: {summary['trainable_parameters']:,}")
     print(f"   Frozen Parameters:    {summary['frozen_parameters']:,}")
     print(f"   Trainable Ratio:      {summary['trainable_parameters']/summary['total_parameters']*100:.1f}%")
     
     if detailed:
-        print(f"\n🔍 DETAILED BREAKDOWN:")
+        print("\n🔍 DETAILED BREAKDOWN:")
         print(f"{'Component':<25} {'Total':<12} {'Trainable':<12} {'Frozen':<12} {'Ratio':<8}")
         print(f"{'-'*25} {'-'*12} {'-'*12} {'-'*12} {'-'*8}")
         
@@ -1183,7 +1182,7 @@ def print_model_parameter_summary(model, detailed=True):
             ratio = comp_data["trainable"] / comp_data["total"] * 100 if comp_data["total"] > 0 else 0
             print(f"{comp_name:<25} {comp_data['total']:<12,} {comp_data['trainable']:<12,} {comp_data['frozen']:<12,} {ratio:<7.1f}%")
         
-        print(f"\n📝 COMPONENT DESCRIPTIONS:")
+        print("\n📝 COMPONENT DESCRIPTIONS:")
         for comp_name, comp_data in summary["components"].items():
             print(f"   • {comp_name}: {comp_data['description']}")
     

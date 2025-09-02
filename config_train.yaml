@@ -4,22 +4,22 @@ parameters:
   MODEL:
     value:
       RGB_ENCODER:
-        ENCODER: "facebook/dinov3-vits16-pretrain-lvd1689m"
+        ENCODER: "facebook/dinov3-vitb16-pretrain-lvd1689m"
         IMAGE_SIZE: 224
         RETURN_SELECTED_LAYERS: [3, 6, 9,12]
       POL_ENCODER:
-        EMBED_DIM: 384
+        EMBED_DIM: 768
         DEPTH: 4
         N_HEADS: 12
         PATCH_SIZE: 16
       CROSS_ATTN:
-        EMBED_DIM: 384
+        EMBED_DIM: 768
         N_HEADS: 12
         DROPOUT: 0.1
         BI_DIRECTIONAL: False
       DECODER:
-        FEATURE_DIM: 384  
-        REASSEMBLE_OUT_CHANNELS: [48, 96, 192, 384] 
+        FEATURE_DIM: 768  
+        REASSEMBLE_OUT_CHANNELS: [96, 192, 384, 768] 
         REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5] 
         READOUT_TYPE: "ignore"  
         USE_BN: False
@@ -68,15 +68,15 @@ parameters:
         FEW_IMAGES: False
 
   BATCH_SIZE:
-    value: 24
+    value: 16
   WORKERS:
-    value: 4
+    value: 8
   SHUFFLE:
     value: True
   PIN_MEMORY:
     value: true
   PREFETCH_FACTOR:
-    value: 2
+    value: 1
   
   ### OPTIMIZATION ###
   LEARNING_RATE:
@@ -84,11 +84,11 @@ parameters:
   WEIGHT_DECAY:
     value: 1.0e-7
   EPOCHS:
-    value: 100
+    value: 30
   GRADIENT_ACCUMULATION_STEPS:
     value: 4
   WARMUP_STEPS:
-    value: 0
+    value: 50
   GRADIENT_CLIPPING_MAX_NORM:
     value: 1.0
   LR_SCHEDULER: 
@@ -99,7 +99,7 @@ parameters:
       # COSINE:
       #   N_PERIODS: 1
       STEPWISE:
-        N_STEPS: 2
+        N_STEPS: 3
         GAMMA: 0.5
       # EXPONENTIAL:
       #   GAMMA: 0.5
@@ -137,7 +137,7 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "With Alpha Compositing strategies"
+    value: "DINOv3-base wit ìh old loss function"
 
   
 

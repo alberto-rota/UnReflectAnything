@@ -430,7 +430,10 @@ class RGBP_Dataset(Dataset):
         DoLP = torch.where(DoLP < self.dolp_min_value, torch.zeros_like(DoLP), DoLP)
 
         # Compute specular fraction
-        f_spec = torch.clamp(DoLP / max(self.rho_s, 1e-6), 0.0, 1.0)
+        f_spec = DoLP*S0
+        # Normalize to be max 1
+        f_spec = torch.clamp(f_spec / torch.max(f_spec), 0.0, 1.0)
+        # f_spec = torch.clamp(DoLP / max(self.rho_s, 1e-6), 0.0, 1.0)
 
         # Additional parameters (simplified)
         S3 = torch.zeros_like(S0)

@@ -79,7 +79,6 @@ class Engine:
         
         # Save hyperparameters to json
         initialize.save_hyperparameters_json(self.RUN_DIR, self.config)
-        self.logger = get_logger(__name__, log_to_file=True, log_dir=self.RUN_DIR)
         
         # Once the run name is set, we move all the log files to the run directory
         TEMPORARY_LOG_DIR = os.path.join(self.RUNS_DIR, "temporary")
@@ -88,6 +87,7 @@ class Engine:
                 shutil.move(os.path.join(TEMPORARY_LOG_DIR, log_file), os.path.join(self.RUN_DIR, log_file))
 
         # Initialize polarization-specific losses
+        self.logger = get_logger(__name__, log_to_file=True, relative_log_dir=self.RUN_DIR)
         self.recon_loss = SSIMLoss()
 
 

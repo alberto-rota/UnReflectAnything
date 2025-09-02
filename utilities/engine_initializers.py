@@ -396,7 +396,7 @@ def earlystopping(patience, models_dir, runname=None):
         runname=runname,
     )
 
-    return earlystopping
+    return {"earlystopping": earlystopping}
 
 
 def save_hyperparameters_json(run_dir, config):
@@ -412,3 +412,44 @@ def save_hyperparameters_json(run_dir, config):
     with open(hyperparams_path, "w") as f:
         all_hyperparams = {"training": config}
         json.dump(all_hyperparams, f, indent=4, skipkeys=True, default=str)
+
+def tracking_metrics():
+    """Initialize step counters and metrics tracking"""
+    # Metric trend tracking
+    epoch_loss_trend_training = []
+    epoch_loss_trend_validation = []
+
+    # Summary metrics
+    summary_train = []
+    summary_val = []
+    summary_test = []
+
+    # Create dataframes for metrics
+    metrics = {
+        "Training": pd.DataFrame(),
+        "Validation": pd.DataFrame(),
+        "Test": pd.DataFrame(),
+    }
+
+    # Track loaded data
+    loaded_paths = []
+    startedat = datetime.datetime.now()
+
+    return {
+        "step": {
+            "Training_batch": 0,
+            "Validation_batch": 0,
+            "Test_batch": 0,
+            "epoch": 0,
+            "idx": 0,
+            "summary": 0,
+        },
+        "epoch_loss_trend_training": epoch_loss_trend_training,
+        "epoch_loss_trend_validation": epoch_loss_trend_validation,
+        "summary_train": summary_train,
+        "summary_val": summary_val,
+        "summary_test": summary_test,
+        "metrics": metrics,
+        "loaded_paths": loaded_paths,
+        "startedat": startedat,
+    }
