@@ -1,9 +1,11 @@
+import os
+import warnings
+
+import dill
+import numpy as np
 import torch
 from torch_sgld import SGLD
-import os
-import numpy as np
-import dill
-import warnings
+
 from logger import get_logger
 
 logger = get_logger(__name__).set_context("OPTIMIZATION")

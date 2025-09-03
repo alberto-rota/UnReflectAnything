@@ -2,9 +2,10 @@
 Utility functions for the dataset module.
 """
 
-from typing import List, Optional, Tuple
-import torch
 import random
+from typing import List, Optional, Tuple
+
+import torch
 
 
 def split_videos(

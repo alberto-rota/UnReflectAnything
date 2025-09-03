@@ -1,8 +1,10 @@
 from typing import Any
+
 import numpy as np
-from rich import print as nativeprint
 import torch
 from PIL import Image
+from rich import print as nativeprint
+
 import wandb
 
 

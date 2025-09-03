@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-import os
-import json
-from PIL import Image
-import io
-import multiprocessing
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import tqdm
-import time
 import argparse
+import io
+import json
+import multiprocessing
+import os
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+import tqdm
+from PIL import Image
 
 # Try to import GPU accelerated libraries
 try:

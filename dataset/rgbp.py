@@ -27,15 +27,17 @@ Usage:
 """
 
 import os
-import cv2
-import torch
-import numpy as np
-from PIL import Image
-from typing import Dict, Tuple, Optional, List, Union
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from functools import lru_cache
+from typing import Dict, List, Optional, Tuple, Union
+
+import cv2
+import numpy as np
+import torch
 import torch.nn.functional as F
 import yaml
+from PIL import Image
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
+
 from logger import get_logger
 
 logger = get_logger(__name__).set_context("DATASET")

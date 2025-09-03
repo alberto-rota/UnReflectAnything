@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import transformers
-from utilities import *
+
 from networks.base import MONO3DModel
+from utilities import *
 
 size2embeddim = {"tiny": 256, "small": 384, "base": 768, "large": 1024}
 

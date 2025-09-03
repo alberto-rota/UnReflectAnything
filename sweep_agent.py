@@ -1,12 +1,12 @@
 #  MODULES AND DATASET LOADING
 
+from rich.traceback import install
+
 import main
+import wandb
 
 # FIxing the issue
 from utilities import *
-
-from rich.traceback import install
-import wandb
 
 install(show_locals=False)
 

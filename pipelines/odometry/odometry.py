@@ -1,12 +1,12 @@
 import numpy as np
-import torch
 import rerun as rr
 import rerun.blueprint as rrb
+import torch
+from scipy.spatial.transform import Rotation
 
 import pipelines.matching as matching
 import pipelines.odometry as odometry
-from utilities.visualization import log_to_rerun, log_rerun_line
-from scipy.spatial.transform import Rotation
+from utilities.visualization import log_rerun_line, log_to_rerun
 
 torch.autograd.set_detect_anomaly(True)
 

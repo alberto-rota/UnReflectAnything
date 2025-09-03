@@ -3,8 +3,10 @@ Augmentation functions for the dataset module.
 """
 
 from typing import List, Optional, Tuple, Union
-import torchvision.transforms as tvt
+
 import torch
+import torchvision.transforms as tvt
+
 from utilities.rotations import (
     euler2mat,
     mat2euler,

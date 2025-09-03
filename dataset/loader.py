@@ -2,12 +2,14 @@
 Dataset loading and configuration utilities.
 """
 
-from typing import Any, Dict, List
 import os
+from typing import Any, Dict, List
+
 import torch
 from torch.utils.data import DataLoader
+
 from logger import get_logger
-from utilities import get_hostname, detect_aval_cpus, coloredbar
+from utilities import coloredbar, detect_aval_cpus, get_hostname
 
 from .base import Mono3D_Dataset
 from .multi_dataset import MultiDataset

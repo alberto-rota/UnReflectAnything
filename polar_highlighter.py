@@ -1,6 +1,6 @@
 import time
-from functools import wraps
 from collections import defaultdict
+from functools import wraps
 
 import numpy as np
 import torch

@@ -1,8 +1,8 @@
+import argparse
+import json
+import math
 import os
 import shutil
-import json
-import argparse
-import math
 
 
 def create_dir_if_not_exists(directory):

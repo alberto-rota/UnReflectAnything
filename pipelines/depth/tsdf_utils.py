@@ -1,9 +1,10 @@
-import torch
+from typing import Optional, Tuple, Union
+
 import numpy as np
+import torch
 import torch.nn.functional as F
-from typing import Tuple, Optional, Union
-from sklearn.decomposition import PCA
 from skimage import measure
+from sklearn.decomposition import PCA
 
 
 def vox2world(

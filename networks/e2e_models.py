@@ -1,13 +1,14 @@
+import copy
+
 import torch
 import torch.nn as nn
 
-from utilities import *
-from networks.base import MONO3DModel
 import networks.backbones as backbones
 import networks.depth_decoding as depth_decoding
 import networks.odometry_decoding as odometry_decoding
 import projections as proj
-import copy
+from networks.base import MONO3DModel
+from utilities import *
 
 torch.autograd.set_detect_anomaly(True)
 

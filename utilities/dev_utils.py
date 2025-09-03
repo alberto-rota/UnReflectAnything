@@ -1,15 +1,17 @@
-import math
-from typing import Optional, Tuple, Union
-import numpy as np
-from PIL import Image
-import torch
-from torch import Tensor
-from sklearn.decomposition import PCA
 import inspect
-from .tensor_utils import *
-from google.cloud import storage
-import tempfile
+import math
 import os
+import tempfile
+from typing import Optional, Tuple, Union
+
+import numpy as np
+import torch
+from google.cloud import storage
+from PIL import Image
+from sklearn.decomposition import PCA
+from torch import Tensor
+
+from .tensor_utils import *
 
 
 def get_gcs_bucket_name() -> str:

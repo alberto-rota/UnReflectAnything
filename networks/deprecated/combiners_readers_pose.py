@@ -1,11 +1,10 @@
+import importlib
+
 import torch
 import torch.nn as nn
 
-
-from utilities import *
-
-import importlib
 import networks.layers_pose
+from utilities import *
 
 importlib.reload(networks.layers_pose)
 from networks.layers_pose import *

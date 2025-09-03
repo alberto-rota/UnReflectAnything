@@ -1,15 +1,14 @@
+import warnings
+
 import torch
 import torch.nn as nn
 
-from utilities import *
 import networks.depth_decoding as depth_decoding
-
-from pipelines.features.featureextractor import FeatureExtractor
 import pipelines.matching as matching
+from pipelines.features.featureextractor import FeatureExtractor
+from pipelines.matching import correspondence, epipolar, learning, metrics, refinement
 from pipelines.matching.helpers import *
-from pipelines.matching import learning, epipolar, refinement, correspondence, metrics
-
-import warnings
+from utilities import *
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -511,9 +510,9 @@ class MatchingPipeline:
             **kwargs: Additional arguments passed to visualization functions
         """
         from utilities.visualization import (
+            rgb,
             viewComparePixelMatches,
             viewEpipolarGeometry,
-            rgb,
         )
 
         # Ensure images have batch dimension removed for visualization

@@ -1,13 +1,14 @@
+import logging
+import warnings
+
 import torch
 
-from utilities import *
 import networks.depth_decoding as depth_decoding
-from .tsdf import TSDistanceFeatureColorVolume
+from utilities import *
 from utilities.dev_utils import embedding2color
 from utilities.visualization import log_rerun_camera
 
-import warnings
-import logging
+from .tsdf import TSDistanceFeatureColorVolume
 
 torch.autograd.set_detect_anomaly(True)
 

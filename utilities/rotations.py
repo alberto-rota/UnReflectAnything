@@ -1,6 +1,7 @@
 import numpy as np
-from scipy.spatial.transform import Rotation
 import torch
+from scipy.spatial.transform import Rotation
+
 from utilities.tensor_utils import TTensor
 
 

@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import transformers
-from utilities import *
+
 from networks.base import MONO3DModel
+from utilities import *
 
 
 class Backbone_Depth(MONO3DModel):

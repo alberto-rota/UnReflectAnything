@@ -1,7 +1,9 @@
+from typing import Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Union
+
 import geometry
 
 
@@ -997,9 +999,10 @@ class DepthWarp(nn.Module):
         return result
 
 
+from typing import Dict, Optional, Tuple, Union
+
 import torch
 import torch.nn as nn
-from typing import Tuple, Dict, Optional, Union
 
 
 class HighLightRenderer(nn.Module):

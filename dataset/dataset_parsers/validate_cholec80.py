@@ -1,8 +1,8 @@
-import os
 import argparse
 import math
-from collections import defaultdict
+import os
 import sys
+from collections import defaultdict
 
 
 def count_files_with_extension(directory, extension):

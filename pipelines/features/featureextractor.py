@@ -1,11 +1,11 @@
-import torch
-
-from utilities import *
-from networks.base import MONO3DModel
-import networks.backbones as backbones
 import copy
 
+import torch
+
+import networks.backbones as backbones
+from networks.base import MONO3DModel
 from pipelines.matching.helpers import *
+from utilities import *
 
 # Global registry for sharing feature extractors
 _SHARED_EXTRACTORS = {}

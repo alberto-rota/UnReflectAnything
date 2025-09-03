@@ -1,8 +1,9 @@
+from typing import Dict, List, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoModel, AutoImageProcessor
-from typing import List, Dict, Optional
+from transformers import AutoImageProcessor, AutoModel
 
 
 class DINOv3(nn.Module):

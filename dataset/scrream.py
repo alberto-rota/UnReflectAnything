@@ -1,13 +1,14 @@
 import os
-import cv2
-import torch
-import numpy as np
-from PIL import Image
-from typing import Dict, Tuple, Optional, List
-from torch.utils.data import Dataset, DataLoader
-from functools import lru_cache
 import warnings
+from functools import lru_cache
+from typing import Dict, List, Optional, Tuple
+
+import cv2
+import numpy as np
+import torch
 import torch.nn.functional as F
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
 
 try:
     import polanalyser as pa

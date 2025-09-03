@@ -2,10 +2,12 @@
 MultiDataset implementation for combining multiple datasets.
 """
 
-from typing import List, Optional, Tuple, Union
 import random
+from typing import List, Optional, Tuple, Union
+
 import torch
 from torch.utils.data import ConcatDataset
+
 from logger import get_logger
 
 from .base import Mono3D_Dataset

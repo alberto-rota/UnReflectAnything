@@ -1,7 +1,8 @@
 from typing import Union
+
 import torch
-from PIL import Image
 import torchvision.transforms.functional as TF
+from PIL import Image
 from torch.nn import functional as F
 
 

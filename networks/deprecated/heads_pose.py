@@ -1,12 +1,11 @@
 # %%
+import importlib
+
 import torch
 import torch.nn as nn
 
-
-from utilities import *
-
-import importlib
 import networks.combiners_readers_pose
+from utilities import *
 
 importlib.reload(networks.combiners_readers_pose)
 from networks.combiners_readers_pose import *

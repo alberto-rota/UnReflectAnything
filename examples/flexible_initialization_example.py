@@ -4,10 +4,11 @@ Shows different ways to initialize the model with instances or configurations.
 """
 
 import torch
+
 from models import (
     DINOv3,
-    POLViTEncoder,
     DPTRGBDecoder,
+    POLViTEncoder,
     RGBPOLDecomposer,
     create_rgb_pol_decomposer,
     create_rgb_pol_decomposer_from_instances,

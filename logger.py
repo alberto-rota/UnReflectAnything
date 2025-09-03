@@ -3,9 +3,10 @@ import os
 import re
 from datetime import datetime
 from enum import Enum, auto
+
 from rich.console import Console
-from rich.theme import Theme
 from rich.logging import RichHandler
+from rich.theme import Theme
 
 
 def align(input_str, max_length, alignment):

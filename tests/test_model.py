@@ -3,16 +3,17 @@ Unit tests for RGBPOLDecomposer model with shape verification.
 Tests loading from YAML config and verifying intermediate tensor shapes.
 """
 
-import pytest
-import torch
 import sys
 from pathlib import Path
+
+import pytest
+import torch
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from models import RGBPOLDecomposer, DPTRGBDecoder
 from main import create_model_from_config, load_and_process_config
+from models import DPTRGBDecoder, RGBPOLDecomposer
 
 
 class TestRGBPOLDecomposer:

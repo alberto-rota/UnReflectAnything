@@ -1,19 +1,19 @@
 # %% MODULES AND DATASET LOADING
-import torch
 import cv2 as cv
 import matplotlib
+import torch
 
 matplotlib.rcParams.update(matplotlib.rcParamsDefault)
 
-import main
-
-
-from utilities import *
-import wandb
 import os
 import sys
-import yaml
 from datetime import datetime
+
+import yaml
+
+import main
+import wandb
+from utilities import *
 
 
 def trainsweep(config=None):

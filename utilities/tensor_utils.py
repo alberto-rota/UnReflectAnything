@@ -1,8 +1,9 @@
 from typing import Dict, List
+
 import numpy as np
-from rich import print as nativeprint
 import torch
 import torch.nn.functional as F
+from rich import print as nativeprint
 
 
 def closest_multiple(value: float, factor: float, mode: str = "closest") -> int:

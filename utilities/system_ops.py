@@ -1,3 +1,5 @@
+import gc
+import inspect
 import io
 import json
 import os
@@ -5,14 +7,13 @@ import re
 import socket
 import subprocess
 from contextlib import redirect_stdout
+
 import paramiko
-from rich import print
-import gc
 import torch
-import inspect
+from rich import print
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 
 
 def get_hostname() -> str:

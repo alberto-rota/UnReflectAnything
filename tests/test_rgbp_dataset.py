@@ -14,28 +14,28 @@ This test suite covers:
 Author: Generated for UnReflectAnything project
 """
 
-import pytest
-import tempfile
-import shutil
 import os
-import yaml
-import torch
-import numpy as np
-from PIL import Image
-from unittest.mock import patch
+import shutil
+import tempfile
 import warnings
+from unittest.mock import patch
+
+import numpy as np
+import pytest
+import torch
+import yaml
+from PIL import Image
+from torch.utils.data import ConcatDataset
 
 # Import the classes we want to test
 from dataset.rgbp import (
-    RGBP_Dataset,
-    SCRREAM_Dataset,
     HOUSECAT6D_Dataset,
     POLARGB_Dataset,
+    RGBP_Dataset,
+    SCRREAM_Dataset,
     create_datasets_from_config,
     load_config_and_create_datasets,
 )
-from torch.utils.data import ConcatDataset
-
 
 # ===============================================
 # FIXTURES

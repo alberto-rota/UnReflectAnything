@@ -1,12 +1,12 @@
+from typing import Any
+
 import torch
 import torch.nn as nn
-from typing import Any
-from utilities import *
-from utilities import *
 from rich import print
-
-from rich.table import Table
 from rich.console import Console
+from rich.table import Table
+
+from utilities import *
 
 
 class MONO3DModel(nn.Module):

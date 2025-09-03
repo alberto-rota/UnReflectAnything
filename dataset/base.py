@@ -2,29 +2,27 @@
 Base dataset implementation for monocular 3D camera pose estimation.
 """
 
+import json
 import os
 import random
-import json
+from io import BytesIO
 from typing import Any, Dict, List, Optional, Union
+
 import numpy as np
 import torch
 import torchvision
 import torchvision.transforms as tvt
+from google.cloud import storage
+from natsort import natsorted
+from PIL import Image
 from torch.utils.data import Dataset
 from tqdm import tqdm
-from PIL import Image
-from natsort import natsorted
-from io import BytesIO
-from google.cloud import storage
 
-import geometry
 import dataset.augmentation as aug
-from utilities import closest_multiple
-from utilities import generate_random_pose_tensor
-from utilities import mat2quat
+import geometry
 from dataset.utils import adapt_intrinsics_two_step
-
 from logger import get_logger
+from utilities import closest_multiple, generate_random_pose_tensor, mat2quat
 
 logger = get_logger(__name__).set_context("DATASET")
 

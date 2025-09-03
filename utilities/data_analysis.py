@@ -1,7 +1,8 @@
 import math
+from math import ceil, floor, log
+
 import numpy as np
 from scipy.optimize import curve_fit
-from math import log, floor, ceil
 
 
 def asymptote(y_data):

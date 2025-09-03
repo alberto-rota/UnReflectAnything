@@ -1,7 +1,7 @@
+import cv2
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-import cv2
 
 
 class FundamentalEstimator8PA(nn.Module):

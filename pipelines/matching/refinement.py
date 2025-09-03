@@ -1,7 +1,8 @@
-import torch
-import numpy as np
-import cv2
 from concurrent.futures import ProcessPoolExecutor
+
+import cv2
+import numpy as np
+import torch
 
 
 def process_patch(patch_data):

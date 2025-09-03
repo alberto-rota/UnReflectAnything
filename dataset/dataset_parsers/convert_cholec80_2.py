@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 import os
+import shutil
 import subprocess
 import tempfile
-import shutil
 from concurrent.futures import ProcessPoolExecutor
 
 # Load environment variables

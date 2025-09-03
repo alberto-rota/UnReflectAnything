@@ -1,7 +1,8 @@
 import os
-from flask import Flask, render_template_string, send_from_directory, request
-from flask_cors import CORS
 from pathlib import Path
+
+from flask import Flask, render_template_string, request, send_from_directory
+from flask_cors import CORS
 
 app = Flask(__name__)
 

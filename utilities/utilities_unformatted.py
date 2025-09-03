@@ -7,7 +7,7 @@ import re
 import socket
 import subprocess
 from contextlib import redirect_stdout
-from typing import Dict, List, Optional, Tuple, Union, Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Third-party imports
 import cv2 as cv
@@ -17,14 +17,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import paramiko
 import rich.traceback
-from PIL import Image, ImageDraw
-from rich import print as nativeprint
-from scipy.optimize import curve_fit
-from scipy.spatial.transform import Rotation
 
 # PyTorch imports
 import torch
 import torchvision
+from PIL import Image, ImageDraw
+from rich import print as nativeprint
+from scipy.optimize import curve_fit
+from scipy.spatial.transform import Rotation
 from torch import Tensor
 
 # Configuration
@@ -1320,7 +1320,7 @@ def align_trajectories(A, B):
     return A_aligned
 
 
-from math import log, floor, ceil
+from math import ceil, floor, log
 
 
 def embedding2chw(embedding: torch.Tensor, embed_dim_last=True) -> torch.Tensor:

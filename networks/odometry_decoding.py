@@ -1,7 +1,8 @@
+import math
+from typing import Dict, Optional, Tuple
+
 import torch
 import torch.nn as nn
-import math
-from typing import Dict, Tuple, Optional
 
 
 class FUND_Predictor(nn.Module):
@@ -376,10 +377,6 @@ class CorrespondingPointsRetriever(nn.Module):
         pts2: torch.Tensor = coords2_matched.permute(0, 2, 1)  # Shape: (B, N, 2)
 
         return pts1, pts2
-
-
-import torch
-import torch.nn as nn
 
 
 import torch

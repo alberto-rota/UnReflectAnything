@@ -1,7 +1,7 @@
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
 import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
 
 
 def visualize_trajectory(

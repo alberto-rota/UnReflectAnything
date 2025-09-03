@@ -1,14 +1,13 @@
 # %%
+import inspect
+
 import torch
 import torch.nn as nn
 import transformers
-
-
-from utilities import *
-import projections as proj
 from rich import print
-import inspect
 
+import projections as proj
+from utilities import *
 
 ########################################################################################################
 # TRANSFORMER-BASED MODELS

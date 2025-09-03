@@ -1,25 +1,24 @@
 # %%
+import importlib
+import math
+
 import torch
 import torch.nn as nn
 
-from utilities import *
-import math
-
-import importlib
 import networks.layers_pose
+from utilities import *
 
 importlib.reload(networks.layers_pose)
+import networks.backbones
 from networks.layers_pose import *
 
-import networks.backbones
-
 importlib.reload(networks.backbones)
-from networks.backbones import *
 import networks.combiners_readers_pose
+from networks.backbones import *
 
 importlib.reload(networks.combiners_readers_pose)
-from networks.combiners_readers_pose import *
 import networks.heads_pose
+from networks.combiners_readers_pose import *
 
 importlib.reload(networks.heads_pose)
 from networks.heads_pose import *

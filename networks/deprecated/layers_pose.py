@@ -1,9 +1,6 @@
 import torch.nn as nn
 
-
 from utilities import *
-
-
 
 
 class Reassemble(nn.Module):

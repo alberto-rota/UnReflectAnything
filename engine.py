@@ -1,17 +1,19 @@
+import gc
+import os
+import shutil
+from contextlib import contextmanager, nullcontext
+from typing import Optional, Union
+
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
-import os
-import pandas as pd
-import numpy as np
-import wandb
-from contextlib import contextmanager, nullcontext
-import gc
-from typing import Union, Optional
-from losses import SSIMLoss, specular_loss
-from logger import get_logger
-import shutil
+
 import optimization
 import utilities.engine_initializers as initialize
+import wandb
+from logger import get_logger
+from losses import SSIMLoss, specular_loss
 
 
 class Engine:
@@ -714,9 +716,10 @@ class Engine:
             dict: Dictionary of wandb.Image objects for visualization
         """
         try:
-            import wandb
-            from PIL import Image
             import torchvision.transforms as transforms
+            from PIL import Image
+
+            import wandb
 
             # Convert tensors to CPU and detach for visualization
             def to_cpu_image(tensor):
