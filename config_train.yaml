@@ -135,7 +135,7 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "DINOv3-base wit ìh old loss function"
+    value: "DINOv3-base with ìh old loss function"
   RESULTS_DIR:
     value: "/home/atuin/v120bb/v120bb18/UnReflectAnything/results"
 

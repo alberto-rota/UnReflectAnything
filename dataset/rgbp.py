@@ -250,6 +250,16 @@ class RGBP_Dataset(Dataset):
     ) -> Dict[str, torch.Tensor]:
         """
         Resize all polarization data tensors to target size.
+        
+        Args:
+            pol_data: Dictionary containing polarization tensors with shapes [C, H, W]
+                     Keys include 'I0', 'I45', 'I90', 'I135', 'S0', 'S1', 'S2', 'DoLP', etc.
+        
+        Returns:
+            Dictionary with same keys but tensors resized to target size [C, target_H, target_W]
+        """
+        """
+        Resize all polarization data tensors to target size.
 
         Args:
             pol_data: Dictionary containing polarization data tensors
@@ -266,6 +276,15 @@ class RGBP_Dataset(Dataset):
         return resized_data
 
     def _should_include_scene(self, scene_name: str) -> bool:
+        """
+        Check if a scene should be included based on include/exclude filters.
+        
+        Args:
+            scene_name: Name of the scene to check
+            
+        Returns:
+            True if scene should be included, False otherwise
+        """
         """
         Check if a scene should be included based on include/exclude filters.
 
@@ -304,6 +323,17 @@ class RGBP_Dataset(Dataset):
         return True
 
     def _find_scene_pairs(self) -> List[Tuple[str, str, str]]:
+        """
+        Find matching RGB, polarization, and intrinsics file triplets.
+        
+        Scans the root directory structure to find corresponding files:
+        - RGB images in rgb/ subdirectory
+        - Polarization data in pol/ subdirectory  
+        - Camera intrinsics in intrinsics/ subdirectory
+        
+        Returns:
+            List of tuples (rgb_path, pol_path, intrinsics_path) for valid scene pairs
+        """
         """Find valid RGB-polarization pairs based on polarization format"""
         scene_pairs = []
         for scene_name in os.listdir(self.root_dir):
@@ -371,6 +401,12 @@ class RGBP_Dataset(Dataset):
         return len(self.scene_pairs)
 
     def get_loaded_scenes(self) -> List[str]:
+        """
+        Get list of scene names that were loaded into the dataset.
+        
+        Returns:
+            List of scene names (without file extensions) that passed filtering
+        """
         """Get list of scene names that are actually loaded in the dataset."""
         loaded_scenes = set()
         for rgb_path, _, _ in self.scene_pairs:
@@ -380,10 +416,28 @@ class RGBP_Dataset(Dataset):
 
     @staticmethod
     def _to_luminance_torch(rgb: torch.Tensor) -> torch.Tensor:
+        """
+        Convert RGB tensor to luminance using standard weights.
+        
+        Args:
+            rgb: RGB tensor of shape [H, W, 3] in range [0, 1]
+            
+        Returns:
+            Luminance tensor of shape [H, W] in range [0, 1]
+        """
         """Convert RGB to luminance staying in torch. Input: [...,3] in [0,1]."""
         return 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
 
     def _load_intrinsics_impl(self, intrinsics_path: str) -> torch.Tensor:
+        """
+        Load camera intrinsics from file (implementation without caching).
+        
+        Args:
+            intrinsics_path: Path to intrinsics file (typically .txt or .npy)
+            
+        Returns:
+            Camera intrinsics matrix of shape [3, 3]
+        """
         """Implementation for loading intrinsics (cacheable)"""
         try:
             K = np.loadtxt(intrinsics_path).reshape(3, 3).astype(np.float32)
@@ -393,6 +447,15 @@ class RGBP_Dataset(Dataset):
             return torch.eye(3, dtype=torch.float32)
 
     def _load_intrinsics(self, intrinsics_path: str) -> torch.Tensor:
+        """
+        Load camera intrinsics with optional caching.
+        
+        Args:
+            intrinsics_path: Path to intrinsics file
+            
+        Returns:
+            Camera intrinsics matrix of shape [3, 3]
+        """
         """Load intrinsics with optional caching"""
         if self.use_cache:
             return self._load_intrinsics_cached(intrinsics_path)
@@ -402,7 +465,16 @@ class RGBP_Dataset(Dataset):
     def _simple_upsample(
         self, f_spec_half: torch.Tensor, target_size: Tuple[int, int]
     ) -> torch.Tensor:
-        """Simple bicubic upsampling - much faster than edge-aware"""
+        """
+        Simple bilinear upsampling - much faster than edge-aware methods.
+        
+        Args:
+            f_spec_half: Specular fraction tensor of shape [H, W] at half resolution
+            target_size: Target size as (H, W) for upsampling
+            
+        Returns:
+            Upsampled tensor of shape [target_H, target_W] clamped to [0, 1]
+        """
         # Use torch interpolation instead of OpenCV
         f_batch = f_spec_half.unsqueeze(0).unsqueeze(0)  # Add batch and channel dims
         f_up = torch.nn.functional.interpolate(
@@ -649,7 +721,19 @@ class RGBP_Dataset(Dataset):
         return pol_data
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        """Optimized data loading"""
+        """
+        Load and return a single dataset sample with optimized processing.
+        
+        Args:
+            idx: Index of the sample to load (0 <= idx < len(dataset))
+            
+        Returns:
+            Dictionary containing:
+            - Polarization data: 'I0', 'I45', 'I90', 'I135', 'S0', 'S1', 'S2', 'DoLP', 'AoP', 'f_spec'
+            - RGB data: 'rgb', 'rgb_diffuse', 'rgb_specular'
+            - Camera data: 'intrinsics' [3, 3]
+            All image tensors have shape [C, H, W] where H, W match target_size if specified
+        """
         rgb_path, pol_path, intrinsics_path = self.scene_pairs[idx]
 
         # Load data (potentially from cache)
@@ -672,38 +756,71 @@ class RGBP_Dataset(Dataset):
 # Dataset-specific classes inheriting from base RGBP_Dataset class
 class SCRREAM_Dataset(RGBP_Dataset):
     """
-    SCRREAM dataset specific class.
-    Inherits all functionality from the base SCRREAM class.
-    Add dataset-specific customizations here if needed.
+    SCRREAM dataset implementation for polarization-based reflection removal.
+    
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with SCRREAM-specific preprocessing,
+    data augmentation, or validation logic as needed.
+    
+    The SCRREAM dataset contains RGB images with corresponding polarization
+    data for training reflection removal models.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize SCRREAM dataset.
+        
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
         super().__init__(**kwargs)
         # Add any SCRREAM-specific initialization here
 
 
 class HOUSECAT6D_Dataset(RGBP_Dataset):
     """
-    HOUSECAT6D dataset specific class.
+    HOUSECAT6D dataset implementation for 6D pose estimation with polarization.
+    
     Inherits all functionality from the base RGBP_Dataset class.
-    Add dataset-specific customizations here if needed.
+    This class can be extended with HOUSECAT6D-specific preprocessing,
+    pose annotation loading, or 6D pose-specific data augmentation.
+    
+    The HOUSECAT6D dataset provides RGB and polarization data along with
+    6D object pose annotations for training pose estimation models.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize HOUSECAT6D dataset.
+        
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
         super().__init__(**kwargs)
         # Add any HOUSECAT6D-specific initialization here
 
 
 class POLARGB_Dataset(RGBP_Dataset):
     """
-    PolaRGB dataset specific class.
+    PolaRGB dataset implementation for polarization-guided RGB processing.
+    
     Inherits all functionality from the base RGBP_Dataset class.
-    Add dataset-specific customizations here if needed.
+    This class can be extended with PolaRGB-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+    
+    The PolaRGB dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize PolaRGB dataset.
+        
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
         super().__init__(**kwargs)
-        # Add any HOUSECAT6D-specific initialization here
+        # Add any PolaRGB-specific initialization here
 
 
 def create_datasets_from_config(
@@ -998,7 +1115,24 @@ def create_optimized_dataloader(
     few_images: bool = False,
     **dataset_kwargs,
 ) -> DataLoader:
-    """Create optimized dataloader with performance improvements"""
+    """
+    Create optimized DataLoader with performance improvements for RGBP dataset.
+    
+    Args:
+        root_dir: Root directory containing RGB, polarization, and intrinsics data
+        batch_size: Number of samples per batch. Default: 4
+        num_workers: Number of worker processes for data loading. Default: 4
+        shuffle: Whether to shuffle the dataset. Default: True
+        use_cache: Enable caching for better performance. Default: True
+        simplify_upsampling: Use simple bilinear instead of edge-aware upsampling. Default: True
+        target_size: Target image size as (H, W). Default: (874, 1132)
+        resize_mode: Resize mode ('crop', 'resize', 'pad'). Default: 'crop'
+        few_images: Limit dataset to 100 samples for testing. Default: False
+        **dataset_kwargs: Additional arguments passed to RGBP_Dataset
+        
+    Returns:
+        Configured DataLoader with optimized settings for GPU training
+    """
 
     dataset = RGBP_Dataset(
         root_dir,
@@ -1019,3 +1153,4 @@ def create_optimized_dataloader(
         persistent_workers=True if num_workers > 0 else False,  # Keep workers alive
         prefetch_factor=2 if num_workers > 0 else 2,  # Prefetch batches
     )
+

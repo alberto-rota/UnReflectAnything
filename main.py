@@ -4,6 +4,7 @@ import ast
 import os
 import socket
 import time
+from typing import Dict, Any, Optional, List
 
 import debugpy
 import torch
@@ -27,16 +28,27 @@ except ImportError:
     logger.warning("Some utilities not available", context="WARNING")
 
 
-def create_model_from_config(config, device):
+def create_model_from_config(config: DotMap, device: torch.device) -> 'RGBPOLDecomposer':
     """
     Create the RGBPOLDecomposer model from configuration.
+    
+    This function initializes a RGBPOLDecomposer model by extracting configuration
+    parameters for different components (RGB encoder, POL encoder, cross-attention,
+    and decoders) and creates the model with the specified architecture.
 
     Args:
-        config: Configuration dictionary containing model parameters
-        device: Device to place the model on
+        config (DotMap): Configuration dictionary containing model parameters including:
+            - MODEL: Model architecture configuration
+            - DATASETS: Dataset configurations for extracting target image size
+        device (torch.device): PyTorch device to place the model on (e.g., 'cuda' or 'cpu')
 
     Returns:
-        RGBPOLDecomposer: The initialized model
+        RGBPOLDecomposer: The initialized model ready for training or inference
+        
+    Note:
+        The model expects input tensors of shape [B×3×H×W] for RGB images and 
+        [B×3×H×W] for polarization images, where B is batch size, H and W are 
+        height and width respectively.
     """
     # Access model configuration from the nested structure
     model_config = config.get("MODEL", {})  # .get("value", {})
@@ -120,22 +132,39 @@ def create_model_from_config(config, device):
     return model
 
 
-def create_datasets_from_config(config, config_path):
+def create_datasets_from_config(config: DotMap, config_path: str) -> Dict[str, Any]:
     """
     Create training and validation datasets from configuration using the new system.
 
-    This function now uses the improved dataset creation system that:
+    This function uses the improved dataset creation system that:
     - Reads from YAML config files with DATASETS section
-    - Supports multiple datasets (SCRREAM, HOUSECAT6D, etc.)
-    - Creates dataset-specific classes
-    - Returns ConcatDatasets for multi-dataset training
+    - Supports multiple datasets (SCRREAM, HOUSECAT6D, POLARGB, etc.)
+    - Creates dataset-specific classes with proper data loading
+    - Returns ConcatDatasets for multi-dataset training scenarios
+    - Handles data preprocessing and augmentation pipelines
 
     Args:
-        config: Configuration dictionary (DotMap) containing dataset parameters
-        config_path: Path to the YAML config file for direct loading
+        config (DotMap): Configuration dictionary containing dataset parameters including:
+            - DATASETS: Dataset configurations for different data sources
+            - WORKERS: Number of data loading workers
+        config_path (str): Absolute path to the YAML config file for direct loading
 
     Returns:
-        dict: Dictionary containing datasets with keys expected by Engine
+        Dict[str, Any]: Dictionary containing datasets with keys:
+            - 'Training': Training dataset (torch.utils.data.Dataset)
+            - 'Validation': Validation dataset (torch.utils.data.Dataset) 
+            - 'Test': Test dataset (torch.utils.data.Dataset)
+            - 'workers': Number of workers for data loading (int)
+            
+    Raises:
+        Exception: If dataset creation fails due to missing config sections,
+                  invalid paths, or missing dataset classes
+                  
+    Note:
+        Datasets return samples as dictionaries with tensors of shape:
+        - 'rgb': [B×3×H×W] - RGB input images
+        - 'pol': [B×3×H×W] - Polarization input images  
+        - 'target': [B×3×H×W] - Target reflection-free images
     """
     try:
         # Use the new dataset creation system
@@ -162,19 +191,43 @@ def create_datasets_from_config(config, config_path):
 
 
 def load_and_process_config(
-    config_path, config=None, unknown_args=None, boot_mode=False
-):
+    config_path: str, 
+    config: Optional[Dict[str, Any]] = None, 
+    unknown_args: Optional[List[str]] = None, 
+    boot_mode: bool = False
+) -> DotMap:
     """
     Load and process configuration from file or direct input.
+    
+    This function handles configuration loading with support for:
+    - YAML file parsing with parameter extraction
+    - Command-line argument override processing
+    - Type-safe parameter conversion
+    - Boot mode for quick testing with minimal parameters
+    - Automatic dataset configuration updates
 
     Args:
-        config_path (str): Path to the YAML configuration file
-        config (dict, optional): Direct configuration dictionary (overrides file loading)
-        unknown_args (list, optional): List of unknown command-line arguments to process
-        boot_mode (bool): Whether to enable boot mode with minimal parameters
+        config_path (str): Absolute path to the YAML configuration file
+        config (Optional[Dict[str, Any]]): Direct configuration dictionary that 
+                                          overrides file loading if provided
+        unknown_args (Optional[List[str]]): List of unknown command-line arguments 
+                                           to process as parameter overrides
+        boot_mode (bool): Whether to enable boot mode with minimal parameters:
+                         - BATCH_SIZE=1, EPOCHS=1, NO_WANDB=True
+                         - FEW_IMAGES=True for all datasets
 
     Returns:
-        DotMap: Processed configuration object
+        DotMap: Processed configuration object with dot-notation access to parameters
+        
+    Raises:
+        FileNotFoundError: If config_path does not exist
+        yaml.YAMLError: If YAML file parsing fails
+        ValueError: If parameter type conversion fails
+        
+    Note:
+        Command-line arguments should follow the format --PARAMETER=value.
+        Boolean parameters accept: true/1/yes for True, false/0/no for False.
+        List parameters should be valid Python literals (e.g., "[1,2,3]").
     """
     if config is None:
         # Load the configuration file
@@ -206,14 +259,14 @@ def load_and_process_config(
                 orig_value = config_dict[key]
                 orig_type = type(orig_value)
                 try:
-                    if orig_type == bool:
+                    if orig_type is bool:
                         if value.lower() in ("true", "1", "yes"):
                             new_value = True
                         elif value.lower() in ("false", "0", "no"):
                             new_value = False
                         else:
                             raise ValueError(f"Cannot parse boolean value: {value}")
-                    elif orig_type == list:
+                    elif orig_type is list:
                         new_value = ast.literal_eval(value)
                     else:
                         new_value = orig_type(value)
@@ -241,12 +294,42 @@ def load_and_process_config(
     return config
 
 
-def run_pipeline(mode="train", config=None):
+def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -> None:
     """
     Common pipeline for train and test modes.
+    
+    This is the main entry point that orchestrates the entire machine learning pipeline:
+    - Environment setup and device detection
+    - Configuration loading and processing
+    - Model and dataset instantiation
+    - Training or testing execution via Engine
+    - Checkpoint management and evaluation
+    
+    The pipeline supports both training and testing modes with comprehensive
+    logging, debugging capabilities, and optional experiment tracking.
 
     Args:
-        mode (str): Operation mode ('train' or 'test')
+        mode (str): Operation mode, either 'train' or 'test'. Defaults to 'train'.
+                   - 'train': Runs full training loop with validation and final testing
+                   - 'test': Loads best checkpoint and runs evaluation only
+        config (Optional[Dict[str, Any]]): Optional configuration dictionary to use
+                                          instead of loading from file
+
+    Returns:
+        None
+        
+    Raises:
+        ValueError: If mode is not 'train' or 'test'
+        FileNotFoundError: If configuration file is not found
+        RuntimeError: If model creation or dataset loading fails
+        
+    Note:
+        This function handles:
+        - CUDA device detection and setup
+        - Multi-core CPU detection for data loading
+        - Debug server setup if enabled
+        - Experiment note management for reproducibility
+        - VM auto-shutdown for cloud environments
     """
     install(show_locals=False)
 
@@ -284,8 +367,8 @@ def run_pipeline(mode="train", config=None):
 
     # Show title screen if available
     try:
-        titlescreen()
-    except:
+        titlescreen()  # type: ignore # May be imported from utilities
+    except Exception:
         logger.info("=" * 50, context="INFO")
         logger.info("UnReflectAnything - Reflection Removal Training", context="INFO")
         logger.info("=" * 50, context="INFO")
@@ -306,7 +389,6 @@ def run_pipeline(mode="train", config=None):
 
     logger.info(f"CUDA available: {torch.cuda.is_available()}")
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ACCELERATED = torch.cuda.is_available()
 
     # Load and process configuration
     CONFIG_PATH = args.config
@@ -317,7 +399,23 @@ def run_pipeline(mode="train", config=None):
         boot_mode=args.boot,
     )
 
-    def get_unique_note():
+    def get_unique_note() -> str:
+        """
+        Get a unique experiment note from user input.
+        
+        This function manages experiment note collection to ensure reproducibility
+        and avoid duplicate experiment descriptions. It maintains a history of
+        past notes and prompts the user until a unique description is provided.
+
+        Returns:
+            str: A unique experiment note describing the current run
+            
+        Note:
+            - Notes are stored in 'assets/notes_past.txt' for history tracking
+            - Empty input is rejected and user is re-prompted
+            - Single space (' ') is accepted as a valid note
+            - Duplicate notes are rejected with "Already in Use" message
+        """
         notes_past_file = os.path.join("assets", "notes_past.txt")
         existing_notes = set()
         if os.path.exists(notes_past_file):

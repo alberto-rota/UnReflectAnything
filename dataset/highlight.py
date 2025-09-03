@@ -150,11 +150,14 @@ class HighlightDataset(Mono3D_Dataset):
         self, base_dataset_class: type, kwargs: Dict[str, Any]
     ) -> None:
         """
-        Create dataset from a class and parameters.
-
+        Create a new dataset instance from a dataset class.
+        
+        This method instantiates the base dataset class with the provided parameters
+        and copies relevant attributes to enable highlight detection functionality.
+        
         Args:
-            base_dataset_class: The dataset class to instantiate
-            kwargs: Parameters for the dataset class
+            base_dataset_class: Dataset class to instantiate (e.g., SCARED, CHOLEC80, GRASP)
+            kwargs: Keyword arguments to pass to the dataset class constructor
         """
         self.base_dataset_class = base_dataset_class
         self.base_params = kwargs.copy()
@@ -180,6 +183,30 @@ class HighlightDataset(Mono3D_Dataset):
         return_rect: bool = False,
         **kwargs,
     ) -> "HighlightDataset":
+        """
+        Create a HighlightDataset by wrapping a specific dataset class.
+        
+        This is a convenient factory method for creating highlight datasets
+        from dataset classes like SCARED, CHOLEC80, or GRASP.
+        
+        Args:
+            base_dataset_class: Dataset class to wrap (e.g., SCARED, CHOLEC80, GRASP)
+            brightness_threshold: Threshold for highlight detection (0.0-1.0). Default: 0.93
+            return_mask: Whether to return highlight masks in output. Default: False
+            rect_size: Target rectangle size as (height, width) for finding regions
+                      with least highlights. Default: None
+            return_rect: Whether to return cropped rectangles and their masks. Default: False
+            **kwargs: Additional arguments passed to the dataset class constructor
+            
+        Returns:
+            HighlightDataset instance wrapping the specified dataset class
+            
+        Example:
+            >>> highlight_scared = HighlightDataset.from_dataset_class(
+            ...     SCARED, brightness_threshold=0.9, return_mask=True,
+            ...     root='/path/to/scared', frameskip=2
+            ... )
+        """
         """
         Factory method to create a HighlightDataset from a base dataset class.
 
@@ -529,7 +556,14 @@ class HighlightDataset(Mono3D_Dataset):
 
 # Convenience factory functions for common dataset types
 class HighlightSCARED(HighlightDataset):
-    """SCARED dataset with highlight detection."""
+    """
+    SCARED dataset with highlight detection capabilities.
+    
+    Wraps the SCARED (Stereo Correspondence and Reconstruction of Endoscopic Data)
+    dataset with automatic highlight detection for surgical scene analysis.
+    Highlights often correspond to specular reflections from surgical instruments
+    and tissue surfaces under surgical lighting.
+    """
 
     def __init__(
         self,
@@ -539,6 +573,16 @@ class HighlightSCARED(HighlightDataset):
         return_rect: bool = False,
         **kwargs,
     ) -> None:
+        """
+        Initialize SCARED dataset with highlight detection.
+        
+        Args:
+            brightness_threshold: Threshold for highlight detection (0.0-1.0). Default: 0.93
+            return_mask: Whether to return highlight masks. Default: False
+            rect_size: Target rectangle size (height, width) for highlight-free regions. Default: None
+            return_rect: Whether to return cropped rectangles. Default: False
+            **kwargs: Additional arguments passed to SCARED dataset constructor
+        """
         from . import SCARED  # Import here to avoid circular imports
 
         params = {
@@ -564,7 +608,13 @@ class HighlightSCARED(HighlightDataset):
 
 
 class HighlightCHOLEC80(HighlightDataset):
-    """CHOLEC80 dataset with highlight detection."""
+    """
+    CHOLEC80 dataset with highlight detection capabilities.
+    
+    Wraps the CHOLEC80 (Cholecystectomy) dataset with automatic highlight detection
+    for laparoscopic surgery analysis. Highlights typically occur on surgical
+    instruments, gallbladder surface, and other reflective anatomical structures.
+    """
 
     def __init__(
         self,
@@ -574,6 +624,16 @@ class HighlightCHOLEC80(HighlightDataset):
         return_rect: bool = False,
         **kwargs,
     ) -> None:
+        """
+        Initialize CHOLEC80 dataset with highlight detection.
+        
+        Args:
+            brightness_threshold: Threshold for highlight detection (0.0-1.0). Default: 0.93
+            return_mask: Whether to return highlight masks. Default: False
+            rect_size: Target rectangle size (height, width) for highlight-free regions. Default: None
+            return_rect: Whether to return cropped rectangles. Default: False
+            **kwargs: Additional arguments passed to CHOLEC80 dataset constructor
+        """
         from . import CHOLEC80  # Import here to avoid circular imports
 
         params = {
@@ -599,7 +659,13 @@ class HighlightCHOLEC80(HighlightDataset):
 
 
 class HighlightGRASP(HighlightDataset):
-    """GRASP dataset with highlight detection."""
+    """
+    GRASP dataset with highlight detection capabilities.
+    
+    Wraps the GRASP dataset with automatic highlight detection for robotic
+    manipulation and grasping analysis. Highlights often appear on robotic
+    end-effectors, grasped objects, and reflective surfaces in the workspace.
+    """
 
     def __init__(
         self,
@@ -609,6 +675,16 @@ class HighlightGRASP(HighlightDataset):
         return_rect: bool = False,
         **kwargs,
     ) -> None:
+        """
+        Initialize GRASP dataset with highlight detection.
+        
+        Args:
+            brightness_threshold: Threshold for highlight detection (0.0-1.0). Default: 0.93
+            return_mask: Whether to return highlight masks. Default: False
+            rect_size: Target rectangle size (height, width) for highlight-free regions. Default: None
+            return_rect: Whether to return cropped rectangles. Default: False
+            **kwargs: Additional arguments passed to GRASP dataset constructor
+        """
         from . import GRASP  # Import here to avoid circular imports
 
         params = {
