@@ -1,28 +1,28 @@
-
-
-from argparse import Action
 import math
+import random
+from typing import Any, Optional, Tuple, Union
+
+import cv2
 import lovely_tensors as lt
 import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image, ImageDraw
-import torch
-import torchvision
-from .dev_utils import panelize, embedding2color
-import random
 import rerun as rr
-from utilities.rotations import euler2mat, mat2axang, axang2mat, euler2axang
+import torch
+from PIL import Image, ImageDraw
 from rerun import RotationAxisAngle
-import geometry
-import cv2
-from utilities import *
 from scipy.spatial.transform import Rotation
 from sklearn.decomposition import PCA
-from typing import Union, Any, Optional, Tuple
+
+import geometry
+from utilities import *
+from utilities.rotations import euler2axang, mat2axang
+
+from .dev_utils import embedding2color
+
 
 def rgb(
-    t: torch.Tensor, 
-    as_tensor: Union[bool, str] = False, 
+    t: torch.Tensor,
+    as_tensor: Union[bool, str] = False,
     pca: Optional[PCA] = None,
     blackout: Optional[bool] = False,
     resize: Optional[Tuple[int, int]] = None,
@@ -30,8 +30,10 @@ def rgb(
     colormap: Optional[str] = "magma",
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
-    border: Optional[Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int]] = None,
-    **kwargs: Any
+    border: Optional[
+        Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int]
+    ] = None,
+    **kwargs: Any,
 ) -> Union[None, torch.Tensor, Image.Image]:
     """
     Display tensor as RGB image using lovely_tensors with robust input handling.
@@ -42,7 +44,7 @@ def rgb(
             - HxWx1 or HxWxC (grayscale or RGB)
             - 1xHxW or CxHxW (grayscale or RGB)
             - 1x1xHxW, 1xCxHxW, 1xHxWx1, 1xHxWxC (batched)
-        as_tensor (Union[bool, str]): 
+        as_tensor (Union[bool, str]):
             - False: Display image (default)
             - True: Return torch.Tensor
             - "pil": Return PIL Image
@@ -52,7 +54,7 @@ def rgb(
         colormap (Optional[str]): Colormap name for single-channel images (e.g., "plasma", "viridis", "jet"). Defaults to None.
         vmin (Optional[float]): Minimum value for colormap normalization. Defaults to tensor min.
         vmax (Optional[float]): Maximum value for colormap normalization. Defaults to tensor max.
-        border (Optional[Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int]]): 
+        border (Optional[Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int]]):
             Border specification as (color, thickness). Color can be:
             - RGB list/tuple: [r, g, b] or (r, g, b) with values in [0, 1]
             - torch.Tensor: RGB tensor with values in [0, 1]
@@ -60,25 +62,26 @@ def rgb(
             - str: Hex color code (e.g., "#FF0000")
             Thickness is the border width in pixels. Defaults to None.
         **kwargs (Any): Additional keyword arguments passed to lt.rgb().
-    
+
     Returns:
         Union[None, torch.Tensor, Image.Image]: Based on as_tensor parameter
     """
+
     # Normalize input tensor to standard format: CxHxW
     def normalize_tensor_shape(tensor):
         """Convert tensor to CxHxW format, handling various input shapes."""
         shape = tensor.shape
         ndim = len(shape)
-        
+
         if ndim == 2:  # HxW -> 1xHxW
             return tensor.unsqueeze(0)  # Shape: (1, H, W)
-        
+
         elif ndim == 3:  # CxHxW or HxWxC
             if shape[0] <= 4:  # Likely CxHxW
                 return tensor  # Shape: (C, H, W)
             else:  # Likely HxWxC
                 return tensor.permute(2, 0, 1)  # Shape: (C, H, W)
-        
+
         elif ndim == 4:  # BxCxHxW or BxHxWxC
             if shape[0] == 1:  # Single batch
                 if shape[1] <= 4:  # BxCxHxW
@@ -87,29 +90,33 @@ def rgb(
                     return tensor.squeeze(0).permute(2, 0, 1)  # Shape: (C, H, W)
             else:
                 raise ValueError(f"Batch size must be 1, got {shape[0]}")
-        
+
         else:
             raise ValueError(f"Unsupported tensor shape: {shape}")
-    
+
     # Convert tensor to standard format
     t_original = t.clone()
     t = normalize_tensor_shape(t)
-    
+
     # Handle high-dimensional tensors with PCA
     if t.shape[0] > 3:
         if pca is None:
             # Compute new PCA
-            t, pca = embedding2color(t.permute(1,2,0).unsqueeze(0), pca=None)  # Add batch dimension
+            t, pca = embedding2color(
+                t.permute(1, 2, 0).unsqueeze(0), pca=None
+            )  # Add batch dimension
             t = t.squeeze(0)  # Remove batch dimension
             if blackout:
                 t = blackout_pca(t)
         else:
             # Use provided PCA
-            t = embedding2color(t.permute(1,2,0).unsqueeze(0), pca=pca)  # Add batch dimension
+            t = embedding2color(
+                t.permute(1, 2, 0).unsqueeze(0), pca=pca
+            )  # Add batch dimension
             t = t.squeeze(0)  # Remove batch dimension
             if blackout:
                 t = blackout_pca(t)
-    
+
     # Handle single-channel images with colormap
     if t.shape[0] == 1 and colormap is not None:
         # Get vmin and vmax values
@@ -117,29 +124,32 @@ def rgb(
             vmin = t.min().item()
         if vmax is None:
             vmax = t.max().item()
-        
+
         # Clamp values to vmin/vmax range
         t = torch.clamp(t, vmin, vmax)
-        
+
         # Normalize to [0, 1] for colormap
         t_normalized = (t - vmin) / (vmax - vmin + 1e-8)
-        
+
         # Apply colormap using matplotlib
         # t_normalized shape: (1, H, W)
         # Convert to numpy, apply colormap, convert back to torch
         t_np = t_normalized.squeeze(0).cpu().numpy()  # Shape: (H, W)
         if isinstance(colormap, str):
             import matplotlib.pyplot as plt
+
             cmap = plt.get_cmap(colormap)
         else:
             cmap = colormap
-        t_colored = torch.from_numpy(cmap(t_np)[..., :3]).permute(2, 0, 1)  # Shape: (3, H, W)
+        t_colored = torch.from_numpy(cmap(t_np)[..., :3]).permute(
+            2, 0, 1
+        )  # Shape: (3, H, W)
         t = t_colored.to(t.device)
-    
+
     # Handle grayscale to RGB conversion (if no colormap was applied)
     elif t.shape[0] == 1:
         t = t.repeat(3, 1, 1)  # Shape: (3, H, W)
-    
+
     # Apply resize if requested
     if resize is not None:
         height, width = resize
@@ -152,30 +162,32 @@ def rgb(
             mode = "bicubic"
         else:
             mode = "bilinear"
-        
+
         # Resize tensor: (C, H, W) -> (C, new_H, new_W)
         t = torch.nn.functional.interpolate(
             t.unsqueeze(0),  # Add batch dimension for interpolate
             size=(height, width),
             mode=mode,
-            align_corners=False if mode == "bilinear" else None
+            align_corners=False if mode == "bilinear" else None,
         ).squeeze(0)  # Remove batch dimension
-    
+
     # Normalize to [0, 1] range (only if not already normalized by colormap)
     if colormap is None or t.shape[0] != 1:
         t = (t - t.min()) / (t.max() - t.min() + 1e-8)
-    
+
     # Apply border if specified
     if border is not None:
         color, thickness = border
-        thickness = int(thickness)+1
+        thickness = int(thickness) + 1
         # Convert color to RGB tensor with values in [0, 1]
         if isinstance(color, str):
             # Handle hex color
-            if color.startswith('#'):
+            if color.startswith("#"):
                 color = color[1:]
-            rgb_int = tuple(int(color[i:i+2], 16) for i in (0, 2, 4))
-            color_tensor = torch.tensor([c/255.0 for c in rgb_int], device=t.device, dtype=t.dtype)
+            rgb_int = tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
+            color_tensor = torch.tensor(
+                [c / 255.0 for c in rgb_int], device=t.device, dtype=t.dtype
+            )
         elif isinstance(color, (list, tuple)):
             # Handle list/tuple
             color_tensor = torch.tensor(color, device=t.device, dtype=t.dtype)
@@ -187,35 +199,45 @@ def rgb(
             color_tensor = color.to(device=t.device, dtype=t.dtype)
         else:
             raise ValueError(f"Unsupported color type: {type(color)}")
-        
+
         # Ensure color tensor is 1D with 3 values
         if color_tensor.dim() > 1:
             color_tensor = color_tensor.flatten()
         if color_tensor.numel() != 3:
-            raise ValueError(f"Color must have exactly 3 RGB values, got {color_tensor.numel()}")
-        
+            raise ValueError(
+                f"Color must have exactly 3 RGB values, got {color_tensor.numel()}"
+            )
+
         # Ensure color values are in [0, 1] range
         color_tensor = torch.clamp(color_tensor, 0, 1)
-        
+
         # Create border by setting pixels at the edges
         # t shape: (C, H, W)
         C, H, W = t.shape
-        
+
         # Create a copy of the tensor to avoid modifying the original
         t_with_border = t.clone()
-        
+
         # Apply border using vectorized operations
         if thickness > 0:
             # Set top and bottom borders
-            t_with_border[:, :thickness, :] = color_tensor.view(3, 1, 1)  # Shape: (3, thickness, W)
-            t_with_border[:, -thickness+1:, :] = color_tensor.view(3, 1, 1)  # Shape: (3, thickness, W)
-            
+            t_with_border[:, :thickness, :] = color_tensor.view(
+                3, 1, 1
+            )  # Shape: (3, thickness, W)
+            t_with_border[:, -thickness + 1 :, :] = color_tensor.view(
+                3, 1, 1
+            )  # Shape: (3, thickness, W)
+
             # Set left and right borders
-            t_with_border[:, :, :thickness] = color_tensor.view(3, 1, 1)  # Shape: (3, H, thickness)
-            t_with_border[:, :, -thickness+1:] = color_tensor.view(3, 1, 1)  # Shape: (3, H, thickness)
-        
+            t_with_border[:, :, :thickness] = color_tensor.view(
+                3, 1, 1
+            )  # Shape: (3, H, thickness)
+            t_with_border[:, :, -thickness + 1 :] = color_tensor.view(
+                3, 1, 1
+            )  # Shape: (3, H, thickness)
+
         t = t_with_border
-    
+
     # Handle return types
     if as_tensor is True:
         return t
@@ -1096,9 +1118,8 @@ def viewEpipolarGeometry(
     return canvas
 
 
-import math
-import random
-from PIL import Image, ImageDraw
+
+from PIL import Image
 
 
 def viewTriplets(
@@ -1339,13 +1360,11 @@ def viewTriplets(
     return new_canvas
 
 
-
-
 from typing import Union
-import torch
+
 import numpy as np
-import math
-from PIL import Image, ImageDraw
+import torch
+from PIL import Image
 
 
 def viewCameraMotion(
@@ -1608,33 +1627,32 @@ def viewCameraMotion(
     return canvas
 
 
-import torch
 import numpy as np
-from PIL import Image, ImageDraw
-import matplotlib.pyplot as plt  # Only used for colormap
+import torch
+from PIL import Image
 
 
 def visualize_patch_matches_pil(
     spatches: torch.Tensor,
-    tpatches: torch.Tensor, 
+    tpatches: torch.Tensor,
     best_src_xy: torch.Tensor,
     best_tgt_xy: torch.Tensor,
     scores: torch.Tensor,
-    num_examples: int = 5
+    num_examples: int = 5,
 ) -> Image.Image:
     """
-    Visualizes matched pixels in source and target patches and returns a PIL image.
-S
-    Args:
-        spatches (torch.Tensor): Source patches of shape (N, 3, H, W).
-        tpatches (torch.Tensor): Target patches of shape (N, 3, H, W).
-        best_src_xy (torch.Tensor): Tensor of shape (N, 2) with matched (y, x) pixel coordinates in the source patch.
-        best_tgt_xy (torch.Tensor): Tensor of shape (N, 2) with matched (y, x) pixel coordinates in the target patch.
-        scores (torch.Tensor): Tensor of shape (N,) with scores for each match, used for coloring the dots.
-        num_examples (int, optional): Number of random examples to visualize. Defaults to 5.
+        Visualizes matched pixels in source and target patches and returns a PIL image.
+    S
+        Args:
+            spatches (torch.Tensor): Source patches of shape (N, 3, H, W).
+            tpatches (torch.Tensor): Target patches of shape (N, 3, H, W).
+            best_src_xy (torch.Tensor): Tensor of shape (N, 2) with matched (y, x) pixel coordinates in the source patch.
+            best_tgt_xy (torch.Tensor): Tensor of shape (N, 2) with matched (y, x) pixel coordinates in the target patch.
+            scores (torch.Tensor): Tensor of shape (N,) with scores for each match, used for coloring the dots.
+            num_examples (int, optional): Number of random examples to visualize. Defaults to 5.
 
-    Returns:
-        Image.Image: The composed PIL image with source patches on top, target patches below, and colored dots.
+        Returns:
+            Image.Image: The composed PIL image with source patches on top, target patches below, and colored dots.
     """
     import random
 
@@ -1644,7 +1662,9 @@ S
 
     # Normalize scores to [0, 1]
     scores: np.ndarray = scores.cpu().numpy()
-    scores_norm: np.ndarray = (scores - scores.min()) / (scores.max() - scores.min() + 1e-8)
+    scores_norm: np.ndarray = (scores - scores.min()) / (
+        scores.max() - scores.min() + 1e-8
+    )
 
     # Create a red-to-green colormap using matplotlib
     cmap = plt.get_cmap("RdYlGn")
@@ -1771,7 +1791,7 @@ def sampleinspect(sample: tuple):
     rgb(fstack)
 
     # Print transformation information
-    print(f"Transformation:")
+    print("Transformation:")
     tprint(Ts2t.cpu().numpy())
 
     # Interpret and print the directional information based on the transformation vector
@@ -2089,10 +2109,14 @@ def log_to_rerun(
 
 import numpy as np
 import torch
-import rerun as rr
 
 
-def log_rerun_line(source: Union[torch.Tensor, np.ndarray, list], target: Union[torch.Tensor, np.ndarray, list] = None, entity: str = "/line", **kwargs: Any) -> None:
+def log_rerun_line(
+    source: Union[torch.Tensor, np.ndarray, list],
+    target: Union[torch.Tensor, np.ndarray, list] = None,
+    entity: str = "/line",
+    **kwargs: Any,
+) -> None:
     """
     Draws a 3D line from the origin to a pose, or between two poses, using Rerun's LineStrips3D.
 
@@ -2156,13 +2180,18 @@ def log_rerun_line(source: Union[torch.Tensor, np.ndarray, list], target: Union[
     # Log the line strip to Rerun
     rr.log(entity, rr.LineStrips3D([line], **kwargs))
 
+
 def log_rerun_camera(
-    K: Union[torch.Tensor, np.ndarray],                # (3, 3) camera intrinsics matrix, torch.Tensor or np.ndarray
-    pose: Union[torch.Tensor, np.ndarray],             # (4, 4) camera-to-world pose, torch.Tensor or np.ndarray
-    height: int = 384,           # int, image height
-    width: int = 384,            # int, image width
-    entity: str = "/camera", # str, rerun entity path
-    **kwargs: Any
+    K: Union[
+        torch.Tensor, np.ndarray
+    ],  # (3, 3) camera intrinsics matrix, torch.Tensor or np.ndarray
+    pose: Union[
+        torch.Tensor, np.ndarray
+    ],  # (4, 4) camera-to-world pose, torch.Tensor or np.ndarray
+    height: int = 384,  # int, image height
+    width: int = 384,  # int, image width
+    entity: str = "/camera",  # str, rerun entity path
+    **kwargs: Any,
 ) -> None:
     """
     Logs a camera as a Rerun Pinhole object at a specific pose.
@@ -2201,12 +2230,14 @@ def log_rerun_camera(
     rr.log(
         entity,
         rr.Pinhole(
-            image_from_camera=K,                # (3, 3)
-            resolution=(width, height),         # (2,)
+            image_from_camera=K,  # (3, 3)
+            resolution=(width, height),  # (2,)
             camera_xyz=rr.components.ViewCoordinates.RDF,  # Default: X=Right, Y=Down, Z=Forward
-            **kwargs
-        )
+            **kwargs,
+        ),
     )
+
+
 def bundle_to_rerun(
     source_points,
     target_points,
@@ -2335,7 +2366,9 @@ def bundle_to_rerun(
     rr.log(
         "slam/point_cloud",
         rr.Points3D(
-            positions=points3d, colors=colors, radii=point_size  # Increased point size
+            positions=points3d,
+            colors=colors,
+            radii=point_size,  # Increased point size
         ),
     )
 
@@ -2594,8 +2627,7 @@ def bundle_to_rerun(
 
 
 def mark_img(
-    image: Union[torch.Tensor, np.ndarray, Image.Image],
-    marker: Optional[str] = None
+    image: Union[torch.Tensor, np.ndarray, Image.Image], marker: Optional[str] = None
 ) -> Union[torch.Tensor, np.ndarray, Image.Image]:
     """
     Add a marker to the top-left corner o an image.
@@ -2692,13 +2724,14 @@ def mark_img(
 
     return image
 
+
 def blackout_pca(tensor: torch.Tensor) -> torch.Tensor:
     """
     Replace most frequent color in tensor with black
-    
+
     Args:
         tensor: Tensor of shape [3, H, W] containing RGB values
-        
+
     Returns:
         Tensor of same shape with most frequent color replaced by black
     """
@@ -2717,5 +2750,5 @@ def blackout_pca(tensor: torch.Tensor) -> torch.Tensor:
     return torch.where(
         black_mask.unsqueeze(0).expand(3, -1, -1),  # Shape: [3, H, W]
         torch.zeros_like(tensor),
-        tensor
+        tensor,
     )

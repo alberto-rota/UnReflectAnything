@@ -1,6 +1,8 @@
+
 parameters:
 
   ### MODEL ARCHITECTURE                                                        
+  
   MODEL:
     value:
       RGB_ENCODER:
@@ -25,11 +27,12 @@ parameters:
         USE_BN: False
         OUTPUT_IMAGE_SIZE: [224,224]
         OUTPUT_CHANNELS: 4
-  ### DATA ###
+
+  ### DATA                                                                      
   DATASETS:
     value:
       SCRREAM:
-        ROOT_DIR: "/datasets/SCRREAM/"
+        ROOT_DIR: "/home/atuin/v120bb/v120bb18/UnReflectAnything/datasets/SCRREAM/"
         TRAIN_SCENES: []
         POLARIZATION_FORMAT: "single_file_clock"
         VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
@@ -42,7 +45,7 @@ parameters:
         FEW_IMAGES: False
         
       HOUSECAT6D:
-        ROOT_DIR: "/datasets/HouseCat6D/"
+        ROOT_DIR: "/home/atuin/v120bb/v120bb18/UnReflectAnything/datasets/HouseCat6D/"
         TRAIN_SCENES: []
         POLARIZATION_FORMAT: "single_file_clock"
         VAL_SCENES: "val"
@@ -55,7 +58,7 @@ parameters:
         FEW_IMAGES: False
 
       POLARGB:
-        ROOT_DIR: "/datasets/PolaRGB/"
+        ROOT_DIR: "/home/atuin/v120bb/v120bb18/UnReflectAnything/datasets/PolaRGB/"
         TRAIN_SCENES: "train"
         POLARIZATION_FORMAT: "separate_files"
         VAL_SCENES: "test"
@@ -78,7 +81,8 @@ parameters:
   PREFETCH_FACTOR:
     value: 1
   
-  ### OPTIMIZATION ###
+  ### OPTIMIZATION                                                                      
+
   LEARNING_RATE:
     value: 1.0e-4
   WEIGHT_DECAY:
@@ -110,18 +114,12 @@ parameters:
     value: "Adam"
   OPTIMIZER_REFINING_NAME:
     value: "Adam"
-
-  STEPWISESCHEDULER_NSTEPS:
-    value: 4
-  STEPWISESCHEDULER_GAMMA:
-    value: 0.5
-  
   EARLY_STOPPING_PATIENCE:
     value: 20
   SAVE_INTERVAL:
     value: 1000
   
-  ### LOGGING AND WANDB ###
+  ### LOGGING, RESULTS AND WANDB                                                                 
   LOG_INTERVAL:
     value: 1
   WANDB_LOG_INTERVAL:
@@ -138,7 +136,6 @@ parameters:
     value: "UnReflectAnything"
   NOTES:
     value: "DINOv3-base wit ìh old loss function"
-
-  
-
+  RESULTS_DIR:
+    value: "/home/atuin/v120bb/v120bb18/UnReflectAnything/results"
 
