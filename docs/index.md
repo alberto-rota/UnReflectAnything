@@ -21,15 +21,15 @@ cd unreflect-anything
    ```
 
 3. **Activate the virtual environment**:
-   ```
+   ```bash
    source .venv/bin/activate
    ```
 
 !!! note "Python Version"
-    Python 3.10.9 is the version used for testing and experiments.
+    Python 3.10.9 is the version used for testing and experiments. Other versions may be supported
 
 4. **Install dependencies**:
-   ```
+   ```bash
    uv pip install -r requirements.txt
    ```
 

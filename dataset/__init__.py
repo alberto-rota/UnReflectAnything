@@ -34,7 +34,6 @@ from .rgbp import (
     RGBP_Dataset,
     SCRREAM_Dataset,
     create_datasets_from_config,
-    create_optimized_dataloader,
     load_config_and_create_datasets,
 )
 from .specialized import CHOLEC80, GRASP, SCARED
@@ -62,7 +61,6 @@ __all__ = [
     # Dataset creation functions
     "initialize_from_config",
     "create_datasets_from_config",
-    "create_optimized_dataloader",
     "load_config_and_create_datasets",
     # Utility functions
     "adapt_intrinsics_two_step",

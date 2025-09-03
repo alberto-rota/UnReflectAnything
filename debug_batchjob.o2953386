@@ -67,3 +67,26 @@ Wed Sep  3 16:15:08 2025
 +-----------------------------------------------------------------------------------------+
 ### Finished TaskPrologue
 
+slurmstepd: error: *** JOB 2953386 ON a0227 CANCELLED AT 2025-09-03T18:21:00 ***
+=== JOB_STATISTICS ===
+=== current date     : Wed Sep  3 18:21:03 CEST 2025
+= Job-ID             : 2953386 on alex
+= Job-Name           : debug_batchjob
+= Job-Command        : /home/hpc/v120bb/v120bb18/UnReflectAnything/slurm/debug_batchjob.sbatch
+= Initial workdir    : /home/hpc/v120bb/v120bb18/UnReflectAnything
+= Queue/Partition    : a40
+= Slurm account      : v120bb with QOS=normal
+= Requested resources:  for 10:00:00
+= Elapsed runtime    : 02:13:33
+= Total RAM usage    : 1.3 GiB of assigned  GiB (%)
+= Node list          : a0227
+= Subm/Elig/Start/End: 2025-09-03T15:33:47 / 2025-09-03T15:33:47 / 2025-09-03T16:07:27 / 2025-09-03T18:21:00
+======================
+=== Quota infos ======
+    Path              Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/hpc           40.0G   104.9G   209.7G        N/A     174K     500K   1,000K        N/A    
+    /home/vault          0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+    atuin.rrze.uni-erlangen.de:/srv/home   484.7G     0.0K     0.0K        N/A     273K                          N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]

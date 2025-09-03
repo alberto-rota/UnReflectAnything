@@ -1,19 +1,20 @@
 site_name: UnReflectAnything Documentation
-
+repo_url: https://github.com/mertkiray/unreflect-anything
 theme:
   name: material
   palette:
     scheme: slate
+    primary: black
 
 
 nav:
   - Home: index.md
- 
+  - Config Files: config.md
   - Dataset:
     - Dataset Folder Structure: dataset.md
-    - The RGBP Dataset class: dataset/rgbp.md
-
-    - Training: training.md
+    - The Dataset class: rgbp.md
+    - Adding a new dataset: adding_a_new_dataset.md
+  - Running Experiments: training.md
     
 plugins:
   - search
