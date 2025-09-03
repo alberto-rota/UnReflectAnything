@@ -1,6 +1,4 @@
 import torch
-import torch.nn.functional as F
-import numpy as np
 
 
 def points_to_patches(points, embedding_map, patch_size=8, mask=None):

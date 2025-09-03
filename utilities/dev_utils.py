@@ -1,14 +1,10 @@
-
-
 import math
 from typing import Optional, Tuple, Union
 import numpy as np
 from PIL import Image
 import torch
 from torch import Tensor
-import torch
 from sklearn.decomposition import PCA
-import numpy as np
 import inspect
 from .tensor_utils import *
 from google.cloud import storage
@@ -19,13 +15,15 @@ import os
 def get_gcs_bucket_name() -> str:
     """
     Get the GCS bucket name from environment variables.
-    
+
     Returns:
         str: The bucket name from GCS_BUCKET_NAME environment variable
     """
     bucket_name = os.environ.get("GCS_BUCKET_NAME")
     if bucket_name is None:
-        raise ValueError("GCS_BUCKET_NAME environment variable is not set. Please set it in your .env file.")
+        raise ValueError(
+            "GCS_BUCKET_NAME environment variable is not set. Please set it in your .env file."
+        )
     return bucket_name
 
 
@@ -225,12 +223,12 @@ def embedding2color(
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, PCA]]:
     """
     Convert high-dimensional embedding map to RGB visualization using PCA.
-    
+
     Supports multiple input tensor shapes:
     - BxCxHxW (feature map): Standard feature maps
-    - BxCxHxWxL (feature volume): 3D feature volumes  
+    - BxCxHxWxL (feature volume): 3D feature volumes
     - BxSxC (transformer output): Sequence embeddings
-    
+
     Args:
         embedding_map (torch.Tensor): Embedding tensor with shapes:
             - (B, C, H, W): Feature map
@@ -249,31 +247,33 @@ def embedding2color(
     device = embedding_map.device
     original_shape = embedding_map.shape
     ndim = len(original_shape)
-    
+
     # Determine tensor format and extract dimensions
     if ndim == 4:  # BxCxHxW (feature map)
         B, C, H, W = original_shape
         # Reshape: B, C, H, W -> B, H, W, C -> (B*H*W), C
-        embeddings_reshaped = embedding_map.permute(0, 2, 3, 1)  # B, H, W, C  
+        embeddings_reshaped = embedding_map.permute(0, 2, 3, 1)  # B, H, W, C
         embeddings_2d = embeddings_reshaped.reshape(-1, C).cpu().numpy()
         output_shape = (B, 3, H, W)
-        
+
     elif ndim == 5:  # BxCxHxWxL (feature volume)
         B, C, H, W, L = original_shape
         # Reshape: B, C, H, W, L -> B, H, W, L, C -> (B*H*W*L), C
         embeddings_reshaped = embedding_map.permute(0, 2, 3, 4, 1)  # B, H, W, L, C
         embeddings_2d = embeddings_reshaped.reshape(-1, C).cpu().numpy()
         output_shape = (B, 3, H, W, L)
-        
+
     elif ndim == 3:  # BxSxC (transformer output)
         B, S, C = original_shape
         # Reshape: B, S, C -> (B*S), C
         embeddings_2d = embedding_map.reshape(-1, C).cpu().numpy()
         output_shape = (B, S, 3)
-        
+
     else:
-        raise ValueError(f"Unsupported tensor shape: {original_shape}. "
-                        f"Expected shapes: BxCxHxW, BxCxHxWxL, or BxSxC")
+        raise ValueError(
+            f"Unsupported tensor shape: {original_shape}. "
+            f"Expected shapes: BxCxHxW, BxCxHxWxL, or BxSxC"
+        )
 
     # Handle PCA computation or application
     if pca is None:
@@ -290,11 +290,11 @@ def embedding2color(
     if ndim == 4:  # BxCxHxW
         viz = embeddings_pca.reshape(B, H, W, 3)
         normalize_axes = (1, 2)  # H, W axes
-        
-    elif ndim == 5:  # BxCxHxWxL  
+
+    elif ndim == 5:  # BxCxHxWxL
         viz = embeddings_pca.reshape(B, H, W, L, 3)
         normalize_axes = (1, 2, 3)  # H, W, L axes
-        
+
     elif ndim == 3:  # BxSxC
         viz = embeddings_pca.reshape(B, S, 3)
         normalize_axes = (1,)  # S axis
@@ -304,14 +304,20 @@ def embedding2color(
         # Scale to [0, 1] using min-max normalization
         viz_min = viz.min(axis=normalize_axes, keepdims=True)
         viz_max = viz.max(axis=normalize_axes, keepdims=True)
-        viz = (viz - viz_min) / (viz_max - viz_min + 1e-8)  # Add epsilon to avoid division by zero
-        
+        viz = (viz - viz_min) / (
+            viz_max - viz_min + 1e-8
+        )  # Add epsilon to avoid division by zero
+
     elif normalize_method == "robust":
         # Robust scaling using percentiles
         for b in range(B):
-            p_low, p_high = np.percentile(viz[b], [1, 99], axis=normalize_axes[:-1] if len(normalize_axes) > 1 else 0)
+            p_low, p_high = np.percentile(
+                viz[b],
+                [1, 99],
+                axis=normalize_axes[:-1] if len(normalize_axes) > 1 else 0,
+            )
             viz[b] = np.clip((viz[b] - p_low) / (p_high - p_low + 1e-8), 0, 1)
-            
+
     elif normalize_method == "standard":
         # Standardize and then clip to [0, 1]
         mean = viz.mean(axis=normalize_axes, keepdims=True)
@@ -329,9 +335,9 @@ def embedding2color(
         viz_flat = viz.reshape(-1, 3)
         viz_flat = rgb_to_hsv(viz_flat.unsqueeze(0).unsqueeze(0)).squeeze(0).squeeze(0)
         viz = viz_flat.reshape(orig_viz_shape)
-        
+
     elif color_space == "LAB":
-        # Convert RGB to LAB - reshape to work with existing function  
+        # Convert RGB to LAB - reshape to work with existing function
         orig_viz_shape = viz.shape
         viz_flat = viz.reshape(-1, 3)
         viz_flat = rgb_to_lab(viz_flat.unsqueeze(0).unsqueeze(0)).squeeze(0).squeeze(0)
@@ -340,7 +346,7 @@ def embedding2color(
     # Permute to final output format based on input type
     if ndim == 4:  # BxCxHxW -> B, 3, H, W
         viz = viz.permute(0, 3, 1, 2)
-    elif ndim == 5:  # BxCxHxWxL -> B, 3, H, W, L  
+    elif ndim == 5:  # BxCxHxWxL -> B, 3, H, W, L
         viz = viz.permute(0, 4, 1, 2, 3)
     # ndim == 3 (BxSxC) stays as B, S, 3
 
@@ -444,7 +450,7 @@ def download_from_gcs(
     Returns:
         str: Path to the downloaded file, or None if download failed
     """
-    
+
     # Use environment variable if bucket_name is not provided
     if bucket_name is None:
         bucket_name = get_gcs_bucket_name()

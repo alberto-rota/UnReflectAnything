@@ -1,16 +1,8 @@
-
-
 import torch
 import torch.nn as nn
 
-import matplotlib.pyplot as plt
 
 from utilities import *
-import projections as proj
-from rich import print
-import inspect
-import copy
-import sys
 
 import importlib
 import networks.layers_pose

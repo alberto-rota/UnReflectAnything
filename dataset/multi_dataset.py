@@ -2,7 +2,7 @@
 MultiDataset implementation for combining multiple datasets.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 import random
 import torch
 from torch.utils.data import ConcatDataset
@@ -21,7 +21,9 @@ class MultiDataset(ConcatDataset):
     unified sampling, curriculum learning, and inspection capabilities.
     """
 
-    def __init__(self, set_of_datasets: List[Mono3D_Dataset], shuffle: bool = True) -> None:
+    def __init__(
+        self, set_of_datasets: List[Mono3D_Dataset], shuffle: bool = True
+    ) -> None:
         """
         Initialize the MultiDataset.
 

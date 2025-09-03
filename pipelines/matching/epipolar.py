@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import numpy as np
 import cv2
-import torch.nn.functional as F
-import geometry
 
 
 class FundamentalEstimator8PA(nn.Module):
@@ -158,7 +156,7 @@ class FundamentalEstimatorRANSAC(nn.Module):
                         ransacReprojThreshold=max_epipolar_distance,
                         confidence=0.99,
                     )
-                except Exception as e:
+                except Exception:
                     F = None
 
                 if F is None or F.shape != (3, 3):

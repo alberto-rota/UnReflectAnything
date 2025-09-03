@@ -14,18 +14,10 @@ import torch.utils.model_zoo as model_zoo
 # available in the LICENSE file.
 
 
-import numpy as np
-import torch
-import torch.nn as nn
 
 from collections import OrderedDict
 
-import numpy as np
 
-import torch
-import torch.nn as nn
-import torchvision.models as models
-import torch.utils.model_zoo as model_zoo
 
 import torch.nn.functional as F
 
@@ -206,7 +198,6 @@ class ResnetEncoder(nn.Module):
             self.num_ch_enc[1:] *= 4
 
     def forward(self, input_image):
-
         self.features = []
         # x = (input_image - 0.45) / 0.225
         x = input_image

@@ -6,113 +6,123 @@ from pathlib import Path
 app = Flask(__name__)
 
 # Enable CORS for all routes and origins
-CORS(app, resources={
-    r"/*": {
-        "origins": "*",
-        "methods": ["GET", "HEAD", "OPTIONS"],
-        "allow_headers": "*"
-    }
-})
+CORS(
+    app,
+    resources={
+        r"/*": {
+            "origins": "*",
+            "methods": ["GET", "HEAD", "OPTIONS"],
+            "allow_headers": "*",
+        }
+    },
+)
 
 # Configuration
 DEMOS_DIR = "/demos"
 MAIN_PORT = 60000
-HOSTNAME = os.getenv('RERUN_HOSTNAME', 'localhost')
+HOSTNAME = os.getenv("RERUN_HOSTNAME", "localhost")
+
 
 def discover_demo_files():
     """Discover all .rrd files and create URLs for them"""
     demos_path = Path(DEMOS_DIR)
-    
+
     print(f"Looking for .rrd files in: {DEMOS_DIR}")
     print(f"Directory exists: {demos_path.exists()}")
     print(f"Using hostname: {HOSTNAME}")
-    
+
     if demos_path.exists():
         print(f"Directory contents: {list(demos_path.iterdir())}")
-    
+
     rrd_files = list(demos_path.glob("*.rrd"))
-    
+
     print(f"Found {len(rrd_files)} demo files: {[f.name for f in rrd_files]}")
-    
+
     demo_urls = {}
     for rrd_file in rrd_files:
         demo_name = rrd_file.name
         file_size = rrd_file.stat().st_size if rrd_file.exists() else 0
-        
+
         # Determine protocol and port
-        if HOSTNAME in ['localhost', '127.0.0.1']:
-            protocol = 'http'
-            port_suffix = f':{MAIN_PORT}'
+        if HOSTNAME in ["localhost", "127.0.0.1"]:
+            protocol = "http"
+            port_suffix = f":{MAIN_PORT}"
         else:
             # Assume public hostname uses HTTPS (like Tailscale funnel)
-            protocol = 'https'
-            port_suffix = ''  # Most public services use standard ports
-        
+            protocol = "https"
+            port_suffix = ""  # Most public services use standard ports
+
         rrd_url = f"{protocol}://{HOSTNAME}{port_suffix}/rrd/{demo_name}"
-        
+
         # Check if there's a corresponding .rbl file
-        rbl_file = rrd_file.with_suffix('.rbl')
+        rbl_file = rrd_file.with_suffix(".rbl")
         has_blueprint = rbl_file.exists()
         rbl_url = None
         if has_blueprint:
             rbl_url = f"{protocol}://{HOSTNAME}{port_suffix}/rbl/{rbl_file.name}"
-        
+
         demo_urls[demo_name] = {
-            'rrd_url': rrd_url,
-            'rbl_url': rbl_url,
-            'file_path': str(rrd_file),
-            'file_size': file_size,
-            'file_type': 'rrd',
-            'has_blueprint': has_blueprint
+            "rrd_url": rrd_url,
+            "rbl_url": rbl_url,
+            "file_path": str(rrd_file),
+            "file_size": file_size,
+            "file_type": "rrd",
+            "has_blueprint": has_blueprint,
         }
-        print(f"Demo: {demo_name} -> {rrd_url} (size: {file_size} bytes, blueprint: {has_blueprint})")
-    
+        print(
+            f"Demo: {demo_name} -> {rrd_url} (size: {file_size} bytes, blueprint: {has_blueprint})"
+        )
+
     return demo_urls
+
 
 def discover_blueprint_files():
     """Discover all .rbl files and create URLs for them"""
     demos_path = Path(DEMOS_DIR)
-    
+
     print(f"Looking for .rbl files in: {DEMOS_DIR}")
-    
+
     rbl_files = list(demos_path.glob("*.rbl"))
-    
+
     print(f"Found {len(rbl_files)} blueprint files: {[f.name for f in rbl_files]}")
-    
+
     blueprint_urls = {}
     for rbl_file in rbl_files:
         blueprint_name = rbl_file.name
         file_size = rbl_file.stat().st_size if rbl_file.exists() else 0
-        
+
         # Determine protocol and port
-        if HOSTNAME in ['localhost', '127.0.0.1']:
-            protocol = 'http'
-            port_suffix = f':{MAIN_PORT}'
+        if HOSTNAME in ["localhost", "127.0.0.1"]:
+            protocol = "http"
+            port_suffix = f":{MAIN_PORT}"
         else:
             # Assume public hostname uses HTTPS (like Tailscale funnel)
-            protocol = 'https'
-            port_suffix = ''  # Most public services use standard ports
-        
+            protocol = "https"
+            port_suffix = ""  # Most public services use standard ports
+
         rbl_url = f"{protocol}://{HOSTNAME}{port_suffix}/rbl/{blueprint_name}"
-        
+
         # Check if there's a corresponding .rrd file
-        rrd_file = rbl_file.with_suffix('.rrd')
+        rrd_file = rbl_file.with_suffix(".rrd")
         has_recording = rrd_file.exists()
         rrd_url = None
         if has_recording:
             rrd_url = f"{protocol}://{HOSTNAME}{port_suffix}/rrd/{rrd_file.name}"
-        
+
         blueprint_urls[blueprint_name] = {
-            'rbl_url': rbl_url,
-            'rrd_url': rrd_url,
-            'file_path': str(rbl_file),
-            'file_size': file_size,
-            'file_type': 'rbl',
-            'has_recording': has_recording
+            "rbl_url": rbl_url,
+            "rrd_url": rrd_url,
+            "file_path": str(rbl_file),
+            "file_size": file_size,
+            "file_type": "rbl",
+            "has_recording": has_recording,
         }
-        print(f"Blueprint: {blueprint_name} -> {rbl_url} (size: {file_size} bytes, recording: {has_recording})")
-    
+        print(
+            f"Blueprint: {blueprint_name} -> {rbl_url} (size: {file_size} bytes, recording: {has_recording})"
+        )
+
     return blueprint_urls
+
 
 # HTML template with modern design
 EMBEDDED_VIEWERS_TEMPLATE = """
@@ -551,119 +561,136 @@ EMBEDDED_VIEWERS_TEMPLATE = """
 </html>
 """
 
-@app.route('/')
+
+@app.route("/")
 def embedded_viewers():
     """Serve the page with all embedded viewers"""
     demos = discover_demo_files()
     blueprints = discover_blueprint_files()
-    return render_template_string(EMBEDDED_VIEWERS_TEMPLATE, demos=demos, blueprints=blueprints, hostname=HOSTNAME)
+    return render_template_string(
+        EMBEDDED_VIEWERS_TEMPLATE, demos=demos, blueprints=blueprints, hostname=HOSTNAME
+    )
 
-@app.route('/rrd/<filename>')
+
+@app.route("/rrd/<filename>")
 def serve_rrd_file(filename):
     """Serve .rrd files directly with explicit CORS headers"""
     print(f"Serving RRD file: {filename}")
     print(f"Request from: {request.remote_addr}")
     print(f"User-Agent: {request.headers.get('User-Agent', 'Unknown')}")
     print(f"Origin: {request.headers.get('Origin', 'No origin')}")
-    
+
     file_path = Path(DEMOS_DIR) / filename
     print(f"File exists: {file_path.exists()}")
-    
+
     if file_path.exists():
         print(f"File size: {file_path.stat().st_size} bytes")
-    
+
     try:
-        response = send_from_directory(DEMOS_DIR, filename, as_attachment=False, 
-                                     mimetype='application/octet-stream')
-        
+        response = send_from_directory(
+            DEMOS_DIR,
+            filename,
+            as_attachment=False,
+            mimetype="application/octet-stream",
+        )
+
         # Explicitly set CORS headers (belt and suspenders approach)
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = '*'
-        response.headers['Access-Control-Expose-Headers'] = '*'
-        
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+
         print(f"Response headers: {dict(response.headers)}")
         return response
-        
+
     except FileNotFoundError:
         print(f"ERROR: File not found: {filename}")
         return f"RRD file '{filename}' not found", 404
 
-@app.route('/rrd/<filename>', methods=['OPTIONS'])
+
+@app.route("/rrd/<filename>", methods=["OPTIONS"])
 def handle_rrd_options(filename):
     """Handle preflight OPTIONS requests for RRD files"""
     print(f"OPTIONS request for: {filename}")
     print(f"Origin: {request.headers.get('Origin', 'No origin')}")
-    
+
     response = app.make_default_options_response()
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = '*'
-    response.headers['Access-Control-Max-Age'] = '86400'
-    
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Max-Age"] = "86400"
+
     return response
 
-@app.route('/rbl/<filename>')
+
+@app.route("/rbl/<filename>")
 def serve_rbl_file(filename):
     """Serve .rbl files directly with explicit CORS headers"""
     print(f"Serving RBL file: {filename}")
     print(f"Request from: {request.remote_addr}")
     print(f"User-Agent: {request.headers.get('User-Agent', 'Unknown')}")
     print(f"Origin: {request.headers.get('Origin', 'No origin')}")
-    
+
     file_path = Path(DEMOS_DIR) / filename
     print(f"File exists: {file_path.exists()}")
-    
+
     if file_path.exists():
         print(f"File size: {file_path.stat().st_size} bytes")
-    
+
     try:
-        response = send_from_directory(DEMOS_DIR, filename, as_attachment=False, 
-                                     mimetype='application/octet-stream')
-        
+        response = send_from_directory(
+            DEMOS_DIR,
+            filename,
+            as_attachment=False,
+            mimetype="application/octet-stream",
+        )
+
         # Explicitly set CORS headers (belt and suspenders approach)
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = '*'
-        response.headers['Access-Control-Expose-Headers'] = '*'
-        
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+
         print(f"Response headers: {dict(response.headers)}")
         return response
-        
+
     except FileNotFoundError:
         print(f"ERROR: File not found: {filename}")
         return f"RBL file '{filename}' not found", 404
 
-@app.route('/rbl/<filename>', methods=['OPTIONS'])
+
+@app.route("/rbl/<filename>", methods=["OPTIONS"])
 def handle_rbl_options(filename):
     """Handle preflight OPTIONS requests for RBL files"""
     print(f"OPTIONS request for: {filename}")
     print(f"Origin: {request.headers.get('Origin', 'No origin')}")
-    
+
     response = app.make_default_options_response()
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = '*'
-    response.headers['Access-Control-Max-Age'] = '86400'
-    
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Max-Age"] = "86400"
+
     return response
 
-@app.route('/health')
+
+@app.route("/health")
 def health_check():
     """Health check endpoint"""
     demos = discover_demo_files()
     blueprints = discover_blueprint_files()
     return {
-        "status": "ok", 
-        "demos": len(demos), 
+        "status": "ok",
+        "demos": len(demos),
         "blueprints": len(blueprints),
-        "hostname": HOSTNAME
+        "hostname": HOSTNAME,
     }
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     print(f"Starting demo server on port {MAIN_PORT}")
     print(f"Using hostname: {HOSTNAME}")
     print("CORS enabled for all origins")
     print("Supporting both .rrd (recording) and .rbl (blueprint) files")
-    
-    app.run(host='0.0.0.0', port=MAIN_PORT, debug=False)
+
+    app.run(host="0.0.0.0", port=MAIN_PORT, debug=False)

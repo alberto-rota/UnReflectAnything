@@ -1,4 +1,3 @@
-from turtle import update
 import numpy as np
 import torch
 import rerun as rr
@@ -6,11 +5,11 @@ import rerun.blueprint as rrb
 
 import pipelines.matching as matching
 import pipelines.odometry as odometry
-from utilities import visualization
 from utilities.visualization import log_to_rerun, log_rerun_line
 from scipy.spatial.transform import Rotation
 
 torch.autograd.set_detect_anomaly(True)
+
 
 class OdometryPipeline:
     def __init__(
@@ -64,7 +63,7 @@ class OdometryPipeline:
 
     def initialize(self):
         self.trajectory.initialize()
-        
+
     def process_dataset(self, dataset, batch_size=1, num_workers=1, compute_gt=False):
         """
         Process a dataset to extract camera trajectory.
@@ -156,7 +155,10 @@ class OdometryPipeline:
 
             ### PERSPECTIVE-N-POINT ALGORITHM - COMPUTE POSE FROM KEYFRAME
             # Localize the current frame with respect to the keyframe cloud
-            depthmap = 1/ source_depth * self.config.DEPTH_SCALE_FACTOR + self.config.DEPTH_BIAS_FACTOR
+            depthmap = (
+                1 / source_depth * self.config.DEPTH_SCALE_FACTOR
+                + self.config.DEPTH_BIAS_FACTOR
+            )
             relative_pose = self.trajectory.estimate_relative_pose_pnp(
                 source_pixels_matched,
                 target_pixels_matched,
@@ -384,23 +386,23 @@ class OdometryPipeline:
 
         # Print key metrics in a readable format
         print("\n===== KEY METRICS SUMMARY =====")
-        print(f"Absolute Trajectory Error (ATE):")
+        print("Absolute Trajectory Error (ATE):")
         print(f"  Mean: {self.metrics['ate']['mean']:.4f}")
         print(f"  RMSE: {self.metrics['ate']['rmse']:.4f}")
         print(f"  Max:  {self.metrics['ate']['max']:.4f}")
 
-        print(f"\nRelative Pose Error (RPE):")
+        print("\nRelative Pose Error (RPE):")
         print(f"  Mean: {self.metrics['rpe']['mean']:.4f}")
         print(f"  RMSE: {self.metrics['rpe']['rmse']:.4f}")
         print(f"  Max:  {self.metrics['rpe']['max']:.4f}")
 
-        print(f"\nDrift Metrics:")
+        print("\nDrift Metrics:")
         print(
             f"  Per Distance - Mean: {self.metrics['drift']['per_distance']['mean']:.4f}"
         )
         print(f"  Per Time - Mean: {self.metrics['drift']['per_time']['mean']:.4f}")
 
-        print(f"\nCumulative Errors:")
+        print("\nCumulative Errors:")
         print(f"  Translation: {self.metrics['cumulative']['translation']:.4f}")
         print(f"  Rotation: {self.metrics['cumulative']['rotation']:.4f}")
 
@@ -458,9 +460,7 @@ class OdometryPipeline:
             self.trajectory.keyframe.cuda(),
             source_depth.cuda(),
             K.cuda(),
-            torch.inverse(
-                self.trajectory.trajectory[self.trajectory.keyframe_idx]
-            )
+            torch.inverse(self.trajectory.trajectory[self.trajectory.keyframe_idx])
             @ self.trajectory.trajectory[frame_idx].unsqueeze(0).cuda(),
         )["warped"][0]
         # Log metrics for estimated trajectory
@@ -557,7 +557,7 @@ class OdometryPipeline:
             log_rerun_line(
                 source=self.trajectory.trajectory[frame_idx, :3, 3].cpu(),
                 target=prev_pose,
-                entity=f"/cloud/{frame_idx-1}_to_{frame_idx}",
+                entity=f"/cloud/{frame_idx - 1}_to_{frame_idx}",
                 colors=[1.0, 0.5, 0.0],  # Green-cyan
                 radii=0.2,
             )
@@ -565,7 +565,7 @@ class OdometryPipeline:
                 log_rerun_line(
                     source=self.gt_trajectory.trajectory[frame_idx, :3, 3].cpu(),
                     target=prev_pose_gt,
-                    entity=f"/cloud/gt_{frame_idx-1}_to_{frame_idx}",
+                    entity=f"/cloud/gt_{frame_idx - 1}_to_{frame_idx}",
                     colors=[0.0, 1, 0.0],  # Green
                     radii=0.5,
                 )
@@ -592,9 +592,7 @@ class OdometryPipeline:
         rr.log("/image/rgb", rr.Image(rgb_image[0].cpu().permute(1, 2, 0).numpy()))
         rr.log(
             "/image/warped",
-            rr.Image(
-                warped_keyframe.cpu().permute(1, 2, 0).numpy()
-            ),
+            rr.Image(warped_keyframe.cpu().permute(1, 2, 0).numpy()),
         )
 
         kfm = 2 if self.trajectory.keyframe_idx == frame_idx else 1

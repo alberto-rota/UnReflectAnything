@@ -1,5 +1,3 @@
-
-
 import numpy as np
 from scipy.spatial.transform import Rotation
 import torch
@@ -407,7 +405,10 @@ import geometry
 
 
 def compute_global_pose(
-    prev_pose: torch.Tensor, current_transformation: torch.Tensor, is_keyframe: bool, last_keyframe_pose: torch.Tensor
+    prev_pose: torch.Tensor,
+    current_transformation: torch.Tensor,
+    is_keyframe: bool,
+    last_keyframe_pose: torch.Tensor,
 ) -> tuple:
     """
     Compute the global pose based on the previous pose and current transformation.

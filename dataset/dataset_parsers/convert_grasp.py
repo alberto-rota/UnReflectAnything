@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 import os
 import json
-import shutil
-from pathlib import Path
-import subprocess
 from PIL import Image
 import io
 import multiprocessing
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import tqdm
 import time
 import argparse
@@ -421,7 +418,7 @@ def adapt_directory_structure(
     )
 
     # Report available acceleration methods
-    print(f"Image processing options:")
+    print("Image processing options:")
     print(f" - OpenCV available: {CV2_AVAILABLE}")
     print(f" - PyTorch available: {TORCH_AVAILABLE}")
     print(f" - CUDA available: {TORCH_CUDA_AVAILABLE if TORCH_AVAILABLE else False}")

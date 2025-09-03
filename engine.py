@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import os
-from rich import print
 import pandas as pd
 import numpy as np
 import wandb
@@ -13,6 +12,7 @@ from logger import get_logger
 import shutil
 import optimization
 import utilities.engine_initializers as initialize
+
 
 class Engine:
     def __init__(
@@ -41,7 +41,7 @@ class Engine:
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
         torch.autograd.set_detect_anomaly(False)  # Disable for performance
-        
+
         # Store configuration
         self.config = config
         self.config["NOTES"] = notes
@@ -61,7 +61,7 @@ class Engine:
 
         # Initialize the model
         self.model = model
-        
+
         # Initialize all components using engine_initializers
         init(initialize.dataloaders, dataset, config)
         init(initialize.dimensions, self.training_dl, config)
@@ -73,23 +73,31 @@ class Engine:
         init(initialize.wandb, config, self.model, notes, no_wandb)
         init(initialize.tracking_metrics)
         init(initialize.setup_run_directories, self.RUNS_DIR, self.wandb, False)
-        init(initialize.earlystopping, self.earlystopping_patience, self.MODELS_DIR, self.runname)
+        init(
+            initialize.earlystopping,
+            self.earlystopping_patience,
+            self.MODELS_DIR,
+            self.runname,
+        )
         self.config["name"] = self.runname
 
-        
         # Save hyperparameters to json
         initialize.save_hyperparameters_json(self.RUN_DIR, self.config)
-        
+
         # Once the run name is set, we move all the log files to the run directory
         TEMPORARY_LOG_DIR = os.path.join(self.RUNS_DIR, "temporary")
         for log_file in os.listdir(TEMPORARY_LOG_DIR):
             if log_file.endswith(".log"):
-                shutil.move(os.path.join(TEMPORARY_LOG_DIR, log_file), os.path.join(self.RUN_DIR, log_file))
+                shutil.move(
+                    os.path.join(TEMPORARY_LOG_DIR, log_file),
+                    os.path.join(self.RUN_DIR, log_file),
+                )
 
         # Initialize polarization-specific losses
-        self.logger = get_logger(__name__, log_to_file=True, relative_log_dir=self.RUN_DIR)
+        self.logger = get_logger(
+            __name__, log_to_file=True, relative_log_dir=self.RUN_DIR
+        )
         self.recon_loss = SSIMLoss()
-
 
     def trainloop(self):
         """
@@ -101,8 +109,8 @@ class Engine:
             self.train()  # Train the model for one epoch
             is_overfitting = self.validate()  # Train the model for one epoch
 
-            self.csv_log_metrics() # Log the metrics to csv
-            
+            self.csv_log_metrics()  # Log the metrics to csv
+
             # Save checkpoint every few epochs
             if (e + 1) % self.config.get("SAVE_INTERVAL", 10) == 0:
                 self._save_checkpoint(e)
@@ -119,7 +127,7 @@ class Engine:
         self.logger.info(
             f"Checkpoints  : {os.path.abspath(self.MODELS_DIR)}", context="SAVE"
         )
-        self.logger.info(f"Metrics      :", context="SAVE")
+        self.logger.info("Metrics      :", context="SAVE")
         self.logger.info(
             f"Training     : {os.path.abspath(os.path.join(self.RUN_DIR, 'training_metrics.csv'))}",
             context="SAVE",
@@ -147,7 +155,7 @@ class Engine:
     def validate(self):
         """Validation phase for one epoch"""
         result = self.run_epoch(phase="Validation")
-        
+
         # Early stopping logic
         if result is not None:
             self.step["epoch"] += 1  # Increasing epoch counter
@@ -158,7 +166,10 @@ class Engine:
                 self.step["epoch"] - 1,
             )
             if self.earlystopping.early_stop:
-                self.logger.info(">> [EARLYSTOPPING]: Patience Reached, Stopping Training", context="TRAINING")
+                self.logger.info(
+                    ">> [EARLYSTOPPING]: Patience Reached, Stopping Training",
+                    context="TRAINING",
+                )
                 return "EARLYSTOP"
             return "IMPROVED"
         return "CONTINUE"
@@ -178,13 +189,19 @@ class Engine:
         self.logger.info(self.metrics["Test"].describe(), context="TEST")
         self.metrics["Test"].to_csv(os.path.join(self.RUN_DIR, "test_metrics.csv"))
         if self.wandb:
-            self.wandb.log({"Test/Summary": wandb.Table(dataframe=self.metrics["Test"])})
+            self.wandb.log(
+                {"Test/Summary": wandb.Table(dataframe=self.metrics["Test"])}
+            )
 
         # Log locations of important data
         self.logger.info(">> RUN DATA LOCATIONS", context="SAVE")
-        self.logger.info(f"Run data directory: {os.path.abspath(self.RUN_DIR)}", context="SAVE")
-        self.logger.info(f"Models saved at: {os.path.abspath(self.MODELS_DIR)}", context="SAVE")
-        self.logger.info(f"Metrics CSV files:", context="SAVE")
+        self.logger.info(
+            f"Run data directory: {os.path.abspath(self.RUN_DIR)}", context="SAVE"
+        )
+        self.logger.info(
+            f"Models saved at: {os.path.abspath(self.MODELS_DIR)}", context="SAVE"
+        )
+        self.logger.info("Metrics CSV files:", context="SAVE")
         self.logger.info(
             f"  - Training: {os.path.abspath(os.path.join(self.RUN_DIR, 'training_metrics.csv'))}",
             context="SAVE",
@@ -239,6 +256,7 @@ class Engine:
         extra_info : str, optional
             Additional information to display in the phase indicator.
         """
+
         # Simple alignment function (since we don't have the original utilities)
         def align(text, width, direction="left"):
             if direction == "left":
@@ -247,24 +265,21 @@ class Engine:
                 return f"{text:>{width}}"
             else:  # center
                 return f"{text:^{width}}"
-        
+
         epoch_batch_info = align(
-            f"E {str(epoch+1)}/{self.epochs} ", 10, "right"
-        ) + align(f"B {str(batch_idx+1)}/{dataloader_len} ", 10, "left")
-        
+            f"E {str(epoch + 1)}/{self.epochs} ", 10, "right"
+        ) + align(f"B {str(batch_idx + 1)}/{dataloader_len} ", 10, "left")
+
         if extra_info is not None:
             phase_indicator = f"[purple]{extra_info}[/purple]"
-        
+
         # Print header with run name and status information
         if "offline" in self.runname:
             printedrunname = "run"
         else:
-            printedrunname = f'{self.runname.split("-")[0][0]}{self.runname.split("-")[1][0]}{self.runname.split("-")[2]}'
-        
-        metricstring = (
-            align(f"{printedrunname}:", 6, "right")
-            + epoch_batch_info
-        )
+            printedrunname = f"{self.runname.split('-')[0][0]}{self.runname.split('-')[1][0]}{self.runname.split('-')[2]}"
+
+        metricstring = align(f"{printedrunname}:", 6, "right") + epoch_batch_info
 
         # Generate metrics string
         metrs = ""
@@ -276,7 +291,7 @@ class Engine:
                 and self.metrics[stage]["Loss"].iloc[-1] is not None
             ):
                 metrs += (
-                    f"[yellow]Loss[/yellow]"
+                    "[yellow]Loss[/yellow]"
                     + "="
                     + align(
                         f"{self.metrics[stage]['Loss'].iloc[-1]:.4f}",
@@ -293,7 +308,9 @@ class Engine:
                     and "/" not in m
                     and self.metrics[stage][m].iloc[-1] is not None
                     and not m.startswith("Step/")  # Skip step metrics
-                    and not m.startswith("HyperParameters/")  # Skip hyperparameter metrics
+                    and not m.startswith(
+                        "HyperParameters/"
+                    )  # Skip hyperparameter metrics
                 ):
                     # Use full metric name for better readability
                     display_name = m if len(m) <= 6 else m[:6]
@@ -311,7 +328,7 @@ class Engine:
 
     def log_loaded_paths(self, paths, phase):
         """Log loaded file paths for debugging"""
-        if hasattr(self, 'paths_file'):
+        if hasattr(self, "paths_file"):
             with open(self.paths_file, mode="a") as file:
                 file.write(f"{self.step[f'{phase}_batch']},{paths}\n")
 
@@ -346,11 +363,11 @@ class Engine:
             ERROR_IN_BACKWARD_PASS = True
 
         # Calculate gradient and weight norms using the matching pipeline model
-        grad_norm, weight_norm = optimization.get_norms(
-            self.model.parameters()
-        )
+        grad_norm, weight_norm = optimization.get_norms(self.model.parameters())
         # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.GRADIENT_CLIPPING_MAX_NORM)
+        torch.nn.utils.clip_grad_norm_(
+            self.model.parameters(), max_norm=self.config.GRADIENT_CLIPPING_MAX_NORM
+        )
 
         # Step only if warmup phase is finished and we are backpropagating the accumulated gradients
         if accumulate_gradients:
@@ -396,13 +413,11 @@ class Engine:
             return True
         return False
 
-
-
     def run_epoch(self, phase: str) -> Optional[float]:
         """
         Run one epoch of training, validation, or test.
         Adapted for polarization-based reflection removal with memory optimizations.
-        
+
         Args:
             phase: "Training", "Validation", or "Test"
 
@@ -413,19 +428,21 @@ class Engine:
         is_training = phase == "Training"
         is_validation = phase == "Validation"
         is_test = phase == "Test"
-        
+
         if is_training:
             self.model.train()
         else:
             self.model.eval()
-            
+
         # Get dataset from the initialized dataset structure
         dataset = self.dataset[phase]
-        
+
         if dataset is None:
-            self.logger.warning(f"No dataset available for {phase}", context=phase.upper())
+            self.logger.warning(
+                f"No dataset available for {phase}", context=phase.upper()
+            )
             return None
-            
+
         # Create dataloader using the initialized parameters
         dataloader = torch.utils.data.DataLoader(
             dataset,
@@ -436,46 +453,47 @@ class Engine:
             prefetch_factor=self.config.PREFETCH_FACTOR,
             shuffle=self.config.SHUFFLE,
         )
-        
+
         if len(dataloader) == 0:
-            self.logger.warning(f"Empty dataloader, skipping epoch.", context=phase.upper())
+            self.logger.warning(
+                "Empty dataloader, skipping epoch.", context=phase.upper()
+            )
             return None
-            
+
         epoch_losses = []
         images_logged = False
-        
+
         # Switch optimizer if needed (for training)
         if is_training:
             self.switch_optimizer(self.step["epoch"])
-        
+
         base_lr = self.optimizer.param_groups[0]["lr"]
-        
+
         # Get image logging frequency from config
         image_log_interval = self.config.get("IMAGE_LOG_INTERVAL", 20)
-        
+
         with self.choose_if_grad(phase):
             for batch_idx, sample in enumerate(dataloader):
-                
                 # Memory management - clear cache at start
                 torch.cuda.empty_cache()
-                
+
                 # Calculate step for warmup logic
                 step = self.step["epoch"] * len(dataloader) + batch_idx
-                
+
                 # Determine if we should log images on this batch
                 log_images_this_batch = (
                     batch_idx > 0
                     and batch_idx % image_log_interval == 0
                     and image_log_interval > 1
                 ) or (batch_idx == len(dataloader) - 1 and not images_logged)
-                
+
                 # Warmup logic
                 if is_training and step < self.warmup_steps:
                     warmup_factor = step / self.warmup_steps
                     current_lr = base_lr * warmup_factor
                     for param_group in self.optimizer.param_groups:
                         param_group["lr"] = current_lr
-                
+
                 # Create batch dictionary for the model
                 batch = {
                     "rgb": sample["rgb"].to(self.device),
@@ -486,8 +504,8 @@ class Engine:
                 # Forward pass through the model
                 decomposition = self.model(batch)
                 specular = decomposition["specular"]  # [B, C, H, W]
-                diffuse = decomposition["diffuse"]    # [B, C, H, W]
-                
+                diffuse = decomposition["diffuse"]  # [B, C, H, W]
+
                 ### Compositing Specular and Diffuse RGBA
                 if specular.shape[1] == 4 and diffuse.shape[1] == 4:  # RGBA format
                     # For RGBA, use alpha compositing with diffuse as background, specular as foreground
@@ -495,10 +513,12 @@ class Engine:
                     spec_alpha = specular[:, 3:4]  # [B, 1, H, W] - foreground alpha
                     diff_rgb = diffuse[:, :3]  # [B, 3, H, W] - background RGB
                     diff_alpha = diffuse[:, 3:4]  # [B, 1, H, W] - background alpha
-                    
+
                     # Alpha compositing: C_out = C_fg * α_fg + C_bg * α_bg * (1 - α_fg)
                     # Final alpha: α_out = α_fg + α_bg * (1 - α_fg)
-                    recon_rgb = spec_rgb * spec_alpha + diff_rgb * diff_alpha * (1 - spec_alpha)
+                    recon_rgb = spec_rgb * spec_alpha + diff_rgb * diff_alpha * (
+                        1 - spec_alpha
+                    )
                     recon_alpha = spec_alpha + diff_alpha * (1 - spec_alpha)
                     recon_alpha = torch.clamp(recon_alpha, 0, 1)
                     decomposition["recon"] = recon_rgb
@@ -509,58 +529,68 @@ class Engine:
                     recon = recon / recon.max()
                     recon = torch.clamp(recon, 0, 1)
                     decomposition["recon"] = recon
-                
+
                 # Compute losses using the specular_loss function
                 losses = specular_loss(batch, decomposition, recon_loss=self.recon_loss)
                 loss_value = losses["total"]
-                
+
                 # Backward pass for training
                 if is_training:
                     try:
                         # Check if we should accumulate gradients
-                        accumulate_gradients = (step >= self.warmup_steps and (batch_idx + 1) % self.gradient_accumulation_steps == 0)
-                        
+                        accumulate_gradients = (
+                            step >= self.warmup_steps
+                            and (batch_idx + 1) % self.gradient_accumulation_steps == 0
+                        )
+
                         # Use the backward_pass method
                         backward_output = self.backward_pass(
                             loss_value,
                             accumulate_gradients=accumulate_gradients,
-                            phase=phase
+                            phase=phase,
                         )
-                        
+
                     except Exception as e:
-                        self.logger.error(f"Error in backward pass: {e}", context=phase.upper())
+                        self.logger.error(
+                            f"Error in backward pass: {e}", context=phase.upper()
+                        )
                         continue
-                
+
                 # Track metrics
                 epoch_losses.append(loss_value.item())
                 self.step[f"{phase}_batch"] += 1
-                
-                # Update metrics dataframe 
+
+                # Update metrics dataframe
                 metrics = {
                     "Loss": loss_value.item(),
                     "HyperParameters/LR": self.optimizer.param_groups[0]["lr"],
-                    f"Step/{'val' if phase == 'Validation' else ''}batch": self.step[f"{phase}_batch"],
+                    f"Step/{'val' if phase == 'Validation' else ''}batch": self.step[
+                        f"{phase}_batch"
+                    ],
                     f"Step/{'idx' if phase == 'Test' else 'epoch'}": self.step["epoch"],
                 }
-                
+
                 # Add individual loss components if available
-                if 'losses' in locals() and isinstance(losses, dict):
+                if "losses" in locals() and isinstance(losses, dict):
                     for loss_name, loss_val in losses.items():
                         if isinstance(loss_val, torch.Tensor) and loss_name != "total":
                             # Use the loss name directly (without "Loss_" prefix) for better display
                             metrics[loss_name] = loss_val.item()
-                
+
                 # Add gradient information if available
-                if 'backward_output' in locals() and backward_output.get("grad_norm") is not None:
+                if (
+                    "backward_output" in locals()
+                    and backward_output.get("grad_norm") is not None
+                ):
                     metrics["Gradients/GradNorm"] = backward_output["grad_norm"]
                     metrics["Gradients/WeightNorm"] = backward_output["weight_norm"]
-                
+
                 # Update the metrics dataframe
                 self.metrics[phase] = pd.concat(
                     [self.metrics[phase], pd.DataFrame(metrics, index=[0])],
                     ignore_index=True,
                 )
-                
+
                 # Image logging to wandb
                 if log_images_this_batch and self.wandb:
                     try:
@@ -571,19 +601,24 @@ class Engine:
                             metrics.update(images)
                             images_logged = True
                     except Exception as e:
-                        self.logger.warning(f"Failed to create visualization images: {e}", context=phase.upper())
-                
+                        self.logger.warning(
+                            f"Failed to create visualization images: {e}",
+                            context=phase.upper(),
+                        )
+
                 # Console logging
                 if batch_idx % self.config.get("LOG_INTERVAL", 10) == 0:
-                    extra_info = "W" if is_training and step < self.warmup_steps else None
+                    extra_info = (
+                        "W" if is_training and step < self.warmup_steps else None
+                    )
                     self.console_log_metrics(
                         stage=phase,
                         epoch=self.step["epoch"],
                         batch_idx=batch_idx,
                         dataloader_len=len(dataloader),
-                        extra_info=extra_info
+                        extra_info=extra_info,
                     )
-                
+
                 # WandB logging the batch metrics
                 if self.wandb and batch_idx % self.logfreq_wandb == 0:
                     # Use the metrics_for_wandb function to format metrics properly
@@ -595,25 +630,28 @@ class Engine:
                         batch_str = "valbatch"
                     wandb_metrics[f"Step/{batch_str}"] = self.step[f"{phase}_batch"]
                     self.wandb.log(wandb_metrics)
-                
+
                 # Memory cleanup
-                if 'batch' in locals():
+                if "batch" in locals():
                     del batch
-                if 'decomposition' in locals():
+                if "decomposition" in locals():
                     del decomposition
-                if 'recon' in locals():
+                if "recon" in locals():
                     del recon
-                if 'losses' in locals():
+                if "losses" in locals():
                     del losses
-                if 'backward_output' in locals():
+                if "backward_output" in locals():
                     del backward_output
                 torch.cuda.empty_cache()
                 gc.collect()
-        
+
         # Compute average loss for epoch
         avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
-        self.logger.info(f"Epoch {self.step['epoch']+1} - Average Loss: {avg_loss:.6f}", context=phase.upper())
-        
+        self.logger.info(
+            f"Epoch {self.step['epoch'] + 1} - Average Loss: {avg_loss:.6f}",
+            context=phase.upper(),
+        )
+
         # Log epoch metrics to wandb
         if self.wandb:
             epochstr = "idx" if phase == "Test" else "epoch"
@@ -631,28 +669,30 @@ class Engine:
             }
             epoch_metrics[f"Step/{epochstr}"] = self.step["epoch"]
             self.wandb.log(epoch_metrics)
-            
+
         return avg_loss
-    
+
     def _save_checkpoint(self, epoch, is_best=False):
         """Save model checkpoint"""
         checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
+            "epoch": epoch,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
             # 'scheduler_state_dict': self.scheduler.state_dict(),
-            'config': self.config,
+            "config": self.config,
         }
-        
+
         # Save regular checkpoint
-        checkpoint_path = os.path.join(self.MODELS_DIR, f'checkpoint_epoch_{epoch+1}.pth')
+        checkpoint_path = os.path.join(
+            self.MODELS_DIR, f"checkpoint_epoch_{epoch + 1}.pth"
+        )
         torch.save(checkpoint, checkpoint_path)
-        
+
         # Save best checkpoint
         if is_best:
-            best_path = os.path.join(self.MODELS_DIR, 'best_model.pth')
+            best_path = os.path.join(self.MODELS_DIR, "best_model.pth")
             torch.save(checkpoint, best_path)
-            self.logger.info(f"Saved best model at epoch {epoch+1}", context="SAVE")
+            self.logger.info(f"Saved best model at epoch {epoch + 1}", context="SAVE")
 
     @contextmanager
     def choose_if_grad(self, mode):
@@ -663,13 +703,13 @@ class Engine:
     def create_visualization_images(self, batch, decomposition, sample, batch_idx=0):
         """
         Creates visualization images for polarization-based reflection removal training.
-        
+
         Args:
             batch (dict): Input batch containing rgb, AoP, DoP, f_spec
             decomposition (dict): Model output containing specular, diffuse, recon
             sample (dict): Original sample from dataset
             batch_idx (int): Batch index to visualize
-            
+
         Returns:
             dict: Dictionary of wandb.Image objects for visualization
         """
@@ -677,12 +717,12 @@ class Engine:
             import wandb
             from PIL import Image
             import torchvision.transforms as transforms
-            
+
             # Convert tensors to CPU and detach for visualization
             def to_cpu_image(tensor):
                 if tensor is None:
                     return None
-                    
+
                 if tensor.dim() == 4:  # [B, C, H, W]
                     tensor = tensor[batch_idx]  # Take first batch
                 elif tensor.dim() == 3:  # [C, H, W]
@@ -691,61 +731,80 @@ class Engine:
                     tensor = tensor.unsqueeze(0)  # Add channel dimension
                 else:
                     return None
-                
+
                 # Convert to PIL Image
                 tensor = tensor.cpu().detach().clamp(0, 1)
                 to_pil = transforms.ToPILImage()
                 return to_pil(tensor)
-            
+
             # Create visualization dictionary
             visualization_dict = {}
-            
+
             # Original RGB image
             # Specular component
-            if 'specular' in decomposition:
-                spec_img = to_cpu_image(decomposition['specular'])
+            if "specular" in decomposition:
+                spec_img = to_cpu_image(decomposition["specular"])
                 if spec_img:
-                    visualization_dict[f"images/PRED_Specular"] = wandb.Image(spec_img, caption="Predicted Specular Component")
-            
+                    visualization_dict["images/PRED_Specular"] = wandb.Image(
+                        spec_img, caption="Predicted Specular Component"
+                    )
+
             # Diffuse component
-            if 'diffuse' in decomposition:
-                diff_img = to_cpu_image(decomposition['diffuse'])
+            if "diffuse" in decomposition:
+                diff_img = to_cpu_image(decomposition["diffuse"])
                 if diff_img:
-                    visualization_dict[f"images/PRED_Diffuse"] = wandb.Image(diff_img, caption="Predicted Diffuse Component")
-            
+                    visualization_dict["images/PRED_Diffuse"] = wandb.Image(
+                        diff_img, caption="Predicted Diffuse Component"
+                    )
+
             # Reconstruction
-            if 'recon' in decomposition:
-                recon_img = to_cpu_image(decomposition['recon'])
+            if "recon" in decomposition:
+                recon_img = to_cpu_image(decomposition["recon"])
                 if recon_img:
-                    visualization_dict[f"images/PRED_Reconstruction"] = wandb.Image(recon_img, caption="Reconstruction (Specular + Diffuse)")
-            
-            if 'rgb' in batch:
-                rgb_img = to_cpu_image(batch['rgb'])
+                    visualization_dict["images/PRED_Reconstruction"] = wandb.Image(
+                        recon_img, caption="Reconstruction (Specular + Diffuse)"
+                    )
+
+            if "rgb" in batch:
+                rgb_img = to_cpu_image(batch["rgb"])
                 if rgb_img:
-                    visualization_dict[f"images/GT_RGB"] = wandb.Image(rgb_img, caption="Input RGB Image")
-            
+                    visualization_dict["images/GT_RGB"] = wandb.Image(
+                        rgb_img, caption="Input RGB Image"
+                    )
+
             # Ground truth specular/diffuse if available
-            if 'f_spec' in batch:
-                fspec_img = to_cpu_image(batch['f_spec'])
+            if "f_spec" in batch:
+                fspec_img = to_cpu_image(batch["f_spec"])
                 if fspec_img:
-                    visualization_dict[f"images/GT_FSpec"] = wandb.Image(fspec_img, caption="Specular Fraction")
-            if 'specular' in sample:
-                gt_spec_img = to_cpu_image(sample['specular'])
+                    visualization_dict["images/GT_FSpec"] = wandb.Image(
+                        fspec_img, caption="Specular Fraction"
+                    )
+            if "specular" in sample:
+                gt_spec_img = to_cpu_image(sample["specular"])
                 if gt_spec_img:
-                    visualization_dict[f"images/GT_Specular"] = wandb.Image(gt_spec_img, caption="Ground Truth Specular")
-            
-            if 'diffuse' in sample:
-                gt_diff_img = to_cpu_image(sample['diffuse'])
+                    visualization_dict["images/GT_Specular"] = wandb.Image(
+                        gt_spec_img, caption="Ground Truth Specular"
+                    )
+
+            if "diffuse" in sample:
+                gt_diff_img = to_cpu_image(sample["diffuse"])
                 if gt_diff_img:
-                    visualization_dict[f"images/GT_Diffuse"] = wandb.Image(gt_diff_img, caption="Ground Truth Diffuse")
-            
+                    visualization_dict["images/GT_Diffuse"] = wandb.Image(
+                        gt_diff_img, caption="Ground Truth Diffuse"
+                    )
+
             return visualization_dict
-            
+
         except ImportError:
-            self.logger.warning("wandb or PIL not available for image visualization", context="VISUALIZATION")
+            self.logger.warning(
+                "wandb or PIL not available for image visualization",
+                context="VISUALIZATION",
+            )
             return {}
         except Exception as e:
-            self.logger.warning(f"Error creating visualization images: {e}", context="VISUALIZATION")
+            self.logger.warning(
+                f"Error creating visualization images: {e}", context="VISUALIZATION"
+            )
             return {}
 
     def reinstantiate_model_from_checkpoint(self, checkpoint_path=None):
@@ -754,18 +813,23 @@ class Engine:
         """
         if checkpoint_path is None:
             # Try to load best model
-            checkpoint_path = os.path.join(self.MODELS_DIR, 'best_model.pth')
-            
+            checkpoint_path = os.path.join(self.MODELS_DIR, "best_model.pth")
+
         if not os.path.exists(checkpoint_path):
-            self.logger.warning(f"Checkpoint not found at {checkpoint_path}", context="SAVE")
+            self.logger.warning(
+                f"Checkpoint not found at {checkpoint_path}", context="SAVE"
+            )
             return
-            
+
         try:
             checkpoint = torch.load(checkpoint_path, map_location=self.device)
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-            self.logger.info(f"Model reinstantiated from checkpoint: {checkpoint_path}", context="SAVE")
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            self.logger.info(
+                f"Model reinstantiated from checkpoint: {checkpoint_path}",
+                context="SAVE",
+            )
         except Exception as e:
             self.logger.error(f"Error loading checkpoint: {e}", context="SAVE")
 

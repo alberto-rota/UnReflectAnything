@@ -2,10 +2,7 @@ import torch
 import torch.nn as nn
 
 from utilities import *
-from networks.base import MONO3DModel
-import networks.backbones as backbones
 import networks.depth_decoding as depth_decoding
-import copy
 
 from pipelines.features.featureextractor import FeatureExtractor
 import pipelines.matching as matching
@@ -478,7 +475,9 @@ class MatchingPipeline:
         invalid_mask = torch.isnan(combined_scores) | torch.isinf(combined_scores)
         if invalid_mask.any():
             # Replace invalid scores with zeros
-            combined_scores = torch.where(invalid_mask, torch.zeros_like(combined_scores), combined_scores)
+            combined_scores = torch.where(
+                invalid_mask, torch.zeros_like(combined_scores), combined_scores
+            )
         return combined_scores
 
     # Wrapper for compute_metrics
@@ -495,7 +494,7 @@ class MatchingPipeline:
         pose_6d=None,  # Camera pose for epipolar view
         topk=20,
         use_actual_topk=False,
-        **kwargs
+        **kwargs,
     ):
         """
         Visualize matching results using the output from match_images.
@@ -503,7 +502,7 @@ class MatchingPipeline:
         Args:
             match_data (dict): Output from match_images method
             image1 (torch.Tensor): First image [3, H, W] or [B, 3, H, W]
-            image2 (torch.Tensor): Second image [3, H, W] or [B, 3, H, W]  
+            image2 (torch.Tensor): Second image [3, H, W] or [B, 3, H, W]
             show (str): What to display - "both", "compare", "epipolar"
             pts2_true (torch.Tensor, optional): Ground truth target points for comparison
             pose_6d (torch.Tensor or dict, optional): Camera pose for epipolar visualization
@@ -511,24 +510,28 @@ class MatchingPipeline:
             use_actual_topk (bool): Whether to use actual top-k matches or evenly spaced
             **kwargs: Additional arguments passed to visualization functions
         """
-        from utilities.visualization import viewComparePixelMatches, viewEpipolarGeometry, rgb
-        
+        from utilities.visualization import (
+            viewComparePixelMatches,
+            viewEpipolarGeometry,
+            rgb,
+        )
+
         # Ensure images have batch dimension removed for visualization
         if len(image1.shape) == 4:
             image1 = image1[0]
         if len(image2.shape) == 4:
             image2 = image2[0]
-            
+
         # Extract data from match_data
         pts1 = match_data["source_pixels_matched"]  # [N, 2]
         pts2 = match_data["target_pixels_matched"]  # [N, 2]
         scores = match_data["scores"]  # [N]
         F = match_data["F"]  # [B, 3, 3]
-        
+
         # Handle batch dimension in F matrix
         if len(F.shape) == 3:
             F = F[0]  # Take first batch element
-            
+
         # Filter to single batch if batch indices are provided
         if "batch_idx_match" in match_data:
             batch_idx = match_data["batch_idx_match"]
@@ -541,28 +544,28 @@ class MatchingPipeline:
                 pts2_true = pts2_true[batch_mask]
             else:
                 pts2_true = pts2
-        
+
         if show in ["both", "compare"]:
             # Show comparison with ground truth
             comparison_img = viewComparePixelMatches(
-                image1, 
+                image1,
                 image2,
                 pts1,
-                pts2, 
+                pts2,
                 pts2,
                 scores,
                 topk=topk,
                 use_actual_topk=use_actual_topk,
                 as_tensor=True,
-                **kwargs
+                **kwargs,
             )
             display(rgb(comparison_img))
-                
+
         if show in ["both", "epipolar"]:
             # Show epipolar geometry
             epipolar_img = viewEpipolarGeometry(
                 image1,
-                image2, 
+                image2,
                 pts1,
                 pts2,
                 scores,
@@ -571,7 +574,7 @@ class MatchingPipeline:
                 topk=topk,
                 use_actual_topk=use_actual_topk,
                 as_tensor=True,
-                **kwargs
+                **kwargs,
             )
             display(rgb(epipolar_img))
 
@@ -584,7 +587,9 @@ class MatcherBackbone(FeatureExtractor):
         resampled_patch_size=8,
         shared_key=None,  # New parameter for sharing feature extractor
     ):
-        super().__init__(backbone_brand=backbone_brand, size=size, shared_key=shared_key)
+        super().__init__(
+            backbone_brand=backbone_brand, size=size, shared_key=shared_key
+        )
         self.resampled_patch_size = resampled_patch_size
 
         self.depthpredictor = depth_decoding.DPT_Predictor(
@@ -613,7 +618,7 @@ class MatcherBackbone(FeatureExtractor):
             dict with source/target embeddings for matching
         """
         source = framestack[:, 0]  # [B, 3, H, W]
-        target = framestack[:, -1] # [B, 3, H, W]
+        target = framestack[:, -1]  # [B, 3, H, W]
 
         # Extract DINO features
         with torch.no_grad():
@@ -621,15 +626,27 @@ class MatcherBackbone(FeatureExtractor):
             target_features = self.extract_features(target)
 
         # Matcher head: pass last layer tokens through lastvitlayer
-        source_features_matcher = self.lastvitlayer(source_features[-1])[0]  # [B, N+1, C]
-        target_features_matcher = self.lastvitlayer(target_features[-1])[0]  # [B, N+1, C]
+        source_features_matcher = self.lastvitlayer(source_features[-1])[
+            0
+        ]  # [B, N+1, C]
+        target_features_matcher = self.lastvitlayer(target_features[-1])[
+            0
+        ]  # [B, N+1, C]
 
         # Prepare output dict (all shapes [B, C, HW] after permute)
         mono3doutput = {
-            "source_embedding": source_features[-1][:, 1:, :].permute(0, 2, 1),  # [B, C, HW]
-            "target_embedding": target_features[-1][:, 1:, :].permute(0, 2, 1),  # [B, C, HW]
-            "source_embedding_match": source_features_matcher[:, 1:, :].permute(0, 2, 1),  # [B, C, HW]
-            "target_embedding_match": target_features_matcher[:, 1:, :].permute(0, 2, 1),  # [B, C, HW]
+            "source_embedding": source_features[-1][:, 1:, :].permute(
+                0, 2, 1
+            ),  # [B, C, HW]
+            "target_embedding": target_features[-1][:, 1:, :].permute(
+                0, 2, 1
+            ),  # [B, C, HW]
+            "source_embedding_match": source_features_matcher[:, 1:, :].permute(
+                0, 2, 1
+            ),  # [B, C, HW]
+            "target_embedding_match": target_features_matcher[:, 1:, :].permute(
+                0, 2, 1
+            ),  # [B, C, HW]
             "source_cls": source_features[-1][:, 0, :],  # [B, C]
             "target_cls": target_features[-1][:, 0, :],  # [B, C]
         }

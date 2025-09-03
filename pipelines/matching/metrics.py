@@ -1,8 +1,4 @@
-import numpy as np
 import torch
-import losses as loss
-import torch
-from sklearn.metrics import precision_recall_curve, auc
 
 
 def f1_score(pred_points, true_points, threshold):

@@ -1,14 +1,8 @@
-
-
-
 import torch
 import torch.nn as nn
 import transformers
 from utilities import *
 from networks.base import MONO3DModel
-import numpy as np
-import cv2
-from typing import List, Dict, Tuple
 
 size2embeddim = {"tiny": 256, "small": 384, "base": 768, "large": 1024}
 

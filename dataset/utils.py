@@ -7,7 +7,9 @@ import torch
 import random
 
 
-def split_videos(videos: List[str], tr_perc: float = 0.8, test_vids: Optional[List[str]] = None) -> Tuple[List[str], List[str]]:
+def split_videos(
+    videos: List[str], tr_perc: float = 0.8, test_vids: Optional[List[str]] = None
+) -> Tuple[List[str], List[str]]:
     """
     Split a list of videos into training and validation sets.
 
@@ -50,7 +52,11 @@ def resize_intrinsics(K: torch.Tensor, sx: float, sy: float) -> torch.Tensor:
 
 
 def center_crop_intrinsics(
-    K: torch.Tensor, final_width: int, final_height: int, backbone_width: int, backbone_height: int
+    K: torch.Tensor,
+    final_width: int,
+    final_height: int,
+    backbone_width: int,
+    backbone_height: int,
 ) -> torch.Tensor:
     """
     Adjust intrinsic camera matrix for center cropping.

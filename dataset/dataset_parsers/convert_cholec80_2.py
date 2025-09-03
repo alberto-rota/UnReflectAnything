@@ -5,18 +5,22 @@ import subprocess
 import tempfile
 import shutil
 from concurrent.futures import ProcessPoolExecutor
-import math
 
 # Load environment variables
 from dotenv import load_dotenv
+
 load_dotenv()
+
 
 def get_gcs_bucket_name():
     """Get the GCS bucket name from environment variables."""
     bucket_name = os.environ.get("GCS_BUCKET_NAME")
     if bucket_name is None:
-        raise ValueError("GCS_BUCKET_NAME environment variable is not set. Please set it in your .env file.")
+        raise ValueError(
+            "GCS_BUCKET_NAME environment variable is not set. Please set it in your .env file."
+        )
     return bucket_name
+
 
 # Define constants
 BUCKET_NAME = get_gcs_bucket_name()

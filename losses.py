@@ -1,5 +1,5 @@
-
 import torch.nn.functional as F
+
 
 def specular_loss(batch, out, recon_loss, weights=None, eps=1e-7):
     """

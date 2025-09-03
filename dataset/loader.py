@@ -2,7 +2,7 @@
 Dataset loading and configuration utilities.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 import os
 import torch
 from torch.utils.data import DataLoader
@@ -11,13 +11,14 @@ from utilities import get_hostname, detect_aval_cpus, coloredbar
 
 from .base import Mono3D_Dataset
 from .multi_dataset import MultiDataset
-from .specialized import SCARED, CHOLEC80, GRASP
 from .utils import split_videos
 
 logger = get_logger(__name__).set_context("DATASET_LOADER")
 
 
-def initialize_from_config(config: Dict[str, Any], inference: bool = False, verbose: bool = False) -> Dict[str, Any]:
+def initialize_from_config(
+    config: Dict[str, Any], inference: bool = False, verbose: bool = False
+) -> Dict[str, Any]:
     """
     Initialize datasets and dataloaders from configuration.
 
@@ -255,11 +256,11 @@ def _print_dataset_summary(
         batch_size (int): Batch size
     """
     logger.info(
-        f"{training_ds.numvideos+validation_ds.numvideos+test_ds.numvideos} videos registered "
-        f"[{training_ds.numframes+validation_ds.numframes+test_ds.numframes} total frames]"
+        f"{training_ds.numvideos + validation_ds.numvideos + test_ds.numvideos} videos registered "
+        f"[{training_ds.numframes + validation_ds.numframes + test_ds.numframes} total frames]"
     )
     logger.info(
-        f"{len(training_ds.sampler)+len(validation_ds.sampler)+len(test_ds.sampler)} frames sampled "
+        f"{len(training_ds.sampler) + len(validation_ds.sampler) + len(test_ds.sampler)} frames sampled "
     )
 
     # Print training dataset information

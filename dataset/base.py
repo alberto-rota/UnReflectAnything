@@ -5,7 +5,7 @@ Base dataset implementation for monocular 3D camera pose estimation.
 import os
 import random
 import json
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import torch
 import torchvision
@@ -17,7 +17,6 @@ from natsort import natsorted
 from io import BytesIO
 from google.cloud import storage
 
-import projections as proj
 import geometry
 import dataset.augmentation as aug
 from utilities import closest_multiple
@@ -132,7 +131,7 @@ class Mono3D_Dataset(Dataset):
             random_pose_ranges = []
         if preload_transforms is None:
             preload_transforms = tvt.Compose([])
-            
+
         # Store configuration parameters
         self._initialize_parameters(
             path,
@@ -191,7 +190,7 @@ class Mono3D_Dataset(Dataset):
                     )
                 self._preload_dataset(verbose)
                 if verbose:
-                    logger.info(f"Preloading complete!")
+                    logger.info("Preloading complete!")
         else:
             # Handle empty dataset case
             self._initialize_empty_dataset(verbose)
@@ -230,7 +229,7 @@ class Mono3D_Dataset(Dataset):
     ) -> None:
         """
         Initialize dataset parameters.
-        
+
         Args:
             path: Base path to the dataset
             name: Dataset name
@@ -335,7 +334,12 @@ class Mono3D_Dataset(Dataset):
         ) * [self.frameskip_set[self.frameskip_curriculum_step]]
 
     def _setup_transforms(
-        self, height: int, width: int, original_height: int, original_width: int, backbone_patch_size: int
+        self,
+        height: int,
+        width: int,
+        original_height: int,
+        original_width: int,
+        backbone_patch_size: int,
     ) -> None:
         """
         Set up image dimensions and transformation parameters.
@@ -424,7 +428,7 @@ class Mono3D_Dataset(Dataset):
         self.Tinvlist = []
 
         if verbose:
-            logger.info(f": [orange3]No videos loaded[/orange3]")
+            logger.info(": [orange3]No videos loaded[/orange3]")
 
     def _load_videos(
         self, path, vids, exclude, short, fewframes, nvids, skip_order_check, verbose
@@ -1328,8 +1332,12 @@ class Mono3D_Dataset(Dataset):
 
             # Load depth maps
             # We add the .mean(0) to ensure that the depth maps are interpreted as grayscale
-            target_depth = self.load_depth(target_depth_path).float().mean(0, keepdim=True)
-            source_depth = self.load_depth(source_depth_path).float().mean(0, keepdim=True)
+            target_depth = (
+                self.load_depth(target_depth_path).float().mean(0, keepdim=True)
+            )
+            source_depth = (
+                self.load_depth(source_depth_path).float().mean(0, keepdim=True)
+            )
             depthstack = torch.stack([source_depth] + [target_depth])
 
         # Combine source and target into a single tensor

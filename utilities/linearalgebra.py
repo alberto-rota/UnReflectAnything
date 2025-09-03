@@ -1,5 +1,3 @@
-
-
 import torch
 import geometry
 
@@ -41,7 +39,6 @@ def chain(trans, ignore_rotation=False):
 
 
 def kfchain(relative_pose, keyframe_idx):
-
     N = relative_pose.shape[0]
     # Convering Eulers to 4x4 Homogeous matrices
     relative_pose = torch.stack([geometry.euler2mat(tr) for tr in relative_pose]).to(
@@ -55,7 +52,6 @@ def kfchain(relative_pose, keyframe_idx):
 
     last_global_pose_keyframe = global_pose[0]
     for i in range(1, N):
-
         # If i is not a keyframe
         if not keyframe_idx[i]:
             # GLobal pose of i-th frame is expressed wrt the latest keyframe

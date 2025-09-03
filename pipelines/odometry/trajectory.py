@@ -1,12 +1,18 @@
 import torch
-import torch.nn as nn
 import numpy as np
 import cv2
 from .keyframing import KeyFrameFinder
 
 
 class Trajectory:
-    def __init__(self, num_frames=None, device=None, min_inlier_ratio=0.5, min_inlier_count=100, max_frames_since_last=20):
+    def __init__(
+        self,
+        num_frames=None,
+        device=None,
+        min_inlier_ratio=0.5,
+        min_inlier_count=100,
+        max_frames_since_last=20,
+    ):
         """
         Initialize a trajectory tracker.
 
@@ -29,12 +35,12 @@ class Trajectory:
             )
         else:
             self.trajectory = None
-            
+
         # Initialize keyframe finder
         self.keyframer = KeyFrameFinder(
             min_inlier_ratio=min_inlier_ratio,
             min_inlier_count=min_inlier_count,
-            max_frames_since_last=max_frames_since_last
+            max_frames_since_last=max_frames_since_last,
         )
         self.keyframe = None
         self.keyframe_idx = 0
@@ -316,12 +322,12 @@ class Trajectory:
     def needs_keyframe(self, frame_idx, inlier_count, total_points=None):
         """
         Check if a new frame should be a keyframe based on inlier statistics.
-        
+
         Args:
             frame_idx: Current frame index
             inlier_count: Number of inliers matched with previous frame
             total_points: Total number of tracked points (if None, uses last keyframe inliers)
-            
+
         Returns:
             Boolean indicating if this frame should be a keyframe
         """
@@ -330,7 +336,7 @@ class Trajectory:
     def update_keyframe(self, frame, frame_idx):
         """
         Update the current keyframe.
-        
+
         Args:
             frame: The new keyframe
             frame_idx: Index of the new keyframe

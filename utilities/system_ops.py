@@ -1,5 +1,3 @@
-
-
 import io
 import json
 import os
@@ -15,12 +13,9 @@ import inspect
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.text import Text
-from rich.layout import Layout
 
 
 def get_hostname() -> str:
-
     hostname = socket.gethostname()
     if "alberto-vm" in hostname:
         return "AsensusVM"
@@ -65,7 +60,7 @@ def sftp_transfer(local_file_path: str, remote_file_path: str) -> None:
         print(f" [green]-->OK-->[/green] Saved to NAS:/{remote_file_path}")
 
     except Exception as e:
-        print(f" [red]-->ERROR-->[/red] Cound not upload file to NAS : ", end="")
+        print(" [red]-->ERROR-->[/red] Cound not upload file to NAS : ", end="")
         print(e)
         return
 
@@ -122,13 +117,6 @@ def detect_aval_cpus():
     return cpus
 
 
-import gc
-import torch
-import inspect
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
 
 
 def is_all_tensors_on_gpu(container):
@@ -142,14 +130,6 @@ def is_all_tensors_on_gpu(container):
     return False
 
 
-import gc
-import torch
-import inspect
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
-from types import FrameType
 
 
 def is_all_tensors_on_gpu(container):
@@ -230,7 +210,7 @@ def gpuClean(frame_up=1, exclude_vars=None, verbose=False):
                     size_str = (
                         f"{size_mb:.2f}MB"
                         if size_mb < 1024
-                        else f"{(size_mb/1024):.2f}GB"
+                        else f"{(size_mb / 1024):.2f}GB"
                     )
                     table.add_row(name, "Tensor", str(list(var.shape)), size_str)
 
@@ -265,7 +245,7 @@ def gpuClean(frame_up=1, exclude_vars=None, verbose=False):
                         size_str = (
                             f"{total_size_mb:.2f}MB"
                             if total_size_mb < 1024
-                            else f"{(total_size_mb/1024):.2f}GB"
+                            else f"{(total_size_mb / 1024):.2f}GB"
                         )
                         table.add_row(name, container_type, keys_info, size_str)
 
@@ -321,7 +301,7 @@ def gpuClean(frame_up=1, exclude_vars=None, verbose=False):
 
         if total_memory_freed >= 1024:
             summary_text.append(
-                f"Total memory freed: [bold green]{total_memory_freed/1024:.2f}GB[/bold green]"
+                f"Total memory freed: [bold green]{total_memory_freed / 1024:.2f}GB[/bold green]"
             )
         else:
             summary_text.append(
@@ -333,7 +313,7 @@ def gpuClean(frame_up=1, exclude_vars=None, verbose=False):
 
         if current_allocated >= 1024:
             summary_text.append(
-                f"Current GPU allocated: [bold yellow]{current_allocated/1024:.2f}GB[/bold yellow]"
+                f"Current GPU allocated: [bold yellow]{current_allocated / 1024:.2f}GB[/bold yellow]"
             )
         else:
             summary_text.append(
@@ -342,7 +322,7 @@ def gpuClean(frame_up=1, exclude_vars=None, verbose=False):
 
         if current_reserved >= 1024:
             summary_text.append(
-                f"Current GPU reserved: [bold red]{current_reserved/1024:.2f}GB[/bold red]"
+                f"Current GPU reserved: [bold red]{current_reserved / 1024:.2f}GB[/bold red]"
             )
         else:
             summary_text.append(

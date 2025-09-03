@@ -7,31 +7,35 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
-from transformers import AutoImageProcessor, ZoeDepthForDepthEstimation, DPTForDepthEstimation
+from transformers import (
+    AutoImageProcessor,
+    DPTForDepthEstimation,
+)
 
 
 def time_module(module_name):
     """
     Decorator to time method execution when timing is enabled.
-    
+
     Args:
         module_name: String identifier for the module being timed
-        
+
     Usage:
         @time_module("depth_estimation")
         def compute_depth(self, image):
             # method implementation
     """
+
     def decorator(func):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
-            if not getattr(self, '_timing_enabled', False):
+            if not getattr(self, "_timing_enabled", False):
                 return func(self, *args, **kwargs)
-            
+
             # Ensure GPU operations are complete before timing
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
-            
+
             start_time = time.perf_counter()
             try:
                 result = func(self, *args, **kwargs)
@@ -42,15 +46,21 @@ def time_module(module_name):
                 end_time = time.perf_counter()
                 elapsed = (end_time - start_time) * 1000  # Convert to milliseconds
                 self.timing_results[module_name].append(elapsed)
-            
+
             return result
+
         return wrapper
+
     return decorator
 
 
 class PolarHighlighter(nn.Module):
     def __init__(
-        self, depth_estimator="Intel/dpt-large", height=852, width=1096, enable_timing=False
+        self,
+        depth_estimator="Intel/dpt-large",
+        height=852,
+        width=1096,
+        enable_timing=False,
     ):
         super().__init__()
         self.depth_image_processor = AutoImageProcessor.from_pretrained(depth_estimator)
@@ -59,7 +69,7 @@ class PolarHighlighter(nn.Module):
         self.height = height
         self.width = width
         self.resizer = transforms.Resize((height, width))
-        
+
         # Timing functionality
         self._timing_enabled = enable_timing
         self.timing_results = defaultdict(list)
@@ -75,30 +85,30 @@ class PolarHighlighter(nn.Module):
     def get_timing_stats(self, detailed=False):
         """
         Get timing statistics for all modules.
-        
+
         Args:
             detailed: If True, return all measurements. If False, return summary stats.
-            
+
         Returns:
             dict: Timing statistics in milliseconds
         """
         if not self.timing_results:
             return {}
-        
+
         if detailed:
             return dict(self.timing_results)
-        
+
         # Return summary statistics
         stats = {}
         for module_name, times in self.timing_results.items():
             times_array = np.array(times)
             stats[module_name] = {
-                'mean_ms': float(np.mean(times_array)),
-                'std_ms': float(np.std(times_array)),
-                'min_ms': float(np.min(times_array)),
-                'max_ms': float(np.max(times_array)),
-                'total_ms': float(np.sum(times_array)),
-                'count': len(times)
+                "mean_ms": float(np.mean(times_array)),
+                "std_ms": float(np.std(times_array)),
+                "min_ms": float(np.min(times_array)),
+                "max_ms": float(np.max(times_array)),
+                "total_ms": float(np.sum(times_array)),
+                "count": len(times),
             }
         return stats
 
@@ -108,25 +118,25 @@ class PolarHighlighter(nn.Module):
         if not stats:
             print("No timing data available. Enable timing mode first.")
             return
-        
-        print("\n" + "="*60)
+
+        print("\n" + "=" * 60)
         print("PolarHighlighter Timing Report")
-        print("="*60)
+        print("=" * 60)
         print(f"{'Module':<25} {'Mean (ms)':<10} {'Std (ms)':<10} {'Count':<8}")
-        print("-"*60)
-        
+        print("-" * 60)
+
         total_time = 0
         for module_name, module_stats in sorted(stats.items()):
-            mean_time = module_stats['mean_ms']
-            std_time = module_stats['std_ms']
-            count = module_stats['count']
-            total_time += module_stats['total_ms']
-            
+            mean_time = module_stats["mean_ms"]
+            std_time = module_stats["std_ms"]
+            count = module_stats["count"]
+            total_time += module_stats["total_ms"]
+
             print(f"{module_name:<25} {mean_time:<10.2f} {std_time:<10.2f} {count:<8}")
-        
-        print("-"*60)
+
+        print("-" * 60)
         print(f"{'Total time':<25} {total_time:<10.2f} ms")
-        print("="*60)
+        print("=" * 60)
 
     def make_pixel_grid(self, B, H, W, device):
         """Return homogeneous pixel grid [B,3,H,W] with x,y in pixels, 1's row."""
@@ -172,7 +182,7 @@ class PolarHighlighter(nn.Module):
 
         # interpolate to original size
         resized_outputs = self.resizer(outputs["predicted_depth"])
-        inverted_depth = 1/resized_outputs.clamp(min=1e-6)*300+50
+        inverted_depth = 1 / resized_outputs.clamp(min=1e-6) * 300 + 50
         # visualize the prediction
         return inverted_depth.unsqueeze(1)  # [B,1,H,W]
 
@@ -302,7 +312,6 @@ class PolarHighlighter(nn.Module):
 
         return positions
 
-
     def compute_fresnel_gamma(self, theta, n_rel=1.5, eps=1e-8):
         """
         Intrinsic DoLP of specular for unpolarized incident light at incidence theta.
@@ -368,33 +377,33 @@ class PolarHighlighter(nn.Module):
         Compute viewing and lighting geometry for specular reflection.
         Physics: v = P/|P| (view direction), l = (L-P)/|L-P| (light direction), where P are 3D surface points.
         The geometry determines the reflection conditions via the surface normal n.
-        
+
         Args:
             depth: [B,1,H,W] depth map in meters
             normals: [B,3,H,W] surface normals
             light_pos: [B,3] light positions
             K: [B,3,3] camera intrinsics
-            
+
         Returns:
             tuple: (v, l, n, nl, nv, light_pos) - view dirs, light dirs, normals, dot products, light positions
         """
         B, _, H, W = depth.shape
-        
+
         # Reconstruct 3D points and view direction
         P = self.backproject_depth(depth, K)  # [B,3,H,W]
         v = self.normalize_vector(P)  # [B,3,H,W] surface->camera direction
-        
+
         # Sample random light position and compute light direction
         L = light_pos.view(B, 3, 1, 1)  # [B,3,1,1]
         l = self.normalize_vector(L - P)  # [B,3,H,W] surface->light direction
-        
+
         # Normalize surface normals
         n = self.normalize_vector(normals)  # [B,3,H,W]
-        
+
         # Compute dot products for lighting calculations
         nl = (n * l).sum(1, keepdim=True).clamp_min(0.0)  # cos(theta_l) [B,1,H,W]
         nv = (n * v).sum(1, keepdim=True).clamp_min(0.0)  # cos(theta_v) [B,1,H,W]
-        
+
         return v, l, n, nl, nv, light_pos, P
 
     @time_module("blinn_phong_specular")
@@ -403,16 +412,16 @@ class PolarHighlighter(nn.Module):
         Compute Blinn-Phong specular lobe with Schlick Fresnel approximation.
         Physics: I_spec = ks * F(θ) * (n·h)^α, where h = (v+l)/|v+l| is the half-vector.
         Fresnel term F(θ) ≈ F0 + (1-F0)(1-cosθ)^5 modulates reflection strength.
-        
+
         Args:
             v: [B,3,H,W] view directions
-            l: [B,3,H,W] light directions  
+            l: [B,3,H,W] light directions
             n: [B,3,H,W] surface normals
             nv: [B,1,H,W] n·v dot product
             shininess: specular exponent α
             ks: specular strength
             F0: Fresnel reflectance at normal incidence
-            
+
         Returns:
             H: [B,1,H,W] highlight luminance
         """
@@ -420,11 +429,11 @@ class PolarHighlighter(nn.Module):
         h = self.normalize_vector(l + v)  # [B,3,H,W] half-vector
         nh = (n * h).sum(1, keepdim=True).clamp_min(0.0)  # [B,1,H,W]
         spec_lobe = nh**shininess  # [B,1,H,W]
-        
+
         # Apply Schlick Fresnel approximation
         F = self.schlick_fresnel(nv, F0=F0)  # [B,1,H,W]
         H = ks * F * spec_lobe  # [B,1,H,W]
-        
+
         return H
 
     @time_module("polarization_parameters")
@@ -433,23 +442,23 @@ class PolarHighlighter(nn.Module):
         Compute polarization parameters from Fresnel reflection theory.
         Physics: DoLP γ = |Rs-Rp|/(Rs+Rp) from Fresnel equations, AoLP φ from plane of incidence.
         The plane of incidence is spanned by incident and reflected rays, perpendicular to v×l.
-        
+
         Args:
             v: [B,3,H,W] view directions
             l: [B,3,H,W] light directions
-            nl: [B,1,H,W] n·l dot product  
+            nl: [B,1,H,W] n·l dot product
             n_rel: relative refractive index
-            
+
         Returns:
             tuple: (gamma_spec, phi_spec) - degree and angle of linear polarization
         """
         # Compute incidence angle and intrinsic DoLP from Fresnel theory
         theta = torch.acos(nl.clamp(-1 + 1e-7, 1 - 1e-7))  # [B,1,H,W]
         gamma_spec = self.compute_fresnel_gamma(theta, n_rel=n_rel)  # [B,1,H,W]
-        
+
         # Compute AoLP from geometry (plane of incidence)
         phi_spec = self.aop_from_geometry(v, l)  # [B,1,H,W]
-        
+
         return gamma_spec, phi_spec
 
     @time_module("highlight_stokes_vector")
@@ -458,12 +467,12 @@ class PolarHighlighter(nn.Module):
         Construct Stokes vector for specular highlight.
         Physics: S = [S0, S1, S2] where S1 = γS0cos(2φ), S2 = γS0sin(2φ).
         This represents partially linearly polarized light with DoLP γ and AoLP φ.
-        
+
         Args:
             H: [B,1,H,W] highlight intensity (S0)
             gamma_spec: [B,1,H,W] degree of linear polarization
             phi_spec: [B,1,H,W] angle of linear polarization
-            
+
         Returns:
             tuple: (S0_H, S1_H, S2_H) - highlight Stokes components
         """
@@ -472,7 +481,7 @@ class PolarHighlighter(nn.Module):
         s2p = torch.sin(2.0 * phi_spec)  # [B,1,H,W]
         S1_H = gamma_spec * S0_H * c2p  # [B,1,H,W]
         S2_H = gamma_spec * S0_H * s2p  # [B,1,H,W]
-        
+
         return S0_H, S1_H, S2_H
 
     def update_stokes_with_highlight(self, stokes, S0_H, S1_H, S2_H):
@@ -480,11 +489,11 @@ class PolarHighlighter(nn.Module):
         Add highlight contribution to existing Stokes parameters.
         Physics: Incoherent addition S_total = S_scene + S_highlight for independent sources.
         Each Stokes component adds linearly for incoherent superposition.
-        
+
         Args:
             stokes: [B,3,H,W] input Stokes parameters (S0,S1,S2)
             S0_H, S1_H, S2_H: [B,1,H,W] highlight Stokes components
-            
+
         Returns:
             S_new: [B,3,H,W] updated Stokes parameters
         """
@@ -493,9 +502,9 @@ class PolarHighlighter(nn.Module):
         S1_new = S1 + S1_H  # [B,1,H,W]
         S2_new = S2 + S2_H  # [B,1,H,W]
         S_new = torch.cat([S0_new, S1_new, S2_new], dim=1)  # [B,3,H,W]
-        
+
         return S_new
-    
+
     def update_rgb_with_highlight(self, rgb, H):
         """
         Add highlight contribution to existing RGB image.
@@ -549,15 +558,21 @@ class PolarHighlighter(nn.Module):
         B, _, H, W = rgb_lin.shape
         device = rgb_lin.device
         # 0) Sample random light positions (one per image)
-        light_pos = self.sample_light_source((-100, -50), (-90, 90), (-180, -90), batch_size=B, device=device)  # [B,3]
-        
+        light_pos = self.sample_light_source(
+            (-100, -50), (-90, 90), (-180, -90), batch_size=B, device=device
+        )  # [B,3]
+
         # 1) Compute viewing and lighting geometry
-        v, l, n, nl, nv, light_pos, pcloud = self.compute_viewing_lighting_geometry(depth, normals, K, light_pos)
+        v, l, n, nl, nv, light_pos, pcloud = self.compute_viewing_lighting_geometry(
+            depth, normals, K, light_pos
+        )
 
         # 2) Compute Blinn-Phong specular lobe with Fresnel modulation
         H = self.compute_blinn_phong_specular(v, l, n, nv, shininess, ks, F0)
         if clamp_H:
-            H = H / (H.amax(dim=(2, 3), keepdim=True).clamp_min(1e-6))  # normalize to [0,1]
+            H = H / (
+                H.amax(dim=(2, 3), keepdim=True).clamp_min(1e-6)
+            )  # normalize to [0,1]
 
         # 3) Compute polarization parameters from Fresnel theory
         H_dop, H_aop = self.compute_polarization_parameters(v, l, nl, n_rel)
@@ -623,7 +638,7 @@ class PolarHighlighter(nn.Module):
         S0_H, S1_H, S2_H = H_stokes[:, 0:1], H_stokes[:, 1:2], H_stokes[:, 2:3]
         stokes_updated = self.update_stokes_with_highlight(pol, S0_H, S1_H, S2_H)
         rgb_highlighted = self.update_rgb_with_highlight(rgb, H)
-        
+
         return {
             "highlight": H,
             "rgb_highlighted": rgb_highlighted,
@@ -633,7 +648,7 @@ class PolarHighlighter(nn.Module):
             "normals": normals,
             "H_dop": H_dop,
             "H_aop": H_aop,
-            "light_pos": light_pos,    
+            "light_pos": light_pos,
             "pcloud": pcloud,
             "light_dir": light_dir,
             "view_dir": view_dir,

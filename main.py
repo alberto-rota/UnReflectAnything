@@ -1,8 +1,10 @@
-
 #  MODULES AND DATASET LOADING
 import torch
 from dotmap import DotMap
-import os, yaml, socket, time
+import os
+import yaml
+import socket
+import time
 import argparse
 import debugpy
 import ast
@@ -12,6 +14,7 @@ from dataset.rgbp import load_config_and_create_datasets
 from models import RGBPOLDecomposer
 from dotenv import load_dotenv
 from logger import get_logger
+
 logger = get_logger(__name__).set_context("IMPORT")
 load_dotenv()
 
@@ -25,39 +28,47 @@ except ImportError:
 def create_model_from_config(config, device):
     """
     Create the RGBPOLDecomposer model from configuration.
-    
+
     Args:
         config: Configuration dictionary containing model parameters
         device: Device to place the model on
-        
+
     Returns:
         RGBPOLDecomposer: The initialized model
     """
     # Access model configuration from the nested structure
-    model_config = config.get("MODEL", {})#.get("value", {})
-    
+    model_config = config.get("MODEL", {})  # .get("value", {})
+
     # Get image dimensions from config (check multiple possible locations)
     target_size = None
     for dataset_name in ["SCRREAM", "HOUSECAT6D", "POLARGB"]:
-        dataset_config = config.get("DATASETS", {}).get("value", {}).get(dataset_name, {})
+        dataset_config = (
+            config.get("DATASETS", {}).get("value", {}).get(dataset_name, {})
+        )
         if "TARGET_SIZE" in dataset_config:
             target_size = dataset_config["TARGET_SIZE"]
             break
-    
+
     if target_size is None:
         target_size = (224, 224)  # Default fallback
-    
+
     if isinstance(target_size, list):
         target_size = tuple(target_size)
-    
+
     # RGB Encoder configuration
     rgb_encoder_config = model_config.get("RGB_ENCODER", {})
     dinov3_cfg = {
-        "model_name": rgb_encoder_config.get("ENCODER", "facebook/dinov3-vits16-pretrain-lvd1689m"),
+        "model_name": rgb_encoder_config.get(
+            "ENCODER", "facebook/dinov3-vits16-pretrain-lvd1689m"
+        ),
         "image_size": rgb_encoder_config.get("IMAGE_SIZE", min(target_size)),
         "freeze_backbone": rgb_encoder_config.get("FREEZE_BACKBONE", True),
-        "return_selected_layers": rgb_encoder_config.get("RETURN_SELECTED_LAYERS", [3, 6, 9, 12]),
-        "return_last_hidden_state": rgb_encoder_config.get("RETURN_LAST_HIDDEN_STATE", False),
+        "return_selected_layers": rgb_encoder_config.get(
+            "RETURN_SELECTED_LAYERS", [3, 6, 9, 12]
+        ),
+        "return_last_hidden_state": rgb_encoder_config.get(
+            "RETURN_LAST_HIDDEN_STATE", False
+        ),
         "return_as_feature_maps": False,
         "return_cls_token": False,
     }
@@ -77,9 +88,9 @@ def create_model_from_config(config, device):
         "embed_dim": cross_attn_config.get("EMBED_DIM", 384),
         "n_heads": cross_attn_config.get("N_HEADS", 12),
         "dropout": cross_attn_config.get("DROPOUT", 0.1),
-        "bi_directional": cross_attn_config.get("BI_DIRECTIONAL", False)
+        "bi_directional": cross_attn_config.get("BI_DIRECTIONAL", False),
     }
-    
+
     # Decoder configuration
     decoder_config = model_config.get("DECODER", {})
     decoder_cfg = {
@@ -90,7 +101,6 @@ def create_model_from_config(config, device):
         "output_channels": decoder_config.get("OUTPUT_CHANNELS", 3),
     }
 
-
     # Create the main model
     model = RGBPOLDecomposer(
         dinov3=dinov3_cfg,
@@ -100,42 +110,45 @@ def create_model_from_config(config, device):
         diffuse_decoder=decoder_cfg,
         highlight_decoder=decoder_cfg,
     ).to(device)
-    
-    logger.info(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters", context="MODEL")
+
+    logger.info(
+        f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters",
+        context="MODEL",
+    )
     return model
 
 
 def create_datasets_from_config(config, config_path):
     """
     Create training and validation datasets from configuration using the new system.
-    
+
     This function now uses the improved dataset creation system that:
     - Reads from YAML config files with DATASETS section
     - Supports multiple datasets (SCRREAM, HOUSECAT6D, etc.)
     - Creates dataset-specific classes
     - Returns ConcatDatasets for multi-dataset training
-    
+
     Args:
         config: Configuration dictionary (DotMap) containing dataset parameters
         config_path: Path to the YAML config file for direct loading
-        
+
     Returns:
         dict: Dictionary containing datasets with keys expected by Engine
     """
     try:
         # Use the new dataset creation system
         datasets = load_config_and_create_datasets(config_path)
-        
+
         # Convert keys to match what Engine expects (capitalize first letter)
         result = {
-            "Training": datasets.get('training'),
-            "Validation": datasets.get('validation'), 
-            "Test": datasets.get('test'),
-            "workers": config.get("WORKERS", 4)
+            "Training": datasets.get("training"),
+            "Validation": datasets.get("validation"),
+            "Test": datasets.get("test"),
+            "workers": config.get("WORKERS", 4),
         }
-                
+
         return result
-        
+
     except Exception as e:
         logger.error(f"Failed to create datasets using new system: {e}")
         logger.warning("This may be due to:")
@@ -146,16 +159,18 @@ def create_datasets_from_config(config, config_path):
         raise
 
 
-def load_and_process_config(config_path, config=None, unknown_args=None, boot_mode=False):
+def load_and_process_config(
+    config_path, config=None, unknown_args=None, boot_mode=False
+):
     """
     Load and process configuration from file or direct input.
-    
+
     Args:
         config_path (str): Path to the YAML configuration file
         config (dict, optional): Direct configuration dictionary (overrides file loading)
         unknown_args (list, optional): List of unknown command-line arguments to process
         boot_mode (bool): Whether to enable boot mode with minimal parameters
-        
+
     Returns:
         DotMap: Processed configuration object
     """
@@ -215,12 +230,12 @@ def load_and_process_config(config_path, config=None, unknown_args=None, boot_mo
         config.EPOCHS = 1
         config.NO_WANDB = True
         # Set FEW_IMAGES to True for all datasets in boot mode
-        if hasattr(config, 'DATASETS') and config.DATASETS is not None:
+        if hasattr(config, "DATASETS") and config.DATASETS is not None:
             for dataset_name, dataset_config in config.DATASETS.items():
                 if isinstance(dataset_config, dict):
-                    dataset_config['FEW_IMAGES'] = True
+                    dataset_config["FEW_IMAGES"] = True
         logger.info("Boot mode enabled - using minimal parameters for quick testing")
-    
+
     return config
 
 
@@ -264,7 +279,7 @@ def run_pipeline(mode="train", config=None):
 
     if args.nodebug:
         debugpy.listen(("localhost", int(os.getenv("DEBUGPY_PORT"))))
-    
+
     # Show title screen if available
     try:
         titlescreen()
@@ -273,21 +288,20 @@ def run_pipeline(mode="train", config=None):
         logger.info("UnReflectAnything - Reflection Removal Training", context="INFO")
         logger.info("=" * 50, context="INFO")
 
-
     logger.info(f"Torch Version: {torch.__version__}")
     logger.info(f"Python Version: {os.sys.version.split()[0]}")
     logger.info(f"CUDA version: {torch.version.cuda}")
     logger.info(f"CUDNN version: {torch.backends.cudnn.version()}")
-    
+
     # Get CPU info
     try:
         cpu_affinity = os.sched_getaffinity(os.getpid())
         NUM_WORKERS = len(list(cpu_affinity))
         logger.info(f"Cores available: {NUM_WORKERS} {sorted(list(cpu_affinity))}")
-    except Exception as e:
+    except Exception:
         NUM_WORKERS = 4
         logger.info(f"Using default workers: {NUM_WORKERS}", context="INFO")
-    
+
     logger.info(f"CUDA available: {torch.cuda.is_available()}")
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ACCELERATED = torch.cuda.is_available()
@@ -298,7 +312,7 @@ def run_pipeline(mode="train", config=None):
         config_path=CONFIG_PATH,
         config=config,
         unknown_args=unknown,
-        boot_mode=args.boot
+        boot_mode=args.boot,
     )
 
     def get_unique_note():
@@ -347,10 +361,10 @@ def run_pipeline(mode="train", config=None):
         if mode == "train":
             # Create model
             model = create_model_from_config(config, DEVICE)
-            
+
             # Create datasets for training
             dataset = create_datasets_from_config(config, CONFIG_PATH)
-            
+
             # Initialize engine
             engine = Engine(
                 model=model,  # Pass the created model
@@ -359,21 +373,21 @@ def run_pipeline(mode="train", config=None):
                 no_wandb=config.get("NO_WANDB", False),
                 notes=config.get("NOTES", ""),
             )
-            
+
             # Train the model
             engine.trainloop()
-            
+
             # Load best model and test
             engine.reinstantiate_model_from_checkpoint()
             engine.test()
-            
+
         elif mode == "test":
             # Create model
             model = create_model_from_config(config, DEVICE)
-            
+
             # Create datasets for testing
             dataset = create_datasets_from_config(config, CONFIG_PATH)
-            
+
             # Initialize engine
             engine = Engine(
                 model=model,  # Pass the created model
@@ -382,11 +396,11 @@ def run_pipeline(mode="train", config=None):
                 no_wandb=config.get("NO_WANDB", False),
                 notes=config.get("NOTES", ""),
             )
-            
+
             # Load best model and test
             engine.reinstantiate_model_from_checkpoint()
             engine.test()
-            
+
         else:
             raise ValueError(f"Unknown mode: {mode}")
     except Exception as e:

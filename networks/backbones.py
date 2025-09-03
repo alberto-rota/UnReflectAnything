@@ -1,4 +1,3 @@
-
 # %%
 import torch
 import torch.nn as nn
@@ -15,7 +14,13 @@ warnings.filterwarnings(
 import kornia
 
 logging.set_verbosity_error()
-size2embeddim = {"tiny": 256, "small": 384, "base": 768, "beit-base-384": 768,"large": 1024}
+size2embeddim = {
+    "tiny": 256,
+    "small": 384,
+    "base": 768,
+    "beit-base-384": 768,
+    "large": 1024,
+}
 
 
 class DINOv2_Intel(MONO3DModel):

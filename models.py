@@ -133,12 +133,12 @@ class DINOv3(nn.Module):
         batch_size, _, input_h, input_w = rgb_image.shape
 
         # Ensure input dimensions are compatible with patch size
-        assert (
-            input_h % self.patch_size == 0
-        ), f"Height {input_h} must be divisible by patch size {self.patch_size}"
-        assert (
-            input_w % self.patch_size == 0
-        ), f"Width {input_w} must be divisible by patch size {self.patch_size}"
+        assert input_h % self.patch_size == 0, (
+            f"Height {input_h} must be divisible by patch size {self.patch_size}"
+        )
+        assert input_w % self.patch_size == 0, (
+            f"Width {input_w} must be divisible by patch size {self.patch_size}"
+        )
 
         # Calculate patch spatial dimensions
         patch_h, patch_w = self.get_patch_spatial_dims(input_h, input_w)
@@ -393,11 +393,11 @@ class DPT_Decoder(nn.Module):
             "readout_type": "ignore",  # 'ignore', 'add', or 'project'
             "use_bn": False,
             "output_image_size": (448, 448),  # If None, maintains input size
-            "output_channels": 3, # Set to 4 for RGBA output
+            "output_channels": 3,  # Set to 4 for RGBA output
         }
 
         self.config = {**default_config, **(config or {})}
-        
+
         self.out_image_size = self.config["output_image_size"]
         # Create reassemble layers for multi-scale feature extraction
         self.reassemble_layers = nn.ModuleList(
@@ -722,11 +722,17 @@ class RGBPOLCrossFuse(nn.Module):
             "bi_directional": False,
         }
         self.config = {**default_config, **(config or {})}
-        self.rgb_from_pol = CrossAttentionBlock(self.config["embed_dim"], self.config["n_heads"], self.config["dropout"])
+        self.rgb_from_pol = CrossAttentionBlock(
+            self.config["embed_dim"], self.config["n_heads"], self.config["dropout"]
+        )
         self.bi = self.config["bi_directional"]
         if self.config["bi_directional"]:
-            self.pol_from_rgb = CrossAttentionBlock(self.config["embed_dim"], self.config["n_heads"], self.config["dropout"])
-            self.proj = nn.Linear(2 * self.config["embed_dim"], self.config["embed_dim"])
+            self.pol_from_rgb = CrossAttentionBlock(
+                self.config["embed_dim"], self.config["n_heads"], self.config["dropout"]
+            )
+            self.proj = nn.Linear(
+                2 * self.config["embed_dim"], self.config["embed_dim"]
+            )
 
     def forward(self, rgb_tokens, pol_tokens, attn_mask=None):
         rgb_fused = self.rgb_from_pol(
@@ -839,17 +845,17 @@ class RGBPOLDecomposer(nn.Module):
             self.cross = nn.ModuleList(
                 [
                     RGBPOLCrossFuse(
-                        embed_dim=self.embed_dim, n_heads=12, dropout=0.1, bi_directional=False
+                        embed_dim=self.embed_dim,
+                        n_heads=12,
+                        dropout=0.1,
+                        bi_directional=False,
                     )
                     for _ in range(4)
                 ]
             )
         else:
             self.cross = nn.ModuleList(
-                [
-                    _build(pol_cross_attn, RGBPOLCrossFuse)
-                    for _ in range(4)
-                ]
+                [_build(pol_cross_attn, RGBPOLCrossFuse) for _ in range(4)]
             )
 
         # ---- Decoders (DPT_Decoder) ----
@@ -891,6 +897,7 @@ class RGBPOLDecomposer(nn.Module):
                 }
                 return DPT_Decoder(config)
             raise TypeError("Decoder must be DPT_Decoder instance or dict.")
+
         self.decS = build_dpt(spec_decoder)
         self.decD = build_dpt(diffuse_decoder)
         self.decH = build_dpt(highlight_decoder)
@@ -930,10 +937,11 @@ class RGBPOLDecomposer(nn.Module):
             "specular": S,
             "diffuse": D,
             "highlight": H,
-            "rgb_tokens": rgb_tokens, 
-            "pol_tokens": pol_tokens, 
+            "rgb_tokens": rgb_tokens,
+            "pol_tokens": pol_tokens,
             "cross_tokens": cross_tokens,
         }
+
 
 class RGBDistillDecomposer(nn.Module):
     """
@@ -1014,6 +1022,7 @@ class RGBDistillDecomposer(nn.Module):
                 }
                 return DPT_Decoder(config)
             raise TypeError("Decoder must be DPT_Decoder instance or dict.")
+
         self.decS = build_dpt(spec_decoder)
         self.decD = build_dpt(diffuse_decoder)
         self.decH = build_dpt(highlight_decoder)
@@ -1045,157 +1054,190 @@ class RGBDistillDecomposer(nn.Module):
             "specular": S,
             "diffuse": D,
             "highlight": H,
-            "rgb_tokens": rgb_tokens, 
+            "rgb_tokens": rgb_tokens,
         }
 
 
 def get_model_parameter_summary(model):
     """
     Generate a comprehensive parameter summary for RGBPOLDecomposer or RGBDistillDecomposer models.
-    
+
     Args:
         model: RGBPOLDecomposer or RGBDistillDecomposer instance
-        
+
     Returns:
         dict: Detailed parameter summary with counts and breakdowns
     """
     if not isinstance(model, (RGBPOLDecomposer, RGBDistillDecomposer)):
         raise ValueError("Model must be RGBPOLDecomposer or RGBDistillDecomposer")
-    
+
     def count_parameters(module, trainable_only=False):
         """Count parameters in a module."""
         if trainable_only:
             return sum(p.numel() for p in module.parameters() if p.requires_grad)
         else:
             return sum(p.numel() for p in module.parameters())
-    
+
     def count_parameters_by_name(module, name_patterns):
         """Count parameters for modules matching name patterns."""
         total_params = 0
         trainable_params = 0
-        
+
         for name, child in module.named_modules():
             if any(pattern in name for pattern in name_patterns):
                 total_params += sum(p.numel() for p in child.parameters())
-                trainable_params += sum(p.numel() for p in child.parameters() if p.requires_grad)
-        
+                trainable_params += sum(
+                    p.numel() for p in child.parameters() if p.requires_grad
+                )
+
         return total_params, trainable_params
-    
+
     # Initialize summary
     summary = {
         "model_type": model.__class__.__name__,
         "total_parameters": 0,
         "trainable_parameters": 0,
         "frozen_parameters": 0,
-        "components": {}
+        "components": {},
     }
-    
+
     # RGB Encoder (DINOv3)
-    dinov3_total, dinov3_trainable = count_parameters(model.dinov3, trainable_only=False), count_parameters(model.dinov3, trainable_only=True)
+    dinov3_total, dinov3_trainable = (
+        count_parameters(model.dinov3, trainable_only=False),
+        count_parameters(model.dinov3, trainable_only=True),
+    )
     summary["components"]["rgb_encoder"] = {
         "total": dinov3_total,
         "trainable": dinov3_trainable,
         "frozen": dinov3_total - dinov3_trainable,
-        "description": "DINOv3 backbone for RGB feature extraction"
+        "description": "DINOv3 backbone for RGB feature extraction",
     }
-    
+
     # POL components (only for RGBPOLDecomposer)
     if isinstance(model, RGBPOLDecomposer):
         # POL Preprocessing
-        pol_pre_total, pol_pre_trainable = count_parameters(model.pol_pre, trainable_only=False), count_parameters(model.pol_pre, trainable_only=True)
+        pol_pre_total, pol_pre_trainable = (
+            count_parameters(model.pol_pre, trainable_only=False),
+            count_parameters(model.pol_pre, trainable_only=True),
+        )
         summary["components"]["pol_preprocessing"] = {
             "total": pol_pre_total,
             "trainable": pol_pre_trainable,
             "frozen": pol_pre_total - pol_pre_trainable,
-            "description": "Polarization preprocessing (AoLP, DoLP → [cos2θ, sin2θ, DoLP])"
+            "description": "Polarization preprocessing (AoLP, DoLP → [cos2θ, sin2θ, DoLP])",
         }
-        
+
         # POL Encoder
-        pol_enc_total, pol_enc_trainable = count_parameters(model.pol_enc, trainable_only=False), count_parameters(model.pol_enc, trainable_only=True)
+        pol_enc_total, pol_enc_trainable = (
+            count_parameters(model.pol_enc, trainable_only=False),
+            count_parameters(model.pol_enc, trainable_only=True),
+        )
         summary["components"]["pol_encoder"] = {
             "total": pol_enc_total,
             "trainable": pol_enc_trainable,
             "frozen": pol_enc_total - pol_enc_trainable,
-            "description": "POLViT encoder for polarization feature extraction"
+            "description": "POLViT encoder for polarization feature extraction",
         }
-        
+
         # Cross-attention modules
-        cross_total, cross_trainable = count_parameters(model.cross, trainable_only=False), count_parameters(model.cross, trainable_only=True)
+        cross_total, cross_trainable = (
+            count_parameters(model.cross, trainable_only=False),
+            count_parameters(model.cross, trainable_only=True),
+        )
         summary["components"]["cross_attention"] = {
             "total": cross_total,
             "trainable": cross_trainable,
             "frozen": cross_total - cross_trainable,
-            "description": "RGB-POL cross-attention fusion modules"
+            "description": "RGB-POL cross-attention fusion modules",
         }
-    
+
     # Decoders
     decoders = {
         "specular_decoder": model.decS,
         "diffuse_decoder": model.decD,
-        "highlight_decoder": model.decH
+        "highlight_decoder": model.decH,
     }
-    
+
     for name, decoder in decoders.items():
-        dec_total, dec_trainable = count_parameters(decoder, trainable_only=False), count_parameters(decoder, trainable_only=True)
+        dec_total, dec_trainable = (
+            count_parameters(decoder, trainable_only=False),
+            count_parameters(decoder, trainable_only=True),
+        )
         summary["components"][name] = {
             "total": dec_total,
             "trainable": dec_trainable,
             "frozen": dec_total - dec_trainable,
-            "description": f"DPT decoder for {name.replace('_decoder', '')} component"
+            "description": f"DPT decoder for {name.replace('_decoder', '')} component",
         }
-    
+
     # Calculate totals
-    summary["total_parameters"] = sum(comp["total"] for comp in summary["components"].values())
-    summary["trainable_parameters"] = sum(comp["trainable"] for comp in summary["components"].values())
-    summary["frozen_parameters"] = summary["total_parameters"] - summary["trainable_parameters"]
-    
+    summary["total_parameters"] = sum(
+        comp["total"] for comp in summary["components"].values()
+    )
+    summary["trainable_parameters"] = sum(
+        comp["trainable"] for comp in summary["components"].values()
+    )
+    summary["frozen_parameters"] = (
+        summary["total_parameters"] - summary["trainable_parameters"]
+    )
+
     return summary
 
 
 def print_model_parameter_summary(model, detailed=True):
     """
     Print a formatted parameter summary for RGBPOLDecomposer or RGBDistillDecomposer models.
-    
+
     Args:
         model: RGBPOLDecomposer or RGBDistillDecomposer instance
         detailed: Whether to print detailed breakdown by component
     """
     summary = get_model_parameter_summary(model)
-    
-    print(f"\n{'='*60}")
+
+    print(f"\n{'=' * 60}")
     print(f"MODEL PARAMETER SUMMARY: {summary['model_type']}")
-    print(f"{'='*60}")
-    
+    print(f"{'=' * 60}")
+
     # Overall statistics
     print("\n📊 OVERALL STATISTICS:")
     print(f"   Total Parameters:     {summary['total_parameters']:,}")
     print(f"   Trainable Parameters: {summary['trainable_parameters']:,}")
     print(f"   Frozen Parameters:    {summary['frozen_parameters']:,}")
-    print(f"   Trainable Ratio:      {summary['trainable_parameters']/summary['total_parameters']*100:.1f}%")
-    
+    print(
+        f"   Trainable Ratio:      {summary['trainable_parameters'] / summary['total_parameters'] * 100:.1f}%"
+    )
+
     if detailed:
         print("\n🔍 DETAILED BREAKDOWN:")
-        print(f"{'Component':<25} {'Total':<12} {'Trainable':<12} {'Frozen':<12} {'Ratio':<8}")
-        print(f"{'-'*25} {'-'*12} {'-'*12} {'-'*12} {'-'*8}")
-        
+        print(
+            f"{'Component':<25} {'Total':<12} {'Trainable':<12} {'Frozen':<12} {'Ratio':<8}"
+        )
+        print(f"{'-' * 25} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 8}")
+
         for comp_name, comp_data in summary["components"].items():
-            ratio = comp_data["trainable"] / comp_data["total"] * 100 if comp_data["total"] > 0 else 0
-            print(f"{comp_name:<25} {comp_data['total']:<12,} {comp_data['trainable']:<12,} {comp_data['frozen']:<12,} {ratio:<7.1f}%")
-        
+            ratio = (
+                comp_data["trainable"] / comp_data["total"] * 100
+                if comp_data["total"] > 0
+                else 0
+            )
+            print(
+                f"{comp_name:<25} {comp_data['total']:<12,} {comp_data['trainable']:<12,} {comp_data['frozen']:<12,} {ratio:<7.1f}%"
+            )
+
         print("\n📝 COMPONENT DESCRIPTIONS:")
         for comp_name, comp_data in summary["components"].items():
             print(f"   • {comp_name}: {comp_data['description']}")
-    
-    print(f"\n{'='*60}")
+
+    print(f"\n{'=' * 60}")
 
 
 def get_model_size_mb(model):
     """
     Calculate model size in MB (approximate).
-    
+
     Args:
         model: RGBPOLDecomposer or RGBDistillDecomposer instance
-        
+
     Returns:
         float: Model size in MB
     """

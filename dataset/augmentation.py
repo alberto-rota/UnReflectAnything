@@ -12,7 +12,10 @@ from utilities.rotations import (
 
 
 def color_augmentation(
-    framestack: torch.Tensor, camera_pose: List[float], p: float = 0.2, target_only: bool = False
+    framestack: torch.Tensor,
+    camera_pose: List[float],
+    p: float = 0.2,
+    target_only: bool = False,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, List[float]]]:
     """
     Applies a series of color augmentations to a given tensor of images, with a set probability.
@@ -24,7 +27,7 @@ def color_augmentation(
         target_only: Whether to apply augmentation only to the target frame
 
     Returns:
-        Either the augmented image tensor or a tuple containing the augmented image tensor 
+        Either the augmented image tensor or a tuple containing the augmented image tensor
         and the unchanged transformation list
     """
     # Define a series of color augmentations

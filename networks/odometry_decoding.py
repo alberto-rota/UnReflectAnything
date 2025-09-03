@@ -1,10 +1,7 @@
-
-
-
 import torch
 import torch.nn as nn
 import math
-from typing import Dict, Tuple, Optional, Union, List
+from typing import Dict, Tuple, Optional
 
 
 class FUND_Predictor(nn.Module):
@@ -36,18 +33,30 @@ class FUND_Predictor(nn.Module):
 
     def forward(self, patchembeddings: torch.Tensor) -> Dict[str, torch.Tensor]:
         if self.loftr_coarse:
-            source_embedding: torch.Tensor = patchembeddings[:, 0]  # Shape: (B, C, H, W)
-            target_embedding: torch.Tensor = patchembeddings[:, 1]  # Shape: (B, C, H, W)
+            source_embedding: torch.Tensor = patchembeddings[
+                :, 0
+            ]  # Shape: (B, C, H, W)
+            target_embedding: torch.Tensor = patchembeddings[
+                :, 1
+            ]  # Shape: (B, C, H, W)
 
             # Get pixel coordinates from embeddings
-            source_pixels: torch.Tensor = self.loftr2px(source_embedding)  # Shape: (B, 2, H * W)
-            target_pixels: torch.Tensor = self.loftr2px(target_embedding)  # Shape: (B, 2, H * W)
+            source_pixels: torch.Tensor = self.loftr2px(
+                source_embedding
+            )  # Shape: (B, 2, H * W)
+            target_pixels: torch.Tensor = self.loftr2px(
+                target_embedding
+            )  # Shape: (B, 2, H * W)
 
             # Flatten embeddings
             B, C, H, W = source_embedding.shape
             N: int = H * W
-            source_embedding_flat: torch.Tensor = source_embedding.view(B, C, N)  # Shape: (B, C, N)
-            target_embedding_flat: torch.Tensor = target_embedding.view(B, C, N)  # Shape: (B, C, N)
+            source_embedding_flat: torch.Tensor = source_embedding.view(
+                B, C, N
+            )  # Shape: (B, C, N)
+            target_embedding_flat: torch.Tensor = target_embedding.view(
+                B, C, N
+            )  # Shape: (B, C, N)
 
             # Find correspondences
             indices_target: torch.Tensor
@@ -73,7 +82,9 @@ class FUND_Predictor(nn.Module):
         )
 
         # Epipolar Refinement
-        weights: torch.Tensor = self.epipolar_refinement(F_greedy, source_matched, target_matched)
+        weights: torch.Tensor = self.epipolar_refinement(
+            F_greedy, source_matched, target_matched
+        )
         # Recompute Fundamental Matrix with refined weights
         F_refined: torch.Tensor = self.fundamental_estimator(
             source_matched, target_matched, weights.permute(1, 0)
@@ -103,12 +114,12 @@ class LoFTR2px(nn.Module):
     """
 
     def __init__(
-        self, 
-        input_channels: int, 
-        img_height: int, 
-        img_width: int, 
-        hidden_dim: int = 256, 
-        pos_dim: int = 64
+        self,
+        input_channels: int,
+        img_height: int,
+        img_width: int,
+        hidden_dim: int = 256,
+        pos_dim: int = 64,
     ) -> None:
         super(LoFTR2px, self).__init__()
         self.input_channels: int = input_channels
@@ -142,8 +153,12 @@ class LoFTR2px(nn.Module):
         stride_x: float = self.img_width / W
 
         # Basic grid coordinates
-        y_coords: torch.Tensor = torch.arange(0, H, device=device).unsqueeze(1).expand(H, W)
-        x_coords: torch.Tensor = torch.arange(0, W, device=device).unsqueeze(0).expand(H, W)
+        y_coords: torch.Tensor = (
+            torch.arange(0, H, device=device).unsqueeze(1).expand(H, W)
+        )
+        x_coords: torch.Tensor = (
+            torch.arange(0, W, device=device).unsqueeze(0).expand(H, W)
+        )
         x_coords_flat: torch.Tensor = x_coords.reshape(-1)  # (H*W)
         y_coords_flat: torch.Tensor = y_coords.reshape(-1)  # (H*W)
 
@@ -158,13 +173,19 @@ class LoFTR2px(nn.Module):
         # Sinusoidal positional encoding
         pos_enc: torch.Tensor = self.sinusoidal_pos_encoding(H, W, self.pos_dim, device)
         # pos_enc: (H, W, pos_dim)
-        pos_enc_flat: torch.Tensor = pos_enc.view(-1, self.pos_dim).unsqueeze(0).expand(B, -1, -1)
+        pos_enc_flat: torch.Tensor = (
+            pos_enc.view(-1, self.pos_dim).unsqueeze(0).expand(B, -1, -1)
+        )
         # pos_enc_flat: (B, H*W, pos_dim)
 
         # Flatten features and concatenate
-        features_flat: torch.Tensor = features.view(B, C, H * W).permute(0, 2, 1)  # (B, H*W, C)
+        features_flat: torch.Tensor = features.view(B, C, H * W).permute(
+            0, 2, 1
+        )  # (B, H*W, C)
         # Combine embeddings, basic coordinates, and sinusoidal PE
-        features_with_pos: torch.Tensor = torch.cat([features_flat, pos_2d, pos_enc_flat], dim=2)
+        features_with_pos: torch.Tensor = torch.cat(
+            [features_flat, pos_2d, pos_enc_flat], dim=2
+        )
 
         # Predict offset within each patch
         offsets: torch.Tensor = self.mlp(features_with_pos)  # (B, H*W, 2)
@@ -185,7 +206,9 @@ class LoFTR2px(nn.Module):
 
         return pixel_coords
 
-    def sinusoidal_pos_encoding(self, H: int, W: int, d_model: int, device: torch.device) -> torch.Tensor:
+    def sinusoidal_pos_encoding(
+        self, H: int, W: int, d_model: int, device: torch.device
+    ) -> torch.Tensor:
         """
         Create a 2D sinusoidal positional encoding of shape (H, W, d_model).
         Assumes d_model is divisible by 4 for simplicity.
@@ -249,16 +272,27 @@ class CorrespondenceFinder(nn.Module):
         super(CorrespondenceFinder, self).__init__()
         self.ratio_threshold: float = ratio_threshold
 
-    def forward(self, embeddings1: torch.Tensor, embeddings2: torch.Tensor, embedding_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        embeddings1: torch.Tensor,
+        embeddings2: torch.Tensor,
+        embedding_mask: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, C, N = embeddings1.shape
         device: torch.device = embeddings1.device
 
         # Normalize embeddings
-        embeddings1_norm: torch.Tensor = nn.functional.normalize(embeddings1, p=2, dim=1)
-        embeddings2_norm: torch.Tensor = nn.functional.normalize(embeddings2, p=2, dim=1)
+        embeddings1_norm: torch.Tensor = nn.functional.normalize(
+            embeddings1, p=2, dim=1
+        )
+        embeddings2_norm: torch.Tensor = nn.functional.normalize(
+            embeddings2, p=2, dim=1
+        )
 
         # Compute similarity matrix
-        sim_matrix: torch.Tensor = torch.bmm(embeddings1_norm.transpose(1, 2), embeddings2_norm)
+        sim_matrix: torch.Tensor = torch.bmm(
+            embeddings1_norm.transpose(1, 2), embeddings2_norm
+        )
 
         # Apply mask to similarity matrix (if embedding_mask is provided)
         if embedding_mask is not None:
@@ -290,9 +324,9 @@ class CorrespondenceFinder(nn.Module):
         ratio_scores: torch.Tensor = scores_12 / (scores_12_second + 1e-8)
 
         # Cycle consistency check
-        cycle_consistent: torch.Tensor = torch.gather(indices_21, 1, indices_12) == torch.arange(
-            N, device=device
-        ).unsqueeze(0).expand(B, N)
+        cycle_consistent: torch.Tensor = torch.gather(
+            indices_21, 1, indices_12
+        ) == torch.arange(N, device=device).unsqueeze(0).expand(B, N)
 
         # Combined confidence score
         valid_matches: torch.Tensor = cycle_consistent
@@ -314,7 +348,9 @@ class CorrespondingPointsRetriever(nn.Module):
     def __init__(self) -> None:
         super(CorrespondingPointsRetriever, self).__init__()
 
-    def forward(self, coords1: torch.Tensor, coords2: torch.Tensor, indices2: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, coords1: torch.Tensor, coords2: torch.Tensor, indices2: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Retrieve corresponding pixel coordinates.
 
@@ -328,8 +364,12 @@ class CorrespondingPointsRetriever(nn.Module):
             pts2 (torch.Tensor): Corresponding points from image 2, shape (B, N, 2)
         """
         # Gather matching coordinates from image 2
-        indices_expanded: torch.Tensor = indices2.unsqueeze(1).expand(-1, 2, -1)  # Shape: (B, 2, N)
-        coords2_matched: torch.Tensor = torch.gather(coords2, 2, indices_expanded)  # Shape: (B, 2, N)
+        indices_expanded: torch.Tensor = indices2.unsqueeze(1).expand(
+            -1, 2, -1
+        )  # Shape: (B, 2, N)
+        coords2_matched: torch.Tensor = torch.gather(
+            coords2, 2, indices_expanded
+        )  # Shape: (B, 2, N)
 
         # Transpose to shape (B, N, 2)
         pts1: torch.Tensor = coords1.permute(0, 2, 1)  # Shape: (B, N, 2)
@@ -344,8 +384,6 @@ import torch.nn as nn
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import math
 
 
 class FundamentalEstimator(nn.Module):
@@ -358,7 +396,9 @@ class FundamentalEstimator(nn.Module):
         self.alpha: float = alpha
         self.epsilon: float = epsilon
 
-    def forward(self, pts1: torch.Tensor, pts2: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, pts1: torch.Tensor, pts2: torch.Tensor, scores: torch.Tensor
+    ) -> torch.Tensor:
         B, N, _ = pts1.shape
         if N < 8:
             raise ValueError("At least 8 point correspondences required.")
@@ -409,7 +449,9 @@ class FundamentalEstimator(nn.Module):
         )
 
         # Construct corrected singular values
-        S_corrected: torch.Tensor = torch.stack([S_f[:, 0], S_f[:, 1], s_small_corrected], dim=1)
+        S_corrected: torch.Tensor = torch.stack(
+            [S_f[:, 0], S_f[:, 1], s_small_corrected], dim=1
+        )
 
         # Reconstruct F with smoothed singular values
         F_rank2: torch.Tensor = U_f.bmm(torch.diag_embed(S_corrected)).bmm(Vh_f)
@@ -427,9 +469,9 @@ class FundamentalEstimator(nn.Module):
         B, N, _ = pts.shape
         mean: torch.Tensor = pts.mean(dim=1, keepdim=True)
         std: torch.Tensor = pts.std(dim=1, keepdim=True) + 1e-8
-        scale: torch.Tensor = torch.sqrt(torch.tensor(2.0, device=pts.device)) / std.mean(
-            dim=2, keepdim=True
-        )
+        scale: torch.Tensor = torch.sqrt(
+            torch.tensor(2.0, device=pts.device)
+        ) / std.mean(dim=2, keepdim=True)
 
         zeros: torch.Tensor = torch.zeros(B, 1, 1, device=pts.device)
         ones: torch.Tensor = torch.ones(B, 1, 1, device=pts.device)
@@ -462,7 +504,9 @@ class EpipolarRefinement(nn.Module):
     def __init__(self) -> None:
         super(EpipolarRefinement, self).__init__()
 
-    def forward(self, F: torch.Tensor, source_points: torch.Tensor, target_points: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, F: torch.Tensor, source_points: torch.Tensor, target_points: torch.Tensor
+    ) -> torch.Tensor:
         # Compute epipolar lines for source and target points
 
         source_points = torch.cat(
@@ -472,8 +516,12 @@ class EpipolarRefinement(nn.Module):
             [target_points, torch.ones_like(target_points[:, :, 0:1])], dim=-1
         )
 
-        lines_target: torch.Tensor = torch.bmm(F, source_points.transpose(1, 2))  # Shape: (B, 3, N)
-        lines_source: torch.Tensor = torch.bmm(F.transpose(1, 2), target_points.transpose(1, 2))
+        lines_target: torch.Tensor = torch.bmm(
+            F, source_points.transpose(1, 2)
+        )  # Shape: (B, 3, N)
+        lines_source: torch.Tensor = torch.bmm(
+            F.transpose(1, 2), target_points.transpose(1, 2)
+        )
 
         # Compute epipolar distances
         denom_target: torch.Tensor = torch.sqrt(
@@ -506,7 +554,12 @@ class TranslationScaler(nn.Module):
         # Embed CLS tokens into 3D space to match the translation vector's dimensionality
         self.cls_embed: nn.Linear = nn.Linear(768, 3)
 
-    def forward(self, translation_vector: torch.Tensor, cls_token1: torch.Tensor, cls_token2: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        translation_vector: torch.Tensor,
+        cls_token1: torch.Tensor,
+        cls_token2: torch.Tensor,
+    ) -> torch.Tensor:
         """
         Args:
             translation_vector (torch.Tensor): Normalized translation vectors of shape (B, 3)

@@ -1,15 +1,9 @@
-
 # %%
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from utilities import *
-from rich import print
-import inspect
-import copy
 import math
-import sys
 
 import importlib
 import networks.layers_pose
@@ -211,7 +205,6 @@ class ViT_PoseEstimator(nn.Module):
         self.bn = self.bn[batchnorm]
 
     def forward(self, framestack: torch.Tensor) -> torch.Tensor:
-
         # FEATURE EXTRACTION
         framestack_tks = torch.stack([self.backbone_net(frame) for frame in framestack])
         framestack_tksp = torch.stack(
@@ -414,7 +407,6 @@ class CrossTransformer_PoseEstimator(nn.Module):
         self.head = heads[self.regressor]
 
     def forward(self, source, target):
-
         source_tks = self.backbone_net(source)
         target_tks = self.backbone_net(target)
         # --> List of S' elements of shape B x L x E+1

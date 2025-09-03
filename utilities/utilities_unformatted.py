@@ -1,5 +1,3 @@
-
-
 # Standard library imports
 import io
 import json
@@ -35,7 +33,6 @@ rich.traceback.install()
 
 
 def get_hostname() -> str:
-
     hostname = socket.gethostname()
     if "alberto-vm" in hostname:
         return "AsensusVM"
@@ -199,7 +196,6 @@ def rgb(t: torch.Tensor, **kwargs: Any) -> None:
 
 
 def tprint(args, shape=False, dtype=False, device=False, grad_fn=False, **kwargs):
-
     sep = kwargs.get("sep", " ")
     end = kwargs.get("end", "\n")
     output = []
@@ -210,7 +206,6 @@ def tprint(args, shape=False, dtype=False, device=False, grad_fn=False, **kwargs
 
     for arg in args:
         if isinstance(arg, torch.Tensor):
-
             infos = ""
             if shape:
                 infos += f"Shape: {tuple(arg.shape)}"
@@ -1075,7 +1070,7 @@ def coloredbar(parts: list, colors: list, num_blocks: int) -> str:
     """
     assert len(parts) == len(colors)
     total = sum(parts)
-    block = "\u25A0"
+    block = "\u25a0"
     bar = ""
     for part, color in zip(parts, colors):
         num_part_blocks = round(part / total * num_blocks)
@@ -1182,7 +1177,7 @@ def RdGr(value):
     color = f"#{red:02x}{green:02x}00"
 
     # Create the text object with the specified color
-    return f"[{color}]{(value*100):.2f}[/{color}]"
+    return f"[{color}]{(value * 100):.2f}[/{color}]"
 
 
 def perc_req_grad(model):
@@ -1582,7 +1577,7 @@ def sftp_transfer(local_file_path: str, remote_file_path: str) -> None:
         print(f" [green]-->OK-->[/green] Saved to NAS:/{remote_file_path}")
 
     except Exception as e:
-        print(f" [red]-->ERROR-->[/red] Cound not upload file to NAS : ", end="")
+        print(" [red]-->ERROR-->[/red] Cound not upload file to NAS : ", end="")
         print(e)
         return
 
@@ -1620,7 +1615,7 @@ def sampleinspect(sample: tuple):
     rgb(fstack)
 
     # Print transformation information
-    print(f"Transformation:")
+    print("Transformation:")
     tprint(Ts2t.cpu().numpy())
 
     # Interpret and print the directional information based on the transformation vector
@@ -1861,7 +1856,6 @@ def viewPixelsMatches(
     scores: torch.Tensor,
     topk: int = 20,
 ) -> Image.Image:
-
     def to_pil(img):
         if isinstance(img, torch.Tensor):
             img = img.detach().cpu()

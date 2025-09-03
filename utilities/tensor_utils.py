@@ -1,10 +1,9 @@
-
-
 from typing import Dict, List
 import numpy as np
 from rich import print as nativeprint
 import torch
 import torch.nn.functional as F
+
 
 def closest_multiple(value: float, factor: float, mode: str = "closest") -> int:
     """
@@ -63,7 +62,6 @@ def hwc(image: torch.Tensor) -> torch.Tensor:
 
 
 def tprint(args, shape=False, dtype=False, device=False, grad_fn=False, **kwargs):
-
     sep = kwargs.get("sep", " ")
     end = kwargs.get("end", "\n")
     output = []
@@ -74,7 +72,6 @@ def tprint(args, shape=False, dtype=False, device=False, grad_fn=False, **kwargs
 
     for arg in args:
         if isinstance(arg, torch.Tensor):
-
             infos = "\n"
             if shape:
                 infos += f"Shape: {tuple(arg.shape)}"
@@ -203,13 +200,11 @@ def chw2embedding(chw_tensor: torch.Tensor, embed_dim_last=False) -> torch.Tenso
 
 
 def append_cls(
-    featuremap: torch.Tensor, 
-    cls_token: torch.Tensor, 
-    prepend: bool = True
+    featuremap: torch.Tensor, cls_token: torch.Tensor, prepend: bool = True
 ) -> torch.Tensor:
     """
     Appends or prepends a CLS token to a feature map, handling various input formats.
-    
+
     Args:
         featuremap (torch.Tensor): Input feature map of shape:
             - (B, E, H, W) - CHW format
@@ -223,16 +218,18 @@ def append_cls(
             - (1, E) - unbatched with singleton sequence dimension
             - (E,) - unbatched without sequence dimension
         prepend (bool): If True, prepend CLS token, else append it.
-    
+
     Returns:
         torch.Tensor: Embedding sequence of shape (B, H*W+1, E) or (H*W+1, E) for unbatched.
     """
     # Handle unbatched inputs by adding batch dimension
     original_shape = featuremap.shape
-    
+
     # Determine if inputs are batched or unbatched
-    is_batched = featuremap.ndim == 4 or (featuremap.ndim == 3 and cls_token.ndim >= 2 and cls_token.shape[0] > 1)
-    
+    is_batched = featuremap.ndim == 4 or (
+        featuremap.ndim == 3 and cls_token.ndim >= 2 and cls_token.shape[0] > 1
+    )
+
     if not is_batched:
         # Add batch dimension for unbatched inputs
         if featuremap.ndim == 3:  # (E, H, W) -> (1, E, H, W)
@@ -241,13 +238,13 @@ def append_cls(
         elif featuremap.ndim == 2:  # (H*W, E) -> (1, H*W, E)
             featuremap = featuremap.unsqueeze(0)
             cls_token = cls_token.unsqueeze(0) if cls_token.ndim == 1 else cls_token
-    
+
     # Handle CLS token shape variations
     if cls_token.ndim == 1:  # (E,) -> (1, 1, E)
         cls_token = cls_token.unsqueeze(0).unsqueeze(0)
     elif cls_token.ndim == 2:  # (B, E) -> (B, 1, E)
         cls_token = cls_token.unsqueeze(1)
-    
+
     # Detect featuremap format and convert to embedding format
     if featuremap.ndim == 4:  # (B, E, H, W) - CHW format
         # Convert to embedding format: (B, H*W, E)
@@ -255,19 +252,23 @@ def append_cls(
     elif featuremap.ndim == 3:  # (B, N, E) or (B, E, N)
         # Check if it's already in embedding format
         B, dim1, dim2 = featuremap.shape
-        if dim1 == cls_token.shape[-1]:  # (B, E, N) format - compare with embedding dimension
+        if (
+            dim1 == cls_token.shape[-1]
+        ):  # (B, E, N) format - compare with embedding dimension
             embedding = featuremap.permute(0, 2, 1)  # (B, N, E)
         else:  # (B, N, E) format
             embedding = featuremap
     else:
         raise ValueError(f"Unexpected featuremap shape: {original_shape}")
-    
+
     # Ensure CLS token has correct batch size
     if cls_token.shape[0] == 1 and embedding.shape[0] > 1:
         cls_token = cls_token.expand(embedding.shape[0], -1, -1)
     elif cls_token.shape[0] != embedding.shape[0]:
-        raise ValueError(f"Batch size mismatch: featuremap {embedding.shape[0]}, cls_token {cls_token.shape[0]}")
-    
+        raise ValueError(
+            f"Batch size mismatch: featuremap {embedding.shape[0]}, cls_token {cls_token.shape[0]}"
+        )
+
     # Concatenate CLS token with embedding
     if prepend:
         # Prepend CLS token: (B, 1+seq_len, E)
@@ -275,11 +276,11 @@ def append_cls(
     else:
         # Append CLS token: (B, seq_len+1, E)
         result = torch.cat([embedding, cls_token], dim=1)
-    
+
     # Remove batch dimension if input was unbatched
     if len(original_shape) <= 3:
         result = result.squeeze(0)
-    
+
     return result
 
 
@@ -326,9 +327,9 @@ def embedding_mask_from_pixels(
     ), "All channels in the mask must be equal"
 
     # Verify dimensions are divisible by patch_size
-    assert (
-        H % patch_size == 0 and W % patch_size == 0
-    ), f"Image dimensions ({H}, {W}) must be divisible by patch_size {patch_size}"
+    assert H % patch_size == 0 and W % patch_size == 0, (
+        f"Image dimensions ({H}, {W}) must be divisible by patch_size {patch_size}"
+    )
 
     # Take just one channel since they're all equal
     single_channel_mask = pixel_mask[:, 0]  # Shape: (B, H, W)
@@ -453,170 +454,194 @@ def generate_random_pose_tensor(
 
     return pose_vector.T
 
-def interpolate_featuremap(tensor: torch.Tensor, mask: torch.Tensor, mode: str = "nearest", k: int = 4) -> torch.Tensor:
+
+def interpolate_featuremap(
+    tensor: torch.Tensor, mask: torch.Tensor, mode: str = "nearest", k: int = 4
+) -> torch.Tensor:
     """
     Fully vectorized interpolation for filling invalid positions.
-    
+
     Args:
         tensor: Input tensor of shape (C, H, W)
         mask: Binary mask of shape (H, W) where True indicates valid positions
         mode: Interpolation mode - "nearest" or "bilinear"
         k: Number of nearest neighbors for bilinear interpolation (ignored for nearest)
-        
+
     Returns:
         Interpolated tensor of same shape as input
     """
     C, H, W = tensor.shape
     device = tensor.device
-    
+
     # Ensure mask is boolean
     mask = mask.bool()
-    
+
     # Early returns for edge cases
     if mask.all():
         return tensor.clone()
-    
+
     if not mask.any():
         # No valid positions - return original or handle as needed
         return tensor.clone()
-    
+
     # Create output tensor
     output = tensor.clone()
-    
+
     # Get coordinates of valid and invalid positions
     valid_positions = torch.where(mask)  # Returns (y_coords, x_coords)
     invalid_positions = torch.where(~mask)
-    
+
     # Convert to coordinate tensors [y, x] format
     valid_coords = torch.stack(valid_positions, dim=1).float()  # Shape: (num_valid, 2)
-    invalid_coords = torch.stack(invalid_positions, dim=1).float()  # Shape: (num_invalid, 2)
-    
+    invalid_coords = torch.stack(
+        invalid_positions, dim=1
+    ).float()  # Shape: (num_invalid, 2)
+
     # Vectorized distance calculation using broadcasting
     # Shape: (num_invalid, 1, 2) - (1, num_valid, 2) = (num_invalid, num_valid, 2)
     coord_diff = invalid_coords.unsqueeze(1) - valid_coords.unsqueeze(0)
-    
+
     # Calculate L2 distances
     distances = torch.norm(coord_diff, dim=2)  # Shape: (num_invalid, num_valid)
-    
+
     # Extract coordinates for indexing
     invalid_y, invalid_x = invalid_positions
-    
+
     if mode == "nearest":
         # Find nearest valid position for each invalid position
         nearest_indices = torch.argmin(distances, dim=1)  # Shape: (num_invalid,)
-        
+
         # Get coordinates of nearest valid positions
         nearest_valid_coords = valid_coords[nearest_indices]  # Shape: (num_invalid, 2)
         nearest_y = nearest_valid_coords[:, 0].long()
         nearest_x = nearest_valid_coords[:, 1].long()
-        
+
         # Vectorized assignment for all channels simultaneously
         output[:, invalid_y, invalid_x] = tensor[:, nearest_y, nearest_x]
-        
+
     elif mode == "bilinear":
         # Ensure k doesn't exceed number of valid positions
         k = min(k, len(valid_coords))
-        
+
         # Find k nearest neighbors for distance-weighted interpolation
         k_distances, k_indices = torch.topk(distances, k, dim=1, largest=False)
-        
+
         # Calculate weights using inverse distance weighting
         # Add small epsilon to avoid division by zero for exact matches
         epsilon = 1e-8
         weights = 1.0 / (k_distances + epsilon)
-        
+
         # Handle case where distance is exactly zero (avoid inf weights)
         exact_matches = k_distances < epsilon
         if exact_matches.any():
             # For exact matches, use weight of 1.0 for closest match, 0.0 for others
-            weights = torch.where(exact_matches, 
-                                torch.where(k_distances == k_distances.min(dim=1, keepdim=True)[0], 
-                                          1.0, 0.0), 
-                                weights)
-        
+            weights = torch.where(
+                exact_matches,
+                torch.where(
+                    k_distances == k_distances.min(dim=1, keepdim=True)[0], 1.0, 0.0
+                ),
+                weights,
+            )
+
         # Normalize weights so they sum to 1 for each invalid position
         weights = weights / weights.sum(dim=1, keepdim=True)
-        
+
         # Get coordinates of k nearest neighbors
         k_nearest_coords = valid_coords[k_indices]  # Shape: (num_invalid, k, 2)
         k_nearest_y = k_nearest_coords[:, :, 0].long()
         k_nearest_x = k_nearest_coords[:, :, 1].long()
-        
+
         # Vectorized gathering of values from k nearest neighbors
         num_invalid = len(invalid_y)
-        
+
         # Expand indices for all channels
-        batch_idx = torch.arange(num_invalid, device=device).view(1, num_invalid, 1).expand(C, num_invalid, k)
-        channel_idx = torch.arange(C, device=device).view(C, 1, 1).expand(C, num_invalid, k)
-        
+        batch_idx = (
+            torch.arange(num_invalid, device=device)
+            .view(1, num_invalid, 1)
+            .expand(C, num_invalid, k)
+        )
+        channel_idx = (
+            torch.arange(C, device=device).view(C, 1, 1).expand(C, num_invalid, k)
+        )
+
         # Gather values from k nearest neighbors for all channels
         # Shape: (C, num_invalid, k)
         neighbor_values = tensor[
             channel_idx.reshape(-1),
             k_nearest_y.unsqueeze(0).expand(C, -1, -1).reshape(-1),
-            k_nearest_x.unsqueeze(0).expand(C, -1, -1).reshape(-1)
+            k_nearest_x.unsqueeze(0).expand(C, -1, -1).reshape(-1),
         ].reshape(C, num_invalid, k)
-        
+
         # Apply distance-weighted interpolation
         # weights shape: (num_invalid, k) -> (1, num_invalid, k) for broadcasting
         interpolated_values = (neighbor_values * weights.unsqueeze(0)).sum(dim=2)
-        
+
         # Assign interpolated values
         output[:, invalid_y, invalid_x] = interpolated_values
-        
+
     else:
-        raise ValueError(f"Unsupported interpolation mode: {mode}. Use 'nearest' or 'bilinear'.")
-    
+        raise ValueError(
+            f"Unsupported interpolation mode: {mode}. Use 'nearest' or 'bilinear'."
+        )
+
     return output
 
 
-def inpaint(image: torch.Tensor, missing_value: float, median_kernel_size: int = 3, iterations: int = 10) -> torch.Tensor:
+def inpaint(
+    image: torch.Tensor,
+    missing_value: float,
+    median_kernel_size: int = 3,
+    iterations: int = 10,
+) -> torch.Tensor:
     """
     Inpaint missing values in BxWxW RGB image using median filtering
-    
+
     Args:
         image: torch.Tensor of shape (B, W, W) where each pixel value represents RGB
         missing_value: value that indicates missing pixels
         median_kernel_size: size of median filter kernel (should be odd)
         iterations: number of inpainting iterations
-    
+
     Returns:
         inpainted_img: torch.Tensor of shape (B, W, W) with missing values filled
     """
-    
+
     B, W1, W2 = image.shape
     device = image.device
-    
+
     # Create mask for missing values
     base_mask = (image != missing_value).float()  # shape: (B, W, W)
-    
+
     # Initialize inpainted image
     inpainted_img = image.clone()
-    
+
     pad = median_kernel_size // 2
-    
+
     for _ in range(iterations):
         # Pad the image using reflection
         padded = F.pad(inpainted_img, (pad, pad, pad, pad), mode="reflect")
-        
+
         # Extract patches using unfold
-        patches = padded.unfold(1, median_kernel_size, 1).unfold(2, median_kernel_size, 1)
+        patches = padded.unfold(1, median_kernel_size, 1).unfold(
+            2, median_kernel_size, 1
+        )
         # patches shape after unfold: (B, H_out, W_out, kernel_size, kernel_size)
         # where H_out = W_out = W (since we're unfolding a square image)
-        
+
         # Reshape for median computation
-        patches = patches[:,:W2,:W2]
-        patches = patches.contiguous().view(B, W1, W2, median_kernel_size * median_kernel_size)
+        patches = patches[:, :W2, :W2]
+        patches = patches.contiguous().view(
+            B, W1, W2, median_kernel_size * median_kernel_size
+        )
         # patches shape: (B, W, W, kernel_size^2)
-        
+
         # Compute median
         median_img, _ = patches.median(dim=-1)
         # median_img shape: (B, W, W)
-        
+
         # Update only missing pixels
         final_img = inpainted_img.clone()
         final_img[base_mask == 0] = median_img[base_mask == 0]
         inpainted_img = final_img
-    
-    return inpainted_img
 
+    return inpainted_img

@@ -112,9 +112,7 @@ def get_matching_points_with_patches(
 
     # Containers for match information across batches
     all_batch_indices = []
-    all_src_centers_padded = (
-        []
-    )  # Centers in padded image coordinates for patch extraction
+    all_src_centers_padded = []  # Centers in padded image coordinates for patch extraction
     all_tgt_centers_padded = []
     all_src_pixel_points = []  # Original image coordinates (without padding)
     all_tgt_pixel_points = []

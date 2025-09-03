@@ -2,8 +2,6 @@ import torch
 from torch_sgld import SGLD
 import os
 import numpy as np
-import datetime
-import time
 import dill
 import warnings
 from logger import get_logger
@@ -38,7 +36,7 @@ class Adam(torch.optim.Adam):
         """
         modelstr = f"{self.__class__.__name__}(\n"
         for k in self.kwargs.keys():
-            modelstr += f"    {k}: {self.kwargs.get(k,'')} \n"
+            modelstr += f"    {k}: {self.kwargs.get(k, '')} \n"
         modelstr += ")"
         return modelstr
 
@@ -72,7 +70,7 @@ class SGLD(SGLD):
         """
         modelstr = f"{self.__class__.__name__}(\n"
         for k in self.kwargs.keys():
-            modelstr += f"    {k}: {self.kwargs.get(k,'')} \n"
+            modelstr += f"    {k}: {self.kwargs.get(k, '')} \n"
         modelstr += ")"
         return modelstr
 
@@ -99,7 +97,7 @@ class SGD(torch.optim.SGD):
         """
         modelstr = f"{self.__class__.__name__}(\n"
         for k in self.kwargs.keys():
-            modelstr += f"    {k}: {self.kwargs.get(k,'')} \n"
+            modelstr += f"    {k}: {self.kwargs.get(k, '')} \n"
         modelstr += ")"
         return modelstr
 
@@ -128,7 +126,7 @@ class RMSprop(torch.optim.RMSprop):
         """
         modelstr = f"{self.__class__.__name__}(\n"
         for k in self.kwargs.keys():
-            modelstr += f"    {k}: {self.kwargs.get(k,'')} \n"
+            modelstr += f"    {k}: {self.kwargs.get(k, '')} \n"
         modelstr += ")"
         return modelstr
 
@@ -157,7 +155,7 @@ class AdamW(torch.optim.AdamW):
         """
         modelstr = f"{self.__class__.__name__}(\n"
         for k in self.kwargs.keys():
-            modelstr += f"    {k}: {self.kwargs.get(k,'')} \n"
+            modelstr += f"    {k}: {self.kwargs.get(k, '')} \n"
         modelstr += ")"
         return modelstr
 
@@ -186,7 +184,7 @@ class Adagrad(torch.optim.Adagrad):
         """
         modelstr = f"{self.__class__.__name__}(\n"
         for k in self.kwargs.keys():
-            modelstr += f"    {k}: {self.kwargs.get(k,'')} \n"
+            modelstr += f"    {k}: {self.kwargs.get(k, '')} \n"
         modelstr += ")"
         return modelstr
 
@@ -205,10 +203,6 @@ def get_norms(params):
     return grad_norm, weight_norm
 
 
-import os
-import time
-import datetime
-import numpy as np
 import torch
 from google.cloud import storage
 
@@ -251,13 +245,14 @@ class EarlyStopping:
         if bucket_name is None:
             try:
                 from utilities.dev_utils import get_gcs_bucket_name
+
                 self.bucket_name = get_gcs_bucket_name()
             except (ImportError, ValueError) as e:
                 print(f"Warning: Could not get bucket name from environment: {str(e)}")
                 self.bucket_name = None
         else:
             self.bucket_name = bucket_name
-            
+
         if self.bucket_name:
             try:
                 self.storage_client = storage.Client()
@@ -302,7 +297,7 @@ class EarlyStopping:
 
         try:
             # Save state dict locally first
-            checkpoint_path = os.path.join(self.checkpointpath, f"weights_best.pt")
+            checkpoint_path = os.path.join(self.checkpointpath, "weights_best.pt")
             model._forward_hooks.clear()
             torch.save(model.state_dict(), checkpoint_path, pickle_module=dill)
 

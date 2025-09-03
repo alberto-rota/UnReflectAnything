@@ -1,16 +1,15 @@
 import torch
-import torch.nn as nn
 
 from utilities import *
 from networks.base import MONO3DModel
 import networks.backbones as backbones
-import networks.depth_decoding as depth_decoding
 import copy
 
 from pipelines.matching.helpers import *
 
 # Global registry for sharing feature extractors
 _SHARED_EXTRACTORS = {}
+
 
 class FeatureExtractor(MONO3DModel):
     def __init__(
@@ -29,12 +28,14 @@ class FeatureExtractor(MONO3DModel):
             # Use shared components
             shared_extractor = _SHARED_EXTRACTORS[shared_key]
             self.backbone = shared_extractor.backbone
-            self.backbone_out_indices = shared_extractor.backbone_out_indices  
+            self.backbone_out_indices = shared_extractor.backbone_out_indices
             self.lastvitlayer = shared_extractor.lastvitlayer
             self._is_shared = True
         else:
             # Create new components
-            self.backbone = getattr(backbones, f"DINOv2_{backbone_brand.capitalize()}")(size=size)        
+            self.backbone = getattr(backbones, f"DINOv2_{backbone_brand.capitalize()}")(
+                size=size
+            )
             self.backbone_out_indices = self.backbone.model.config.to_dict()[
                 (
                     "out_indices"
@@ -46,11 +47,11 @@ class FeatureExtractor(MONO3DModel):
             for p in self.lastvitlayer.parameters():
                 p.requires_grad = True
             self._is_shared = False
-            
+
             # Register this extractor if shared_key is provided
             if shared_key is not None:
                 _SHARED_EXTRACTORS[shared_key] = self
-        
+
     def extract_features(self, framestack):
         """
         Args:
@@ -64,16 +65,20 @@ class FeatureExtractor(MONO3DModel):
         if len(framestack.shape) == 5:  # [B, S, 3, H, W]
             B, S = framestack.shape[:2]
             framestack = framestack.reshape(-1, *framestack.shape[2:])  # [B*S, 3, H, W]
-            
+
         # Get features from backbone
         features = self.backbone(framestack)[
-            "feature_maps" if "swin" in self.size or "beit" in self.size else "hidden_states"
+            "feature_maps"
+            if "swin" in self.size or "beit" in self.size
+            else "hidden_states"
         ]
-        
+
         # Reshape back to sequence if needed
         if len(framestack.shape) == 5:
-            features = [f.reshape(B, S, *f.shape[1:]) for f in features]  # [B, S, N+1, C]
-            
+            features = [
+                f.reshape(B, S, *f.shape[1:]) for f in features
+            ]  # [B, S, N+1, C]
+
         return features  # list of [B, N+1, C] or [B, S, N+1, C]
 
     def _compute_depth(self, source_features_dino):
@@ -90,7 +95,7 @@ class FeatureExtractor(MONO3DModel):
             return self.patchsize_resampler(embedding2chw(features[-1][:, 1:]))
         else:
             return embedding2chw(features[-1][:, 1:])
-        
+
     def _extract_embeddings_multires(self, features, loftr_shape=True):
         """Extract embeddings for a single image."""
         if loftr_shape:
@@ -108,52 +113,52 @@ class FeatureExtractor(MONO3DModel):
 
     def embed(self, *frames, mode="chw", multires=False, return_cls=False):
         """Inference-only method to return embeddings for one or more frames.
-        
+
         Args:
             *frames: One or more input frames
             mode (str): Output format - 'chw' for feature maps or 'seq' for sequence
             multires (bool): Whether to return multi-resolution features
             return_cls (bool): If True and mode='chw', also return CLS tokens
-            
+
         Returns:
             If mode='chw':
-                - If return_cls=False: List of feature maps [B,E,H,W] 
+                - If return_cls=False: List of feature maps [B,E,H,W]
                 - If return_cls=True: Tuple of (feature maps [B,E,H,W], CLS tokens [B,E])
             If mode='seq':
                 - List of sequence features [B,N,E]
         """
         assert mode in ["chw", "seq"], "Invalid mode. Must be 'chw' or 'seq'."
-        
+
         if multires:
             features = [self.extract_features(image) for image in frames]
             embs = [self._extract_embeddings_multires(feat, False) for feat in features]
             if len(embs) == 1:
                 embs = embs[0]
-                
+
             if mode == "chw":
-                embs_spatial = [embedding2chw(emb[:,1:]) for emb in embs]
+                embs_spatial = [embedding2chw(emb[:, 1:]) for emb in embs]
                 if return_cls:
-                    cls_tokens = [emb[:,0].unsqueeze(1) for emb in embs] # [B,E]
+                    cls_tokens = [emb[:, 0].unsqueeze(1) for emb in embs]  # [B,E]
                     if len(cls_tokens) == 1:
                         cls_tokens = cls_tokens[0]
                     return embs_spatial, cls_tokens
                 return embs_spatial
             return embs
-            
+
         else:
             features = [self.extract_features(image) for image in frames]
             embs = [self._extract_embeddings(feat, False) for feat in features]
             if len(embs) == 1:
                 embs = embs[0]
-                
+
             if mode == "chw" and return_cls:
                 # For non-multires, embs are already in CHW format
                 # Need to extract CLS tokens from original features
-                cls_tokens = [feat[-1][:,0] for feat in features] # [B,E] 
+                cls_tokens = [feat[-1][:, 0] for feat in features]  # [B,E]
                 if len(cls_tokens) == 1:
                     cls_tokens = cls_tokens[0]
                 return embs, cls_tokens
-                
+
             return embs
 
     def fromArtifact(

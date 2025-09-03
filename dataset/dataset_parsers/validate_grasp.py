@@ -4,7 +4,6 @@ import argparse
 import json
 import sys
 from PIL import Image
-from collections import defaultdict
 
 
 def count_files_with_extension(directory, extension):
@@ -367,7 +366,9 @@ def main():
             res_status = (
                 "VALID"
                 if resolution_valid
-                else "INVALID" if resolution_valid is False else "N/A"
+                else "INVALID"
+                if resolution_valid is False
+                else "N/A"
             )
             row += f" {res_status:<12}"
         if args.check_json:

@@ -1,15 +1,12 @@
-
 import torch
 import torch.nn as nn
 from typing import Any
 from utilities import *
 from utilities import *
-import projections as proj
 from rich import print
 
 from rich.table import Table
 from rich.console import Console
-from rich import box
 
 
 class MONO3DModel(nn.Module):
@@ -74,8 +71,6 @@ class MONO3DModel(nn.Module):
         Returns:
             bool: True if all gradients are finite, False otherwise.
         """
-        from rich.console import Console
-        from rich.table import Table
 
         console = Console()
         assert verbosity in [0, 1, 2]
@@ -443,7 +438,11 @@ class DINOINTEL_backbone(nn.Module):
 
 class SWIN_backbone(nn.Module):
     def __init__(
-        self, config: Any = None, frozen: bool = True, size: str = "base", output_hidden_states: bool = False
+        self,
+        config: Any = None,
+        frozen: bool = True,
+        size: str = "base",
+        output_hidden_states: bool = False,
     ):
         """
         Initializes a SWIN_backbone object.

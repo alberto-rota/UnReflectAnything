@@ -4,7 +4,6 @@ Contains functions to initialize various components of the training pipeline.
 """
 
 import torch
-import torch.nn as nn
 import os
 import datetime
 import json
@@ -14,21 +13,25 @@ import re
 import pandas as pd
 import wandb as weightsandbiases
 import torchvision
-import cv2
-from rich import print
 from logger import get_logger
 import optimization
+
 logger = get_logger(__name__)
 
 
-def device_and_directories():
+def device_and_directories(config):
     """Initialize device and create necessary directories"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Create base directories
-    if not os.path.exists("runs"):
-        os.makedirs("runs")  # Create 'runs' directory if it doesn't exist
-    runs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../runs")
+    # Get runs directory from config, with fallback to default
+    runs_dir = config.get(
+        "RESULTS_DIR",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "../runs"),
+    )
+
+    # Create runs directory if it doesn't exist
+    if not os.path.exists(runs_dir):
+        os.makedirs(runs_dir)
 
     return {"device": device, "runs_dir": runs_dir}
 
@@ -43,14 +46,10 @@ def dataloaders(dataset, config):
 
     # Dataloaders only for initialization purposes (samplers will be modified)
     training_dl = torch.utils.data.DataLoader(
-        training_ds,
-        batch_size=config["BATCH_SIZE"],
-        shuffle=config["SHUFFLE"]
+        training_ds, batch_size=config["BATCH_SIZE"], shuffle=config["SHUFFLE"]
     )
     validation_dl = torch.utils.data.DataLoader(
-        validation_ds,
-        batch_size=config["BATCH_SIZE"],
-        shuffle=config["SHUFFLE"]
+        validation_ds, batch_size=config["BATCH_SIZE"], shuffle=config["SHUFFLE"]
     )
 
     return {
@@ -71,14 +70,11 @@ def dimensions(training_dl, config):
     input_shape = next(iter(training_dl))[
         "rgb"
     ].shape  # [batch_size, channels, height, width]
-    sample_shape = next(iter(training_dl))["rgb"].shape[
-        1:
-    ]  # [channels, height, width]
+    sample_shape = next(iter(training_dl))["rgb"].shape[1:]  # [channels, height, width]
     height = sample_shape[-2]  # Image height
     width = sample_shape[-1]  # Image width
     channels = 3  # Number of image channels
     batch_size = next(iter(training_dl))["rgb"].shape[0]  # Batch size
-
 
     return {
         "input_shape": input_shape,
@@ -86,7 +82,7 @@ def dimensions(training_dl, config):
         "height": height,
         "width": width,
         "channels": channels,
-        "batch_size": batch_size
+        "batch_size": batch_size,
     }
 
 
@@ -206,8 +202,10 @@ def loss_functions(config):
 def schedulers(optimizer, config, training_dl):
     """Initialize learning rate schedulers"""
     scheduler_config = config.get("LR_SCHEDULER")
-    assert len(scheduler_config.keys()) == 2, "Only one scheduler (+OnPlateau)can be used at a time"
-    
+    assert len(scheduler_config.keys()) == 2, (
+        "Only one scheduler (+OnPlateau)can be used at a time"
+    )
+
     if scheduler_config.get("ONPLATEAU"):
         onplateau_scheduler = scheduler_config.get("ONPLATEAU")
         # Plateau scheduler
@@ -231,11 +229,13 @@ def schedulers(optimizer, config, training_dl):
         batches_per_epoch = len(training_dl)  # int: number of batches per epoch
         n_epochs = config.get("EPOCHS")  # int: number of epochs
         n_peaks = cosine_scheduler.get("N_PERIODS", 1)  # int: number of cosine peaks
-        T_max = (n_epochs * batches_per_epoch) // n_peaks // 2 - 1  # int: steps per peak
+        T_max = (
+            n_epochs * batches_per_epoch
+        ) // n_peaks // 2 - 1  # int: steps per peak
         cosine_scheduler = scheduler_config.get("COSINE")
         LRscheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=T_max  # T_max: int, number of steps per cosine cycle
+            T_max=T_max,  # T_max: int, number of steps per cosine cycle
         )
     if scheduler_config.get("EXPONENTIAL"):
         exponential_scheduler = scheduler_config.get("EXPONENTIAL")
@@ -243,7 +243,7 @@ def schedulers(optimizer, config, training_dl):
             optimizer,
             gamma=exponential_scheduler["GAMMA"],
         )
-    
+
     return {
         "LRscheduler": LRscheduler,
         "LRschedulerPlateau": LRschedulerPlateau,
@@ -275,7 +275,7 @@ def wandb(config, model=None, notes="", no_wandb=False):
     if "RUN" in config:
         try:
             resume_run = weightsandbiases.Api().runs(
-                path=f'{weightsandbiases.api.default_entity}/{config.get("PROJECT","UnReflectAnything")}',
+                path=f"{weightsandbiases.api.default_entity}/{config.get('PROJECT', 'UnReflectAnything')}",
                 filters={"display_name": config["RUN"]},
             )
             run_id = resume_run[0].id
@@ -330,7 +330,7 @@ def wandb(config, model=None, notes="", no_wandb=False):
             "Inliers",
             "MDistMean",
         ]
-        )
+    )
 
     # Model Watcher
     wandb_instance.watch(model, log="all", log_freq=config["MODEL_WATCHER_FREQ_WANDB"])
@@ -412,6 +412,7 @@ def save_hyperparameters_json(run_dir, config):
     with open(hyperparams_path, "w") as f:
         all_hyperparams = {"training": config}
         json.dump(all_hyperparams, f, indent=4, skipkeys=True, default=str)
+
 
 def tracking_metrics():
     """Initialize step counters and metrics tracking"""

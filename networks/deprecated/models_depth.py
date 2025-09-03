@@ -1,10 +1,8 @@
-
 # %%
 import torch
 import torch.nn as nn
 import transformers
 
-import matplotlib.pyplot as plt
 
 from utilities import *
 import projections as proj
@@ -159,7 +157,7 @@ class ViT_DepthEstimator_Baseline(nn.Module):
         modelstr = f"{self.__class__.__name__}(\n"
         for k, v in params.items():
             if hasattr(self, k):
-                modelstr += f"    {k}: {getattr(self,k)} \n".replace("", "")
+                modelstr += f"    {k}: {getattr(self, k)} \n".replace("", "")
         modelstr += ")"
         return modelstr
 
@@ -934,7 +932,7 @@ class CONV_DepthNet_Decoder(nn.Module):
                 f"[medium_purple1]------------------------------------------> Depth Subscale: {tuple(x.shape)}[/medium_purple1]"
             )
             print(
-                f"[medium_purple1]<----------------------------------------------------------------[/medium_purple1]"
+                "[medium_purple1]<----------------------------------------------------------------[/medium_purple1]"
             )
 
             print(

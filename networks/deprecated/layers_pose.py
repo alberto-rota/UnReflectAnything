@@ -1,20 +1,9 @@
-
-import torch
 import torch.nn as nn
-import transformers
 
-import matplotlib.pyplot as plt
 
 from utilities import *
-import projections as proj
-from rich import print
-import inspect
 
-import inspect
-import copy
-import sys
 
-import importlib
 
 
 class Reassemble(nn.Module):
@@ -121,7 +110,6 @@ class CrossMultiHeadAttention(nn.Module):
         )
 
     def forward(self, source, target):
-
         source = self.atn_projetor_source(source)
         source = self.linear2_source(self.gelu(self.linear1_source(source)))
         source = self.dropout_source(source)

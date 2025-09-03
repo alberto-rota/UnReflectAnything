@@ -2,7 +2,7 @@
 Specialized dataset classes for specific data sources.
 """
 
-from typing import List, Any, Dict
+from typing import List, Any
 from .base import Mono3D_Dataset
 
 
@@ -15,7 +15,7 @@ class SCARED(Mono3D_Dataset):
     def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the SCARED dataset.
-        
+
         Args:
             **kwargs: Additional arguments passed to the parent class
         """
@@ -31,7 +31,7 @@ class SCARED(Mono3D_Dataset):
     def videonames() -> List[str]:
         """
         Get the list of video names for the SCARED dataset.
-        
+
         Returns:
             List of video names
         """
@@ -47,7 +47,7 @@ class CHOLEC80(Mono3D_Dataset):
     def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the CHOLEC80 dataset.
-        
+
         Args:
             **kwargs: Additional arguments passed to the parent class
         """
@@ -63,7 +63,7 @@ class CHOLEC80(Mono3D_Dataset):
     def videonames() -> List[str]:
         """
         Get the list of video names for the CHOLEC80 dataset.
-        
+
         Returns:
             List of video names
         """
@@ -79,7 +79,7 @@ class GRASP(Mono3D_Dataset):
     def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the GRASP dataset.
-        
+
         Args:
             **kwargs: Additional arguments passed to the parent class
         """
@@ -95,7 +95,7 @@ class GRASP(Mono3D_Dataset):
     def videonames() -> List[str]:
         """
         Get the list of video names for the StereomMIS dataset.
-        
+
         Returns:
             List of video names
         """

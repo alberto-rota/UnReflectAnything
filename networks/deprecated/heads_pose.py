@@ -1,17 +1,9 @@
-
 # %%
 import torch
 import torch.nn as nn
-import transformers
 
-import matplotlib.pyplot as plt
 
 from utilities import *
-import projections as proj
-from rich import print
-import inspect
-import copy
-import sys
 
 import importlib
 import networks.combiners_readers_pose
@@ -52,7 +44,6 @@ class RegressionHead_FC(nn.Module):
 
 
 class RegressionHead_MLP(nn.Module):
-
     def __init__(
         self,
         embed_dim: int = 384,

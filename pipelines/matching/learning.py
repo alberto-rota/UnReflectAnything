@@ -1,7 +1,5 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import geometry
 
 
 def generate_grid(
@@ -33,9 +31,9 @@ def generate_grid(
         batch_size = framestack.shape[0]
 
     # Validate inputs
-    assert (
-        image_height is not None and image_width is not None
-    ), "Must provide either framestack or image dimensions"
+    assert image_height is not None and image_width is not None, (
+        "Must provide either framestack or image dimensions"
+    )
 
     # Generate random coordinates
     x_coords = torch.rand(batch_size, num_points) * (image_width - 1)

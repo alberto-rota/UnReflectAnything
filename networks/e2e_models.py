@@ -1,5 +1,3 @@
-
-
 import torch
 import torch.nn as nn
 
@@ -8,9 +6,6 @@ from networks.base import MONO3DModel
 import networks.backbones as backbones
 import networks.depth_decoding as depth_decoding
 import networks.odometry_decoding as odometry_decoding
-import networks.dfe as dfe
-import tempfile
-import warnings
 import projections as proj
 import copy
 

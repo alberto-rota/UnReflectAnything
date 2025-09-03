@@ -1,5 +1,4 @@
 import logging
-import sys
 import os
 import re
 from datetime import datetime
@@ -12,12 +11,12 @@ from rich.logging import RichHandler
 def align(input_str, max_length, alignment):
     """
     Align a string to a specified length with the given alignment.
-    
+
     Args:
         input_str (str): The input string to align
         max_length (int): The maximum length for the string
         alignment (str): Alignment type - 'left', 'right', or 'center'
-        
+
     Returns:
         str: The aligned string
     """
@@ -223,7 +222,7 @@ class CustomLogger:
         context_style = style if style else default_style
 
         # Format for rich console output - context first, then time
-        rich_message = f"[{context_style}]{align(context_name,8,'left')}[/{context_style}] [{time_str}] {message}"
+        rich_message = f"[{context_style}]{align(context_name, 8, 'left')}[/{context_style}] [{time_str}] {message}"
 
         # Append the end string (like print's end parameter)
         if end != "\n":
@@ -341,9 +340,9 @@ def get_logger(module_name, log_to_file=True, relative_log_dir="runs/temporary")
         # logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
         # Ensure log directory exists
         os.makedirs(log_dir, exist_ok=True)
-        
+
         log_file = os.path.join(log_dir, f"{module_name.split('.')[-1]}.log")
-        
+
         # Remove existing log file if it exists
         if os.path.exists(log_file):
             os.remove(log_file)

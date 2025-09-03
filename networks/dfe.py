@@ -467,7 +467,6 @@ class ModifiedNormalizedEightPointNet(nn.Module):
 
 """Loss functions.
 """
-import torch
 
 
 def symmetric_epipolar_distance(pts1, pts2, fundamental_mat):

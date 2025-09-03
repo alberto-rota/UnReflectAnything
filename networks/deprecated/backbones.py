@@ -3,7 +3,6 @@ import torch.nn as nn
 import transformers
 from utilities import *
 from networks.base import MONO3DModel
-from transformers import logging
 
 
 class Backbone_Depth(MONO3DModel):

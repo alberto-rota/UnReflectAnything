@@ -1,11 +1,8 @@
-
-
 from typing import Any
 import numpy as np
 from rich import print as nativeprint
 import torch
 from PIL import Image
-import re
 import wandb
 
 
@@ -40,7 +37,6 @@ def pred2string(pos: torch.Tensor, rot: torch.Tensor) -> str:
 
 
 def tprint(args, shape=True, dtype=False, device=False, grad_fn=False, **kwargs):
-
     sep = kwargs.get("sep", " ")
     end = kwargs.get("end", "\n")
     output = []
@@ -51,7 +47,6 @@ def tprint(args, shape=True, dtype=False, device=False, grad_fn=False, **kwargs)
 
     for arg in args:
         if isinstance(arg, torch.Tensor):
-
             infos = ""
             if shape:
                 infos += f"Shape: {tuple(arg.shape)}"
@@ -96,9 +91,6 @@ def print(*args: Any, **kwargs: Any) -> None:
         nativeprint(*args, **kwargs)
 
 
-
-
-
 def RdGr(value):
     # Ensure the value is between 0 and 1
     value = max(0.0, min(1.0, value))
@@ -111,10 +103,12 @@ def RdGr(value):
     color = f"#{red:02x}{green:02x}00"
 
     # Create the text object with the specified color
-    return f"[{color}]{(value*100):.2f}[/{color}]"
+    return f"[{color}]{(value * 100):.2f}[/{color}]"
 
 
-def metrics_for_wandb(metrics_dict: dict, prefix_str: str, separator: str = "/") -> dict:
+def metrics_for_wandb(
+    metrics_dict: dict, prefix_str: str, separator: str = "/"
+) -> dict:
     """
     Process dictionary keys to include a prefix if they don't already contain the separator.
     Skip any key-value pairs where the value is None.
@@ -147,6 +141,3 @@ def metrics_for_wandb(metrics_dict: dict, prefix_str: str, separator: str = "/")
         result[new_key] = value
 
     return result
-
-
-

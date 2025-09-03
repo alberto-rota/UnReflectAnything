@@ -1118,7 +1118,6 @@ def viewEpipolarGeometry(
     return canvas
 
 
-
 from PIL import Image
 
 
