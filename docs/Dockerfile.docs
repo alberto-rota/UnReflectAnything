@@ -1,6 +1,7 @@
 FROM squidfunk/mkdocs-material
 
 RUN pip install mkdocstrings[python]
-WORKDIR /docs
-
-CMD ["mkdocs"]
+WORKDIR /UnReflectAnything
+EXPOSE 8000
+ENTRYPOINT ["mkdocs"]
+CMD ["serve", "--dev-addr=0.0.0.0:8000"]
