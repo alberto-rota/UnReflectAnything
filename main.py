@@ -124,6 +124,7 @@ def create_model_from_config(config: DotMap, device: torch.device) -> 'RGBPOLDec
         diffuse_decoder=decoder_cfg,
         highlight_decoder=decoder_cfg,
     ).to(device)
+    
 
     logger.info(
         f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters",
@@ -381,11 +382,10 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
     # Get CPU info
     try:
         cpu_affinity = os.sched_getaffinity(os.getpid())
-        NUM_WORKERS = len(list(cpu_affinity))
-        logger.info(f"Cores available: {NUM_WORKERS} {sorted(list(cpu_affinity))}")
+        CPU_AFFINITY = len(list(cpu_affinity))
+        logger.info(f"Cores available: {CPU_AFFINITY} {sorted(list(cpu_affinity))}")
     except Exception:
-        NUM_WORKERS = 4
-        logger.info(f"Using default workers: {NUM_WORKERS}", context="INFO")
+        logger.info(f"Couldn't get CPU affinity", context="INFO")
 
     logger.info(f"CUDA available: {torch.cuda.is_available()}")
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

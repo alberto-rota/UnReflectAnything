@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 
-from .base import Mono3D_Dataset
 
+from .rgbp import Mono3D_Dataset
 
 class HighlightDataset(Mono3D_Dataset):
     """

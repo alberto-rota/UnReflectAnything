@@ -74,7 +74,7 @@ class RGBP_Dataset(Dataset):
         few_images: bool = False,
         # Deprecated parameters (for backward compatibility)
     ):
-        self.root_dir = root_dir
+        self.root_dir = os.path.expandvars(root_dir)
         self.rho_s = rho_s
         self.eps = eps
         self.rgb_ext = rgb_ext
@@ -874,7 +874,7 @@ def create_datasets_from_config(
         dataset_config = datasets_value[dataset_name]
 
         # Get root directory
-        root_dir = dataset_config["ROOT_DIR"]
+        root_dir = os.path.expandvars(dataset_config["ROOT_DIR"])
         if not os.path.exists(root_dir):
             logger.warning(
                 f"Warning: Root directory '{root_dir}' for dataset '{dataset_name}' not found. Skipping."

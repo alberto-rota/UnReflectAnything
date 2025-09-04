@@ -260,7 +260,6 @@ class EarlyStopping:
                 self.storage_client = storage.Client()
                 self.bucket = self.storage_client.bucket(self.bucket_name)
             except Exception as e:
-                print(f"Warning: Could not initialize GCS client: {str(e)}")
                 self.bucket = None
         else:
             self.bucket = None

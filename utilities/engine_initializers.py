@@ -26,10 +26,10 @@ def device_and_directories(config):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Get runs directory from config, with fallback to default
-    runs_dir = config.get(
+    runs_dir = os.path.expandvars(config.get(
         "RESULTS_DIR",
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "../runs"),
-    )
+    ))
 
     # Create runs directory if it doesn't exist
     if not os.path.exists(runs_dir):

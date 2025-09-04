@@ -6,22 +6,22 @@ parameters:
   MODEL:
     value:
       RGB_ENCODER:
-        ENCODER: "facebook/dinov3-vitb16-pretrain-lvd1689m"
+        ENCODER: "facebook/dinov3-vits16-pretrain-lvd1689m"
         IMAGE_SIZE: 224
         RETURN_SELECTED_LAYERS: [3, 6, 9,12]
       POL_ENCODER:
-        EMBED_DIM: 768
+        EMBED_DIM: 384
         DEPTH: 4
         N_HEADS: 12
         PATCH_SIZE: 16
       CROSS_ATTN:
-        EMBED_DIM: 768
+        EMBED_DIM: 384
         N_HEADS: 12
         DROPOUT: 0.1
         BI_DIRECTIONAL: False
       DECODER:
-        FEATURE_DIM: 768  
-        REASSEMBLE_OUT_CHANNELS: [96, 192, 384, 768] 
+        FEATURE_DIM: 384  
+        REASSEMBLE_OUT_CHANNELS: [48,96, 192, 384] 
         REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5] 
         READOUT_TYPE: "ignore"  
         USE_BN: False
@@ -32,7 +32,7 @@ parameters:
   DATASETS:
     value:
       SCRREAM:
-        ROOT_DIR: "/home/atuin/v120bb/v120bb18/UnReflectAnything/datasets/SCRREAM/"
+        ROOT_DIR: "$DATASET_DIR/SCRREAM/"
         TRAIN_SCENES: []
         POLARIZATION_FORMAT: "single_file_clock"
         VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
@@ -45,7 +45,7 @@ parameters:
         FEW_IMAGES: False
         
       HOUSECAT6D:
-        ROOT_DIR: "/home/atuin/v120bb/v120bb18/UnReflectAnything/datasets/HouseCat6D/"
+        ROOT_DIR: "$DATASET_DIR/HouseCat6D/"
         TRAIN_SCENES: []
         POLARIZATION_FORMAT: "single_file_clock"
         VAL_SCENES: "val"
@@ -58,7 +58,7 @@ parameters:
         FEW_IMAGES: False
 
       POLARGB:
-        ROOT_DIR: "/home/atuin/v120bb/v120bb18/UnReflectAnything/datasets/PolaRGB/"
+        ROOT_DIR: "$DATASET_DIR/PolaRGB/"
         TRAIN_SCENES: "train"
         POLARIZATION_FORMAT: "separate_files"
         VAL_SCENES: "test"
@@ -71,9 +71,9 @@ parameters:
         FEW_IMAGES: False
 
   BATCH_SIZE:
-    value: 16
-  WORKERS:
-    value: 8
+    value: 128
+  NUM_WORKERS:
+    value: "auto"
   SHUFFLE:
     value: True
   PIN_MEMORY:
@@ -90,7 +90,7 @@ parameters:
   EPOCHS:
     value: 30
   GRADIENT_ACCUMULATION_STEPS:
-    value: 4
+    value: 1
   WARMUP_STEPS:
     value: 50
   GRADIENT_CLIPPING_MAX_NORM:
@@ -137,5 +137,5 @@ parameters:
   NOTES:
     value: "DINOv3-base with ìh old loss function"
   RESULTS_DIR:
-    value: "/home/atuin/v120bb/v120bb18/UnReflectAnything/results"
+    value: "$RESULTS_DIR"
 

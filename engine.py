@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import math
 
 import optimization
 import utilities.engine_initializers as initialize
@@ -50,7 +51,7 @@ class Engine:
         self.no_wandb = no_wandb
 
         # Initialize device and directories
-        device_dirs = initialize.device_and_directories()
+        device_dirs = initialize.device_and_directories(config)
         self.device = device_dirs["device"]
         self.RUNS_DIR = device_dirs["runs_dir"]
 
@@ -88,12 +89,13 @@ class Engine:
 
         # Once the run name is set, we move all the log files to the run directory
         TEMPORARY_LOG_DIR = os.path.join(self.RUNS_DIR, "temporary")
-        for log_file in os.listdir(TEMPORARY_LOG_DIR):
-            if log_file.endswith(".log"):
-                shutil.move(
-                    os.path.join(TEMPORARY_LOG_DIR, log_file),
-                    os.path.join(self.RUN_DIR, log_file),
-                )
+        if os.path.exists(TEMPORARY_LOG_DIR):
+            for log_file in os.listdir(TEMPORARY_LOG_DIR):
+                if log_file.endswith(".log"):
+                    shutil.move(
+                        os.path.join(TEMPORARY_LOG_DIR, log_file),
+                        os.path.join(self.RUN_DIR, log_file),
+                    )
 
         # Initialize polarization-specific losses
         self.logger = get_logger(
@@ -445,11 +447,13 @@ class Engine:
             )
             return None
 
+        cpu_affinity = os.sched_getaffinity(os.getpid())
+        AUTO_NUM_WORKERS = int(math.floor(0.9*len(list(cpu_affinity))))
         # Create dataloader using the initialized parameters
         dataloader = torch.utils.data.DataLoader(
             dataset,
             batch_size=self.batch_size,
-            num_workers=self.config.WORKERS,
+            num_workers=AUTO_NUM_WORKERS if self.config.NUM_WORKERS != "auto" else self.config.NUM_WORKERS,
             drop_last=True,
             pin_memory=self.config.PIN_MEMORY,
             prefetch_factor=self.config.PREFETCH_FACTOR,

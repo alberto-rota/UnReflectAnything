@@ -1058,6 +1058,8 @@ class RGBDistillDecomposer(nn.Module):
             "rgb_tokens": rgb_tokens,
         }
 
+class MertMOdel():
+    pass
 
 def get_model_parameter_summary(model):
     """

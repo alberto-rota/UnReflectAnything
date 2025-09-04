@@ -24,10 +24,7 @@ Utilities:
 - Video splitting and data loading utilities
 """
 
-from .base import Mono3D_Dataset
-from .highlight import HighlightDataset
-from .loader import initialize_from_config
-from .multi_dataset import MultiDataset
+# from .highlight import HighlightDataset
 from .rgbp import (
     HOUSECAT6D_Dataset,
     POLARGB_Dataset,
@@ -36,7 +33,6 @@ from .rgbp import (
     create_datasets_from_config,
     load_config_and_create_datasets,
 )
-from .specialized import CHOLEC80, GRASP, SCARED
 from .utils import (
     adapt_intrinsics_two_step,
     center_crop_intrinsics,
@@ -46,13 +42,8 @@ from .utils import (
 
 __all__ = [
     # Core datasets
-    "Mono3D_Dataset",
-    "MultiDataset",
-    "HighlightDataset",
+    # "HighlightDataset",
     # Specialized datasets
-    "SCARED",
-    "CHOLEC80",
-    "GRASP",
     # RGBP/Polarization datasets
     "RGBP_Dataset",
     "SCRREAM_Dataset",
