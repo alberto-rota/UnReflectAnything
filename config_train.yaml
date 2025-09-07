@@ -7,7 +7,7 @@ parameters:
     value:
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vits16-pretrain-lvd1689m"
-        IMAGE_SIZE: 224
+        IMAGE_SIZE: 448
         RETURN_SELECTED_LAYERS: [3, 6, 9,12]
       POL_ENCODER:
         EMBED_DIM: 384
@@ -25,7 +25,7 @@ parameters:
         REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5] 
         READOUT_TYPE: "ignore"  
         USE_BN: False
-        OUTPUT_IMAGE_SIZE: [224,224]
+        OUTPUT_IMAGE_SIZE: [448,448]
         OUTPUT_CHANNELS: 4
 
   ### DATA                                                                      
@@ -38,7 +38,7 @@ parameters:
         VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
         RHO_S: 0.6
         EPS: 1.0e-8
-        TARGET_SIZE: [224,224]
+        TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
         USE_CACHE: True
         SIMPLIFY_UPSAMPLING: True
@@ -51,7 +51,7 @@ parameters:
         VAL_SCENES: "val"
         RHO_S: 0.6
         EPS: 1.0e-8
-        TARGET_SIZE: [224,224]
+        TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
         USE_CACHE: True
         SIMPLIFY_UPSAMPLING: True
@@ -64,7 +64,7 @@ parameters:
         VAL_SCENES: "test"
         RHO_S: 0.6
         EPS: 1.0e-8
-        TARGET_SIZE: [224,224]
+        TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
         USE_CACHE: True
         SIMPLIFY_UPSAMPLING: True
@@ -79,16 +79,16 @@ parameters:
   PIN_MEMORY:
     value: true
   PREFETCH_FACTOR:
-    value: 1
+    value: 4
   
   ### OPTIMIZATION                                                                      
 
   LEARNING_RATE:
-    value: 1.0e-4
+    value: 1.0e-3
   WEIGHT_DECAY:
-    value: 1.0e-7
+    value: 1.0e-5
   EPOCHS:
-    value: 30
+    value: 40
   GRADIENT_ACCUMULATION_STEPS:
     value: 1
   WARMUP_STEPS:

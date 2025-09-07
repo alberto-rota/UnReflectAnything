@@ -7,7 +7,7 @@
 #SBATCH --mail-type=ALL
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task8
 
 unset SLURM_EXPORT_ENV             
 
@@ -16,7 +16,7 @@ unset SLURM_EXPORT_ENV
 export http_proxy=http://proxy.nhr.fau.de:80
 export https_proxy=http://proxy.nhr.fau.de:80
 
-# Moving dataset on fast storage
+# Moving dataset on fast storageecho $SLUR
 export SLOW_DATASET_DIR="$WORK/datasets"
 export SLOW_RESULTS_DIR="$WORK/results"
 

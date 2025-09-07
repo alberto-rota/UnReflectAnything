@@ -453,7 +453,7 @@ class Engine:
         dataloader = torch.utils.data.DataLoader(
             dataset,
             batch_size=self.batch_size,
-            num_workers=AUTO_NUM_WORKERS if self.config.NUM_WORKERS != "auto" else self.config.NUM_WORKERS,
+            num_workers=AUTO_NUM_WORKERS if self.config.NUM_WORKERS == "auto" else self.config.NUM_WORKERS,
             drop_last=True,
             pin_memory=self.config.PIN_MEMORY,
             prefetch_factor=self.config.PREFETCH_FACTOR,
