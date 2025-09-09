@@ -71,7 +71,7 @@ parameters:
         FEW_IMAGES: False
 
   BATCH_SIZE:
-    value: 128
+    value: 48
   NUM_WORKERS:
     value: "auto"
   SHUFFLE:
@@ -84,15 +84,15 @@ parameters:
   ### OPTIMIZATION                                                                      
 
   LEARNING_RATE:
-    value: 1.0e-3
-  WEIGHT_DECAY:
     value: 1.0e-5
+  WEIGHT_DECAY:
+    value: 1.0e-7
   EPOCHS:
     value: 40
   GRADIENT_ACCUMULATION_STEPS:
     value: 1
   WARMUP_STEPS:
-    value: 50
+    value: 100
   GRADIENT_CLIPPING_MAX_NORM:
     value: 1.0
   LR_SCHEDULER: 

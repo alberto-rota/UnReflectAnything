@@ -634,6 +634,8 @@ class Engine:
                         batch_str = "batch"
                     elif phase == "Validation":
                         batch_str = "valbatch"
+                    elif phase == "Test":
+                        batch_str = "idx"
                     wandb_metrics[f"Step/{batch_str}"] = self.step[f"{phase}_batch"]
                     self.wandb.log(wandb_metrics)
 
