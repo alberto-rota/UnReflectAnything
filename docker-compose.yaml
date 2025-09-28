@@ -16,7 +16,6 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - PYTHONPATH=/workspace
-      - DATASET_ROOTDIR=/DATA
     volumes:
     #---------------------------------------------
     # Mount the root dataset directory to the container 

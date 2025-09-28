@@ -13,22 +13,17 @@ from dotenv import load_dotenv
 from dotmap import DotMap
 from rich.traceback import install
 
-from dataset.rgbp import load_config_and_create_datasets
+from dataset.rgbp import from_config
 from engine import Engine
 from logger import get_logger
-from models import RGBPOLDecomposer
+import models
+from utilities import *
 
 logger = get_logger(__name__).set_context("IMPORT")
 load_dotenv()
 
-# Optional utilities (if available)
-try:
-    from utilities import *
-except ImportError:
-    logger.warning("Some utilities not available", context="WARNING")
 
-
-def create_model_from_config(config: DotMap, device: torch.device) -> 'RGBPOLDecomposer':
+def create_model_from_config(config: DotMap, device: torch.device):
     """
     Create the RGBPOLDecomposer model from configuration.
     
@@ -69,7 +64,7 @@ def create_model_from_config(config: DotMap, device: torch.device) -> 'RGBPOLDec
     if isinstance(target_size, list):
         target_size = tuple(target_size)
 
-    # RGB Encoder configuration
+    # # RGB Encoder configuration
     rgb_encoder_config = model_config.get("RGB_ENCODER", {})
     dinov3_cfg = {
         "model_name": rgb_encoder_config.get(
@@ -105,35 +100,107 @@ def create_model_from_config(config: DotMap, device: torch.device) -> 'RGBPOLDec
         "bi_directional": cross_attn_config.get("BI_DIRECTIONAL", False),
     }
 
-    # Decoder configuration
-    decoder_config = model_config.get("DECODER", {})
-    decoder_cfg = {
-        "use_bn": decoder_config.get("USE_BN", True),
-        "readout_type": decoder_config.get("READOUT_TYPE", "ignore"),
-        "feature_dim": decoder_config.get("FEATURE_DIM", 384),
-        "output_image_size": decoder_config.get("OUTPUT_IMAGE_SIZE", min(target_size)),
-        "output_channels": decoder_config.get("OUTPUT_CHANNELS", 3),
-    }
-
-    # Create the main model
-    model = RGBPOLDecomposer(
-        dinov3=dinov3_cfg,
-        pol_encoder=pol_enc_cfg,
-        pol_cross_attn=cross_attn_cfg,
-        spec_decoder=decoder_cfg,
-        diffuse_decoder=decoder_cfg,
-        highlight_decoder=decoder_cfg,
-    ).to(device)
+    # Decoder configuration - support both flexible and legacy formats
+    decoders_config = model_config.get("DECODERS", None)
     
+    if decoders_config is not None:
+        # New flexible decoder format
+        decoders = {}
+        for decoder_name, decoder_params in decoders_config.items():
+            # Build decoder config with defaults
+            decoder_cfg = {
+                "feature_dim": decoder_params.get("FEATURE_DIM", 384),
+                "reassemble_out_channels": decoder_params.get("REASSEMBLE_OUT_CHANNELS", [12,24,48,92]),
+                "reassemble_factors": decoder_params.get("REASSEMBLE_FACTORS", [4.0, 2.0, 1.0, 0.5]),
+                "readout_type": decoder_params.get("READOUT_TYPE", "ignore"),
+                "use_bn": decoder_params.get("USE_BN", True),
+                "output_image_size": decoder_params.get("OUTPUT_IMAGE_SIZE", [min(target_size), min(target_size)]),
+                "output_channels": decoder_params.get("OUTPUT_CHANNELS", 3),
+            }
+            decoders[decoder_name] = decoder_cfg
+        
+        decoder_kwargs = {"decoders": decoders}
+    else:
+        # Legacy decoder format - single DECODER config applied to all three decoders
+        decoder_config = model_config.get("DECODER", {})
+        decoder_cfg = {
+            "feature_dim": decoder_config.get("FEATURE_DIM", 384),
+            "reassemble_out_channels": decoder_config.get("REASSEMBLE_OUT_CHANNELS", [12,24,48,92]),
+            "reassemble_factors": decoder_config.get("REASSEMBLE_FACTORS", [4.0, 2.0, 1.0, 0.5]),
+            "readout_type": decoder_config.get("READOUT_TYPE", "ignore"),
+            "use_bn": decoder_config.get("USE_BN", True),
+            "output_image_size": decoder_config.get("OUTPUT_IMAGE_SIZE", [min(target_size), min(target_size)]),
+            "output_channels": decoder_config.get("OUTPUT_CHANNELS", 3),
+        }
+        
+        decoder_kwargs = {
+            "spec_decoder": decoder_cfg,
+            "diffuse_decoder": decoder_cfg,
+            "highlight_decoder": decoder_cfg,
+        }
 
+    shared_dinov3 = models.DINOv3(dinov3_cfg).to(device)
+    # Create the main model
+    model_class_str = model_config.get("MODEL_CLASS", "RGBPOLDecomposer")
+    # Get the model class from the string name
+    model_class = getattr(models, model_class_str)
+    
+    # Build model kwargs based on model type
+    model_kwargs = {
+        "dinov3": shared_dinov3,
+        **decoder_kwargs,
+    }
+    
+    # Add POL-specific configs only for RGBPOLDecomposer
+    if model_class_str == "RGBPOLDecomposer":
+        model_kwargs.update({
+            "pol_encoder": pol_enc_cfg,
+            "pol_cross_attn": cross_attn_cfg,
+        })
+    
+    model = model_class(**model_kwargs).to(device)
+    torch.cuda.empty_cache()
+    # from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
+    # from models import DINOv3
+    # from sd_decomposer import StableDiffusionDecomposer
+
+    # # 1) DINO encoder (use your config to return selected_hidden_states)
+    # dino = DINOv3({
+    #     "model_name": "facebook/dinov3-vitb16-pretrain-lvd1689m",
+    #     "image_size": 224,
+    #     "freeze_backbone": True,
+    #     "return_selected_layers": [3, 6, 9, 12],   # example
+    #     "return_as_feature_maps": False,
+    # }).cuda()
+
+    # # 2) SD parts (load checkpoints compatible with each other; SD 1.5 shown as example)
+    # sd_vae  = AutoencoderKL.from_pretrained("runwayml/stable-diffusion-v1-5", subfolder="vae").cuda()
+    # sd_unet = UNet2DConditionModel.from_pretrained("runwayml/stable-diffusion-v1-5", subfolder="unet").cuda()
+    # sched   = DDPMScheduler.from_pretrained("runwayml/stable-diffusion-v1-5", subfolder="scheduler")
+
+    # # 3) Model
+    # model = StableDiffusionDecomposer(
+    #     dinov3=dino,
+    #     sd_vae=sd_vae,
+    #     sd_unet=sd_unet,
+    #     scheduler=sched,
+    #     adapter_cfg=dict(ctx_dim=768, ctx_len=77, n_layers_proj=2, n_heads=8,
+    #                      reduce_mode="learned_pool", layer_fusion="weighted_sum"),
+    #     freeze_vae=True,
+    #     freeze_unet=True,               # start frozen
+    #     unfreeze_unet_attn_qkv=False,   # optionally True later
+    # ).to(device)
+
+    
     logger.info(
-        f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters",
+        f"Model with class {model.__class__.__name__} created with {sum(p.numel() for p in model.parameters()):,} parameters",
         context="MODEL",
     )
+
     return model
 
 
-def create_datasets_from_config(config: DotMap, config_path: str) -> Dict[str, Any]:
+def create_datasets_from_config(config: DotMap) -> Dict[str, Any]:
     """
     Create training and validation datasets from configuration using the new system.
 
@@ -148,7 +215,6 @@ def create_datasets_from_config(config: DotMap, config_path: str) -> Dict[str, A
         config (DotMap): Configuration dictionary containing dataset parameters including:
             - DATASETS: Dataset configurations for different data sources
             - WORKERS: Number of data loading workers
-        config_path (str): Absolute path to the YAML config file for direct loading
 
     Returns:
         Dict[str, Any]: Dictionary containing datasets with keys:
@@ -169,7 +235,7 @@ def create_datasets_from_config(config: DotMap, config_path: str) -> Dict[str, A
     """
     try:
         # Use the new dataset creation system
-        datasets = load_config_and_create_datasets(config_path)
+        datasets = from_config(config)
 
         # Convert keys to match what Engine expects (capitalize first letter)
         result = {
@@ -286,10 +352,9 @@ def load_and_process_config(
         config.EPOCHS = 1
         config.NO_WANDB = True
         # Set FEW_IMAGES to True for all datasets in boot mode
-        if hasattr(config, "DATASETS") and config.DATASETS is not None:
-            for dataset_name, dataset_config in config.DATASETS.items():
-                if isinstance(dataset_config, dict):
-                    dataset_config["FEW_IMAGES"] = True
+        for dataset_name, dataset_config in config.DATASETS.items():
+            if isinstance(dataset_config, dict):
+                dataset_config["FEW_IMAGES"] = True
         logger.info("Boot mode enabled - using minimal parameters for quick testing")
 
     return config
@@ -337,7 +402,10 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
     # Argparse
     parser = argparse.ArgumentParser(description=f"{mode.capitalize()} the network")
     parser.add_argument(
-        "--nodebug", "-nd", action="store_false", help="Disable debug mode"
+        "--debug", "-d", action="store_true", help="Enable debug mode"
+    )
+    parser.add_argument(
+        "--wait-debugger-attach", "-wd", action="store_true", help="Wait for debugger to attach"
     )
     parser.add_argument(
         "--record",
@@ -363,12 +431,27 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
     # Parse known and unknown arguments
     args, unknown = parser.parse_known_args()
 
-    if args.nodebug:
-        debugpy.listen(("localhost", int(os.getenv("DEBUGPY_PORT"))))
+    if args.debug:
+        debug_port = int(os.getenv("DEBUGPY_PORT"))
+        # Get machine hostname/IP for remote debugging
+        import socket
+        hostname = socket.gethostname()
+        try:
+            # Try to get the actual IP address
+            ip_address = socket.gethostbyname(hostname)
+        except:
+            ip_address = "localhost"
+        
+        logger.info(f"Debug mode enabled on port {debug_port}")
+        logger.info(f"Connect VSCode debugger to: {hostname} ({ip_address}:{debug_port})")
+        debugpy.listen(("0.0.0.0", debug_port))  # Listen on all interfaces for remote connections
+        if args.wait_debugger_attach:
+            logger.info("Waiting for debugger to attach...")
+            debugpy.wait_for_client()
 
     # Show title screen if available
     try:
-        titlescreen()  # type: ignore # May be imported from utilities
+        titlescreen()  
     except Exception:
         logger.info("=" * 50, context="INFO")
         logger.info("UnReflectAnything - Reflection Removal Training", context="INFO")
@@ -463,7 +546,7 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
             model = create_model_from_config(config, DEVICE)
 
             # Create datasets for training
-            dataset = create_datasets_from_config(config, CONFIG_PATH)
+            dataset = create_datasets_from_config(config)
 
             # Initialize engine
             engine = Engine(
@@ -486,11 +569,11 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
             model = create_model_from_config(config, DEVICE)
 
             # Create datasets for testing
-            dataset = create_datasets_from_config(config, CONFIG_PATH)
+            dataset = create_datasets_from_config(config)
 
             # Initialize engine
             engine = Engine(
-                model=model,  # Pass the created model
+                model=model,
                 dataset=dataset,
                 config=config,
                 no_wandb=config.get("NO_WANDB", False),

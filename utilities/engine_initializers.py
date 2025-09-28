@@ -178,28 +178,6 @@ def optimizers(model, config):
     }
 
 
-def loss_functions(config):
-    """Initialize loss functions"""
-    from losses import TripletLoss
-
-    # Main loss function
-    loss_fn = config.get("LOSS_FUNCTION", TripletLoss())
-    if not isinstance(loss_fn, TripletLoss):
-        loss_fn = TripletLoss()
-
-    # Loss weights
-    toplevel_loss_weights = config.get("TOPLEVEL_WEIGHTS_LOSS_FUN", [1.0, 1.0, 1.0])
-    depth_loss_weights = config.get("WEIGHTS_DEPTH_LOSS_FUN", [0.85, 0.15])
-    lossthresholds = config["LOSS_THRESHOLDS_WANDB"]
-
-    return {
-        "loss_fn": loss_fn,
-        "toplevel_loss_weights": toplevel_loss_weights,
-        "depth_loss_weights": depth_loss_weights,
-        "lossthresholds": lossthresholds,
-    }
-
-
 def schedulers(optimizer, config, training_dl):
     """Initialize learning rate schedulers"""
     scheduler_config = config.get("LR_SCHEDULER")
@@ -311,7 +289,7 @@ def wandb(config, model=None, notes="", no_wandb=False):
         )
         logger.info("[yellow]󰙨 Wandb RUN    [/]:", wandb_links[2])
         logger.info("[orange1]󱗼 Wandb PROJECT[/]:", wandb_links[1])
-    except:
+    except Exception:
         pass
 
     # Define WandB metrics

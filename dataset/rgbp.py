@@ -1,4 +1,3 @@
-
 import os
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple, Union
@@ -72,7 +71,15 @@ class RGBP_Dataset(Dataset):
         exclude: Optional[Union[str, List[str]]] = None,
         # Few images mode for quick testing
         few_images: bool = False,
+        overfit_test: bool = False,
         # Deprecated parameters (for backward compatibility)
+        # Highlight detection (optional)
+        highlight_enable: bool = False,
+        highlight_brightness_threshold: float = 0.93,
+        highlight_return_mask: bool = False,
+        highlight_rect_size: Optional[Tuple[int, int]] = None,
+        highlight_return_rect: bool = False,
+        highlight_return_rect_as_rgb: bool = False,
     ):
         self.root_dir = os.path.expandvars(root_dir)
         self.rho_s = rho_s
@@ -117,12 +124,12 @@ class RGBP_Dataset(Dataset):
 
         self.scene_pairs = self._find_scene_pairs()
 
-        # Limit to 100 samples if few_images is True
-        if self.few_images and len(self.scene_pairs) > 100:
+        # Limit to 32 samples if few_images is True
+        if self.few_images and len(self.scene_pairs) > 8:
             original_count = len(self.scene_pairs)
-            self.scene_pairs = self.scene_pairs[:100]
+            self.scene_pairs = self.scene_pairs[:8]
             logger.info(
-                f"Few images mode: Limited dataset from {original_count} to 100 samples"
+                f"Few images mode: Limited dataset from {original_count} to 8 samples"
             )
 
         # Setup caching if enabled
@@ -136,6 +143,20 @@ class RGBP_Dataset(Dataset):
                 self._load_pol_cached = lru_cache(maxsize=cache_size)(
                     self._load_and_process_polarization_impl
                 )
+        self.overfit_test = overfit_test
+        if self.overfit_test:
+            self.scene_pairs = len(self.scene_pairs) * [self.scene_pairs[0]]
+            logger.info(
+                f"Overfit test mode: Limited dataset from {len(self.scene_pairs)} to 1 sample"
+            )
+
+        # Highlight detection configuration
+        self.highlight_enabled = highlight_enable
+        self.highlight_brightness_threshold = highlight_brightness_threshold
+        self.highlight_return_mask = highlight_return_mask
+        self.highlight_rect_size = highlight_rect_size
+        self.highlight_return_rect = highlight_return_rect
+        self.highlight_return_rect_as_rgb = highlight_return_rect_as_rgb
 
     def _resize_tensor(
         self, tensor: torch.Tensor, target_size: Tuple[int, int]
@@ -223,11 +244,11 @@ class RGBP_Dataset(Dataset):
     ) -> Dict[str, torch.Tensor]:
         """
         Resize all polarization data tensors to target size.
-        
+
         Args:
             pol_data: Dictionary containing polarization tensors with shapes [C, H, W]
                      Keys include 'I0', 'I45', 'I90', 'I135', 'S0', 'S1', 'S2', 'DoLP', etc.
-        
+
         Returns:
             Dictionary with same keys but tensors resized to target size [C, target_H, target_W]
         """
@@ -251,10 +272,10 @@ class RGBP_Dataset(Dataset):
     def _should_include_scene(self, scene_name: str) -> bool:
         """
         Check if a scene should be included based on include/exclude filters.
-        
+
         Args:
             scene_name: Name of the scene to check
-            
+
         Returns:
             True if scene should be included, False otherwise
         """
@@ -295,17 +316,17 @@ class RGBP_Dataset(Dataset):
         # If no include filter specified and not excluded, include the scene
         return True
 
-    def _find_scene_pairs(self) -> List[Tuple[str, str, str]]:
+    def _find_scene_pairs(self) -> List[Tuple[str, str, str, bool]]:
         """
         Find matching RGB, polarization, and intrinsics file triplets.
-        
+
         Scans the root directory structure to find corresponding files:
         - RGB images in rgb/ subdirectory
-        - Polarization data in pol/ subdirectory  
-        - Camera intrinsics in intrinsics/ subdirectory
-        
+        - Polarization data in pol/ subdirectory (optional)
+        - Camera intrinsics in intrinsics/ subdirectory (optional)
+
         Returns:
-            List of tuples (rgb_path, pol_path, intrinsics_path) for valid scene pairs
+            List of tuples (rgb_path, pol_path, intrinsics_path, has_pol_data) for valid scene pairs
         """
         """Find valid RGB-polarization pairs based on polarization format"""
         scene_pairs = []
@@ -322,19 +343,36 @@ class RGBP_Dataset(Dataset):
             pol_dir = os.path.join(scene_path, "pol")
             intrinsics_path = os.path.join(scene_path, "intrinsics.txt")
 
-            # Check if RGB and polarization directories exist (intrinsics is optional)
-            if not (os.path.exists(rgb_dir) and os.path.exists(pol_dir)):
+            # Check if RGB directory exists (required)
+            if not os.path.exists(rgb_dir):
                 continue
+
+            # Check if polarization directory exists (optional)
+            has_pol_data = os.path.exists(pol_dir)
 
             # Set intrinsics_path to None if file doesn't exist
             if not os.path.exists(intrinsics_path):
                 intrinsics_path = None
 
             rgb_files = [f for f in os.listdir(rgb_dir) if f.endswith(self.rgb_ext)]
-            pol_files = [f for f in os.listdir(pol_dir) if f.endswith(self.pol_ext)]
+
+            # Get polarization files if pol directory exists
+            pol_files = []
+            if has_pol_data:
+                pol_files = [f for f in os.listdir(pol_dir) if f.endswith(self.pol_ext)]
 
             for rgb_file in rgb_files:
-                if self.polarization_format == "single_file_clock":
+                if not has_pol_data:
+                    # No polarization data available - include RGB-only sample
+                    scene_pairs.append(
+                        (
+                            os.path.join(rgb_dir, rgb_file),
+                            None,  # No polarization path
+                            intrinsics_path,
+                            False,  # No polarization data
+                        )
+                    )
+                elif self.polarization_format == "single_file_clock":
                     # Original behavior: single polarization file
                     pol_file = rgb_file.replace(self.rgb_ext, self.pol_ext)
                     if pol_file in pol_files:
@@ -343,6 +381,7 @@ class RGBP_Dataset(Dataset):
                                 os.path.join(rgb_dir, rgb_file),
                                 os.path.join(pol_dir, pol_file),
                                 intrinsics_path,
+                                True,  # Has polarization data
                             )
                         )
 
@@ -365,6 +404,7 @@ class RGBP_Dataset(Dataset):
                                 os.path.join(rgb_dir, rgb_file),
                                 pol_base_path,  # Base path for separate files
                                 intrinsics_path,
+                                True,  # Has polarization data
                             )
                         )
 
@@ -376,7 +416,7 @@ class RGBP_Dataset(Dataset):
     def get_loaded_scenes(self) -> List[str]:
         """
         Get list of scene names that were loaded into the dataset.
-        
+
         Returns:
             List of scene names (without file extensions) that passed filtering
         """
@@ -391,10 +431,10 @@ class RGBP_Dataset(Dataset):
     def _to_luminance_torch(rgb: torch.Tensor) -> torch.Tensor:
         """
         Convert RGB tensor to luminance using standard weights.
-        
+
         Args:
             rgb: RGB tensor of shape [H, W, 3] in range [0, 1]
-            
+
         Returns:
             Luminance tensor of shape [H, W] in range [0, 1]
         """
@@ -404,10 +444,10 @@ class RGBP_Dataset(Dataset):
     def _load_intrinsics_impl(self, intrinsics_path: str) -> torch.Tensor:
         """
         Load camera intrinsics from file (implementation without caching).
-        
+
         Args:
             intrinsics_path: Path to intrinsics file (typically .txt or .npy)
-            
+
         Returns:
             Camera intrinsics matrix of shape [3, 3]
         """
@@ -422,10 +462,10 @@ class RGBP_Dataset(Dataset):
     def _load_intrinsics(self, intrinsics_path: str) -> torch.Tensor:
         """
         Load camera intrinsics with optional caching.
-        
+
         Args:
             intrinsics_path: Path to intrinsics file
-            
+
         Returns:
             Camera intrinsics matrix of shape [3, 3]
         """
@@ -440,11 +480,11 @@ class RGBP_Dataset(Dataset):
     ) -> torch.Tensor:
         """
         Simple bilinear upsampling - much faster than edge-aware methods.
-        
+
         Args:
             f_spec_half: Specular fraction tensor of shape [H, W] at half resolution
             target_size: Target size as (H, W) for upsampling
-            
+
         Returns:
             Upsampled tensor of shape [target_H, target_W] clamped to [0, 1]
         """
@@ -529,6 +569,7 @@ class RGBP_Dataset(Dataset):
             "S1": S1.unsqueeze(0),
             "S2": S2.unsqueeze(0),
             "S3": S3.unsqueeze(0),
+            "stokes": torch.cat([S0, S1, S2], dim=0).unsqueeze(0),
             "intensity": S0.unsqueeze(0),
             "DoLP": DoLP.unsqueeze(0),
             "AoP": AoP.unsqueeze(0),
@@ -587,6 +628,147 @@ class RGBP_Dataset(Dataset):
             "specular": I_spec,
             "diffuse": I_diff,
         }
+
+    def _load_rgb_only(self, rgb_path: str) -> Dict[str, torch.Tensor]:
+        """
+        Load RGB data only (when polarization data is not available).
+
+        Args:
+            rgb_path: Path to RGB image file
+
+        Returns:
+            Dictionary containing RGB data with dummy specular/diffuse components
+        """
+        # Load RGB directly as torch tensor
+        rgb_img = Image.open(rgb_path).convert("RGB")
+        rgb = torch.from_numpy(np.asarray(rgb_img, dtype=np.float32)) / 255.0
+
+        # Convert to CHW format
+        rgb_chw = rgb.permute(2, 0, 1)  # [3, H, W]
+
+        # Resize RGB data to target size if specified
+        if self.target_size is not None:
+            rgb_chw = self._resize_rgb_tensor(rgb_chw)
+
+        # Create dummy specular and diffuse components (all zeros for specular, RGB for diffuse)
+        I_spec = torch.zeros_like(rgb_chw)  # [3, H, W] - no specular component
+        I_diff = rgb_chw.clone()  # [3, H, W] - all RGB is diffuse
+
+        return {
+            "rgb": rgb_chw,
+            "specular": I_spec,
+            "diffuse": I_diff,
+        }
+
+    def _compute_highlight_mask(self, frame_chw: torch.Tensor) -> torch.Tensor:
+        """
+        Compute binary highlight mask for a single RGB frame.
+
+        Args:
+            frame_chw: Tensor of shape [C, H, W]
+
+        Returns:
+            Tensor of shape [1, H, W] with 1 at highlight pixels
+        """
+        if frame_chw.dim() == 3:
+            if frame_chw.shape[0] == 3:
+                # Use luminance weights consistent with HighlightDataset
+                grayscale = (
+                    0.299 * frame_chw[0] + 0.587 * frame_chw[1] + 0.114 * frame_chw[2]
+                )
+            else:
+                grayscale = frame_chw.mean(dim=0)
+        elif frame_chw.dim() == 2:
+            grayscale = frame_chw
+        else:
+            raise ValueError(
+                f"Unexpected frame dimensions for highlight mask: {frame_chw.shape}"
+            )
+
+        mask = (grayscale > self.highlight_brightness_threshold).float().unsqueeze(0)
+        return mask
+
+    def _find_rectangle_with_least_highlights(
+        self, binary_mask_hw: torch.Tensor, rect_size: Optional[Tuple[int, int]]
+    ) -> torch.Tensor:
+        """
+        Find rect (top, left, bottom, right) with fewest highlights in a binary mask.
+
+        Args:
+            binary_mask_hw: Tensor [H, W] of 0/1
+            rect_size: (height, width) or None
+
+        Returns:
+            Int tensor [4] = (top, left, bottom, right)
+        """
+        if rect_size is None:
+            return torch.tensor([0, 0, 0, 0]).int()
+
+        target_height, target_width = rect_size
+        img_height, img_width = binary_mask_hw.shape
+
+        if target_height > img_height or target_width > img_width:
+            return torch.tensor([0, 0, 0, 0]).int()
+
+        max_top = img_height - target_height + 1
+        max_left = img_width - target_width + 1
+
+        cumsum = torch.cumsum(torch.cumsum(binary_mask_hw, dim=0), dim=1)
+        padded_cumsum = F.pad(cumsum, (1, 0, 1, 0), value=0)
+
+        tops = torch.arange(max_top, device=binary_mask_hw.device)[:, None]
+        lefts = torch.arange(max_left, device=binary_mask_hw.device)[None, :]
+        bottoms = tops + target_height - 1
+        rights = lefts + target_width - 1
+
+        highlight_counts = (
+            padded_cumsum[bottoms + 1, rights + 1]
+            - padded_cumsum[tops, rights + 1]
+            - padded_cumsum[bottoms + 1, lefts]
+            + padded_cumsum[tops, lefts]
+        )
+
+        min_pos = torch.argmin(highlight_counts)
+        best_top = (min_pos // max_left).item()
+        best_left = (min_pos % max_left).item()
+        best_bottom = best_top + target_height - 1
+        best_right = best_left + target_width - 1
+
+        return torch.tensor([best_top, best_left, best_bottom, best_right]).int()
+
+    def _crop_rectangle_from_rgb(
+        self, rgb_chw: torch.Tensor, rect_coords: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Crop rectangle from RGB and compute its highlight mask.
+
+        Returns:
+            (cropped_rgb [C,h,w], cropped_mask [1,h,w])
+        """
+        top, left, bottom, right = [int(v) for v in rect_coords]
+
+        if top == 0 and left == 0 and bottom == 0 and right == 0:
+            if self.highlight_rect_size is not None:
+                h, w = self.highlight_rect_size
+                empty_frame = torch.zeros(
+                    rgb_chw.shape[0], h, w, device=rgb_chw.device, dtype=rgb_chw.dtype
+                )
+                empty_mask = torch.zeros(
+                    1, h, w, device=rgb_chw.device, dtype=rgb_chw.dtype
+                )
+                return empty_frame, empty_mask
+            else:
+                return rgb_chw, torch.zeros(
+                    1,
+                    rgb_chw.shape[1],
+                    rgb_chw.shape[2],
+                    device=rgb_chw.device,
+                    dtype=rgb_chw.dtype,
+                )
+
+        cropped_rgb = rgb_chw[:, top : bottom + 1, left : right + 1]
+        cropped_mask = self._compute_highlight_mask(cropped_rgb)
+        return cropped_rgb, cropped_mask
 
     def _edge_aware_upsample_original(
         self, f_half: torch.Tensor, rgb_full: torch.Tensor
@@ -677,6 +859,7 @@ class RGBP_Dataset(Dataset):
             "S1": S1.unsqueeze(0),
             "S2": S2.unsqueeze(0),
             "S3": S3.unsqueeze(0),
+            "stokes": torch.cat([S0, S1, S2], dim=0).unsqueeze(0),
             "intensity": S0.unsqueeze(0),
             "DoLP": DoLP.unsqueeze(0),
             "AoP": AoP.unsqueeze(0),
@@ -696,29 +879,75 @@ class RGBP_Dataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
         Load and return a single dataset sample with optimized processing.
-        
+
         Args:
             idx: Index of the sample to load (0 <= idx < len(dataset))
-            
+
         Returns:
             Dictionary containing:
-            - Polarization data: 'I0', 'I45', 'I90', 'I135', 'S0', 'S1', 'S2', 'DoLP', 'AoP', 'f_spec'
-            - RGB data: 'rgb', 'rgb_diffuse', 'rgb_specular'
+            - Polarization data: 'I0', 'I45', 'I90', 'I135', 'S0', 'S1', 'S2', 'DoLP', 'AoP', 'f_spec' (if available)
+            - RGB data: 'rgb', 'specular', 'diffuse'
             - Camera data: 'intrinsics' [3, 3]
             All image tensors have shape [C, H, W] where H, W match target_size if specified
         """
-        rgb_path, pol_path, intrinsics_path = self.scene_pairs[idx]
+        rgb_path, pol_path, intrinsics_path, has_pol_data = self.scene_pairs[idx]
 
         # Load data (potentially from cache)
         intrinsics = self._load_intrinsics(intrinsics_path)
-        pol_data = self._load_and_process_polarization(pol_path)
 
-        # Get specular fraction for RGB processing
-        f_spec = pol_data["f_spec"].squeeze(0)
-        rgb_data = self._load_rgb_and_separate(rgb_path, f_spec)
+        if has_pol_data:
+            # Load polarization data
+            pol_data = self._load_and_process_polarization(pol_path)
+            # Get specular fraction for RGB processing
+            f_spec = pol_data["f_spec"].squeeze(0)
+            rgb_data = self._load_rgb_and_separate(rgb_path, f_spec)
+            # Combine results
+            sample = {**pol_data, **rgb_data, "intrinsics": intrinsics}
+        else:
+            # No polarization data available - load RGB only
+            rgb_data = self._load_rgb_only(rgb_path)
+            sample = {**rgb_data, "intrinsics": intrinsics}
 
-        # Combine results
-        sample = {**pol_data, **rgb_data, "intrinsics": intrinsics}
+        # Optional highlight outputs (computed on the resized rgb)
+        if self.highlight_enabled and "rgb" in sample:
+            rgb_chw = sample["rgb"]
+            mask = self._compute_highlight_mask(rgb_chw)
+
+            if self.highlight_return_mask:
+                sample["highlight_masks"] = mask
+                total_pixels = rgb_chw.shape[-2] * rgb_chw.shape[-1]
+                coverage_percent = (mask.sum() / max(total_pixels, 1)) * 100.0
+                sample["highlight_coverage"] = coverage_percent.to(torch.float32)
+
+            if self.highlight_rect_size is not None:
+                rect_coords = self._find_rectangle_with_least_highlights(
+                    mask.squeeze(0), self.highlight_rect_size
+                )
+                sample["rect_coords"] = rect_coords
+
+                if self.highlight_return_rect:
+                    rect_rgb, rect_mask = self._crop_rectangle_from_rgb(
+                        rgb_chw, rect_coords
+                    )
+
+                    # If both target_size and rect_size are set, resize the rect to target size
+                    # Keep native rect size when it's used as the main RGB (cropped training)
+                    if (
+                        self.target_size is not None
+                        and self.highlight_rect_size is not None
+                        and not self.highlight_return_rect_as_rgb
+                    ):
+                        rect_rgb = self._resize_rgb_tensor(rect_rgb)
+                        rect_mask = F.interpolate(
+                            rect_mask.unsqueeze(0), size=self.target_size, mode="nearest", align_corners=None
+                        ).squeeze(0)
+
+                    sample["rect_crop"] = rect_rgb
+                    sample["rect_mask"] = rect_mask
+
+                    if self.highlight_return_rect_as_rgb:
+                        sample["uncropped_rgb"] = sample["rgb"]
+                        sample["rgb"] = rect_rgb
 
         if self.transform:
             sample = self.transform(sample)
@@ -730,11 +959,11 @@ class RGBP_Dataset(Dataset):
 class SCRREAM_Dataset(RGBP_Dataset):
     """
     SCRREAM dataset implementation for polarization-based reflection removal.
-    
+
     Inherits all functionality from the base RGBP_Dataset class.
     This class can be extended with SCRREAM-specific preprocessing,
     data augmentation, or validation logic as needed.
-    
+
     The SCRREAM dataset contains RGB images with corresponding polarization
     data for training reflection removal models.
     """
@@ -742,7 +971,7 @@ class SCRREAM_Dataset(RGBP_Dataset):
     def __init__(self, **kwargs) -> None:
         """
         Initialize SCRREAM dataset.
-        
+
         Args:
             **kwargs: All arguments passed to parent RGBP_Dataset class
         """
@@ -753,11 +982,11 @@ class SCRREAM_Dataset(RGBP_Dataset):
 class HOUSECAT6D_Dataset(RGBP_Dataset):
     """
     HOUSECAT6D dataset implementation for 6D pose estimation with polarization.
-    
+
     Inherits all functionality from the base RGBP_Dataset class.
     This class can be extended with HOUSECAT6D-specific preprocessing,
     pose annotation loading, or 6D pose-specific data augmentation.
-    
+
     The HOUSECAT6D dataset provides RGB and polarization data along with
     6D object pose annotations for training pose estimation models.
     """
@@ -765,7 +994,7 @@ class HOUSECAT6D_Dataset(RGBP_Dataset):
     def __init__(self, **kwargs) -> None:
         """
         Initialize HOUSECAT6D dataset.
-        
+
         Args:
             **kwargs: All arguments passed to parent RGBP_Dataset class
         """
@@ -776,11 +1005,11 @@ class HOUSECAT6D_Dataset(RGBP_Dataset):
 class POLARGB_Dataset(RGBP_Dataset):
     """
     PolaRGB dataset implementation for polarization-guided RGB processing.
-    
+
     Inherits all functionality from the base RGBP_Dataset class.
     This class can be extended with PolaRGB-specific preprocessing,
     polarization analysis, or RGB enhancement techniques.
-    
+
     The PolaRGB dataset combines RGB imagery with polarization measurements
     for improved scene understanding and image enhancement tasks.
     """
@@ -788,7 +1017,7 @@ class POLARGB_Dataset(RGBP_Dataset):
     def __init__(self, **kwargs) -> None:
         """
         Initialize PolaRGB dataset.
-        
+
         Args:
             **kwargs: All arguments passed to parent RGBP_Dataset class
         """
@@ -796,7 +1025,30 @@ class POLARGB_Dataset(RGBP_Dataset):
         # Add any PolaRGB-specific initialization here
 
 
-def create_datasets_from_config(
+class SCARED_Dataset(RGBP_Dataset):
+    """
+    SCARED dataset implementation for polarization-guided RGB processing.
+
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with SCARED-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+
+    The SCARED dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize SCARED dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(**kwargs)
+        # Add any SCARED-specific initialization here
+
+
+def from_config(
     config: Dict, dataset_names: Optional[List[str]] = None
 ) -> Dict[str, Union[Dataset, None]]:
     """
@@ -819,20 +1071,17 @@ def create_datasets_from_config(
         # Get all available dataset names from config
         dataset_names = []
 
-        # Debug: Print config structure
-        if "parameters" in config:
-            if "DATASETS" in config["parameters"]:
-                datasets_config = config["parameters"]["DATASETS"]
+        datasets_config = config.DATASETS
 
-                if isinstance(datasets_config, dict) and "value" in datasets_config:
-                    datasets_value = datasets_config["value"]
+        if isinstance(datasets_config, dict):
+            datasets_value = datasets_config
 
-                    if datasets_value is not None:
-                        dataset_names = [
-                            name
-                            for name in datasets_value.keys()
-                            if isinstance(datasets_value[name], dict)
-                        ]
+            if datasets_value is not None:
+                dataset_names = [
+                    name
+                    for name in datasets_value.keys()
+                    if isinstance(datasets_value[name], dict)
+                ]
 
     if not dataset_names:
         raise ValueError(
@@ -844,6 +1093,7 @@ def create_datasets_from_config(
         "SCRREAM": SCRREAM_Dataset,
         "HOUSECAT6D": HOUSECAT6D_Dataset,
         "POLARGB": POLARGB_Dataset,
+        "SCARED": SCARED_Dataset,
         # Future datasets will be added here by the user
     }
 
@@ -851,7 +1101,7 @@ def create_datasets_from_config(
     val_datasets = []
 
     # Global config parameters
-    global_config = config["parameters"]
+    global_config = config
 
     # Get global scene configuration
     global_train_scenes = global_config.get("TRAIN_SCENES", {}).get("value")
@@ -868,13 +1118,12 @@ def create_datasets_from_config(
             continue
 
         # Get dataset-specific config
-        datasets_value = global_config["DATASETS"]["value"]
+        datasets_value = global_config.DATASETS
         if datasets_value is None:
             raise ValueError("DATASETS['value'] is None in config")
         dataset_config = datasets_value[dataset_name]
-
         # Get root directory
-        root_dir = os.path.expandvars(dataset_config["ROOT_DIR"])
+        root_dir = os.path.expandvars(dataset_config.ROOT_DIR)
         if not os.path.exists(root_dir):
             logger.warning(
                 f"Warning: Root directory '{root_dir}' for dataset '{dataset_name}' not found. Skipping."
@@ -904,7 +1153,23 @@ def create_datasets_from_config(
             "polarization_format": get_config_value(
                 "POLARIZATION_FORMAT", "single_file_clock"
             ),
+            # Highlight options
+            "highlight_enable": get_config_value("HIGHLIGHT_ENABLE", False),
+            "highlight_brightness_threshold": get_config_value(
+                "HIGHLIGHT_BRIGHTNESS_THRESHOLD", 0.93
+            ),
+            "highlight_return_mask": get_config_value("HIGHLIGHT_RETURN_MASK", False),
+            "highlight_return_rect": get_config_value("HIGHLIGHT_RETURN_RECT", False),
+            "highlight_return_rect_as_rgb": get_config_value("HIGHLIGHT_RETURN_RECT_AS_RGB", False),
         }
+
+        # Handle optional tuple conversion for rect size if provided
+        rect_size_val = get_config_value("HIGHLIGHT_RECT_SIZE", None)
+        if rect_size_val is not None:
+            try:
+                dataset_params["highlight_rect_size"] = tuple(rect_size_val)
+            except Exception:
+                dataset_params["highlight_rect_size"] = None
 
         # Get scenes configuration with priority: global > dataset-specific
         dataset_train_scenes = dataset_config.get("TRAIN_SCENES", [])
@@ -936,8 +1201,19 @@ def create_datasets_from_config(
 
         # Create training dataset
         if train_scenes is not None and len(train_scenes) > 0:
+            dataset_params.update({"highlight_enable": True})
+            
             # Use specific training scenes
-            train_dataset = dataset_class(include=train_scenes, **dataset_params)
+            train_dataset = dataset_class(
+                include=train_scenes,
+                # highlight_enable=dataset_config.get("HIGHLIGHT_ENABLE"),
+                # highlight_brightness_threshold=dataset_config.get("HIGHLIGHT_BRIGHTNESS_THRESHOLD"),
+                # highlight_return_mask=dataset_config.get("HIGHLIGHT_RETURN_MASK"),
+                # highlight_rect_size=dataset_config.get("HIGHLIGHT_RECT_SIZE"),
+                # highlight_return_rect=dataset_config.get("HIGHLIGHT_RETURN_RECT"),
+                # highlight_return_rect_as_rgb=dataset_config.get("HIGHLIGHT_RETURN_RECT_AS_RGB"),
+                **dataset_params,
+            )
             if len(train_dataset) > 0:
                 train_datasets.append(train_dataset)
                 logger.info(
@@ -948,7 +1224,16 @@ def create_datasets_from_config(
         else:
             # Use all scenes except validation scenes
             exclude_scenes = val_scenes if val_scenes and len(val_scenes) > 0 else []
-            train_dataset = dataset_class(exclude=exclude_scenes, **dataset_params)
+            train_dataset = dataset_class(
+                exclude=exclude_scenes,
+                # highlight_enable=dataset_config.get("HIGHLIGHT_ENABLE"),
+                # highlight_brightness_threshold=dataset_config.get("HIGHLIGHT_BRIGHTNESS_THRESHOLD"),
+                # highlight_return_mask=dataset_config.get("HIGHLIGHT_RETURN_MASK"),
+                # highlight_rect_size=dataset_config.get("HIGHLIGHT_RECT_SIZE"),
+                # highlight_return_rect=dataset_config.get("HIGHLIGHT_RETURN_RECT"),
+                # highlight_return_rect_as_rgb=dataset_config.get("HIGHLIGHT_RETURN_RECT_AS_RGB"),
+                **dataset_params,
+            )
             if len(train_dataset) > 0:
                 train_datasets.append(train_dataset)
                 excluded_text = (
@@ -964,7 +1249,12 @@ def create_datasets_from_config(
 
         # Create validation dataset
         if val_scenes and len(val_scenes) > 0:
-            val_dataset = dataset_class(include=val_scenes, **dataset_params)
+            # Overrides global highlight_enable. Validation dataset should have original images
+            dataset_params.update({"highlight_enable": False})
+            val_dataset = dataset_class(
+                include=val_scenes,
+                **dataset_params,
+            )
             if len(val_dataset) > 0:
                 val_datasets.append(val_dataset)
                 logger.info(
@@ -1002,32 +1292,3 @@ def create_datasets_from_config(
     #             logger.info(f"  {dataset_name} - Train: {len(train_datasets[i])}, Val: {len(val_datasets[i]) if i < len(val_datasets) else 0}")
 
     return result
-
-
-def load_config_and_create_datasets(
-    config_path: str, dataset_names: Optional[List[str]] = None
-) -> Dict[str, Union[Dataset, None]]:
-    """
-    Load configuration from YAML file and create datasets.
-
-    This is the main entry point for creating datasets from a config file.
-
-    Args:
-        config_path: Path to the YAML configuration file
-        dataset_names: Optional list of dataset names to load. If None, loads all available datasets.
-
-    Returns:
-        Dictionary with 'training', 'validation', and 'test' keys containing ConcatDataset objects
-
-    Example:
-        >>> datasets = load_config_and_create_datasets('config_train.yaml')
-        >>> train_loader = torch.utils.data.DataLoader(datasets['training'], batch_size=16)
-        >>> val_loader = torch.utils.data.DataLoader(datasets['validation'], batch_size=16)
-    """
-    try:
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
-    except Exception as e:
-        raise ValueError(f"Error loading configuration file '{config_path}': {e}")
-
-    return create_datasets_from_config(config, dataset_names)

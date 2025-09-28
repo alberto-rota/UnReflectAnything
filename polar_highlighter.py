@@ -63,7 +63,7 @@ class PolarHighlighter(nn.Module):
         enable_timing=False,
     ):
         super().__init__()
-        self.depth_image_processor = AutoImageProcessor.from_pretrained(depth_estimator)
+        self.depth_image_processor = AutoImageProcessor.from_pretrained(depth_estimator,use_fast=True)
         self.depth_image_processor.do_rescale = False
         self.depth_model = DPTForDepthEstimation.from_pretrained(depth_estimator)
         self.height = height
@@ -559,7 +559,7 @@ class PolarHighlighter(nn.Module):
         device = rgb_lin.device
         # 0) Sample random light positions (one per image)
         light_pos = self.sample_light_source(
-            (-100, -50), (-90, 90), (-180, -90), batch_size=B, device=device
+            (-100, -10), (-110, 110), (-90,90), batch_size=B, device=device
         )  # [B,3]
 
         # 1) Compute viewing and lighting geometry
@@ -583,24 +583,24 @@ class PolarHighlighter(nn.Module):
 
         return H, H_stokes, H_aop, H_dop, light_pos, pcloud, l, v
 
-    @time_module("forward_pass")
-    def forward(self, rgb, pol, intrinsic, shininess=80.0, ks=10.0, n_rel=1.5, F0=0.4):
+    # @time_module("forward_pass")
+    def forward(self, rgb, pol=None, intrinsic=None, shininess=80.0, ks=10.0, n_rel=1.5, F0=0.4):
         """
         Forward pass for polar highlight synthesis.
 
         Args:
             rgb: [B,3,H,W] RGB image (0-1 normalized)
-            pol: [B,3,H,W] input polarization Stokes parameters (S0,S1,S2)
+            pol: [B,3,H,W] input polarization Stokes parameters (S0,S1,S2), optional
             intrinsic: [B,3,3] camera intrinsic matrix
             shininess: specular exponent
-            ks: specular strength
+            ks: specular strength   
             n_rel: relative refractive index
             F0: Fresnel reflectance at normal incidence
 
         Returns:
             dict with keys:
                 'highlight': [B,1,H,W] synthesized highlight
-                'stokes_updated': [B,3,H,W] updated Stokes parameters
+                'stokes_updated': [B,3,H,W] updated Stokes parameters (if pol provided)
                 'depth': [B,1,H,W] estimated depth
                 'normals': [B,3,H,W] surface normals
                 'gamma': [B,1,H,W] degree of linear polarization
@@ -610,8 +610,10 @@ class PolarHighlighter(nn.Module):
         # Ensure tensors are on GPU
         device = rgb.device
         rgb = rgb.to(device)
-        pol = pol.to(device)
-        intrinsic = intrinsic.to(device)
+        if pol is not None:
+            pol = pol.to(device)
+        if intrinsic is not None:
+            intrinsic = intrinsic.to(device)
 
         # 1) Estimate depth from RGB
         depth = self.compute_depth(rgb)  # [B,1,H,W]
@@ -620,10 +622,12 @@ class PolarHighlighter(nn.Module):
         normals = self.compute_normals(depth, intrinsic)  # [B,3,H,W]
 
         # 3) Synthesize highlights and update Stokes parameters
+        # Use dummy pol if not provided for the synthesis function
+        pol_input = pol if pol is not None else torch.zeros_like(rgb)
         H, H_stokes, H_aop, H_dop, light_pos, pcloud, light_dir, view_dir = (
             self.synthesize_highlight_with_stokes(
                 rgb,
-                pol,
+                pol_input,
                 depth,
                 normals,
                 intrinsic,
@@ -634,16 +638,11 @@ class PolarHighlighter(nn.Module):
             )
         )
 
-        # 4) Update scene Stokes parameters with highlight contribution
-        S0_H, S1_H, S2_H = H_stokes[:, 0:1], H_stokes[:, 1:2], H_stokes[:, 2:3]
-        stokes_updated = self.update_stokes_with_highlight(pol, S0_H, S1_H, S2_H)
-        rgb_highlighted = self.update_rgb_with_highlight(rgb, H)
-
-        return {
+        # 4) Update scene Stokes parameters with highlight contribution (only if pol provided)
+        result = {
             "highlight": H,
-            "rgb_highlighted": rgb_highlighted,
+            "rgb_highlighted": self.update_rgb_with_highlight(rgb, H),
             "stokes_highlight": H_stokes,
-            "stokes_highlighted": stokes_updated,
             "depth": depth,
             "normals": normals,
             "H_dop": H_dop,
@@ -653,3 +652,35 @@ class PolarHighlighter(nn.Module):
             "light_dir": light_dir,
             "view_dir": view_dir,
         }
+        
+        # Only compute stokes_highlighted if pol was provided
+        if pol is not None:
+            S0_H, S1_H, S2_H = H_stokes[:, 0:1], H_stokes[:, 1:2], H_stokes[:, 2:3]
+            stokes_updated = self.update_stokes_with_highlight(pol, S0_H, S1_H, S2_H)
+            result["stokes_highlighted"] = stokes_updated
+        else:
+            result["stokes_highlighted"] = None
+
+        return result
+
+def get_soft_highlight_map(rgb_image: torch.Tensor, threshold: float = 0.7) -> torch.Tensor:
+    """
+    Create a soft map of highlights from an RGB image.
+    
+    Args:
+        rgb_image: Input RGB image tensor of shape [B, 3, H, W]
+        threshold: Threshold value for highlight detection (default: 0.7)
+    
+    Returns:
+        Soft highlight map tensor of shape [B, 1, H, W]
+    """
+    # Create highlight mask by averaging across color channels (dim=1)
+    is_highlight = (rgb_image.mean(dim=1, keepdim=True) >= threshold)  # Shape: [B, 1, H, W]
+    
+    # Create soft highlights by subtracting threshold and masking non-highlights
+    soft_highlights = rgb_image - threshold
+    soft_highlights[torch.logical_not(is_highlight).repeat(1, 3, 1, 1)] = 0.0
+    
+    scaler = 1/(1-threshold)
+    # Return the mean across color channels to get single-channel highlight map
+    return soft_highlights.mean(dim=1, keepdim=True) * scaler  # Shape: [B, 1, H, W]

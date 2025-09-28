@@ -258,7 +258,7 @@ class EarlyStopping:
         if self.bucket_name:
             try:
                 self.storage_client = storage.Client()
-                self.bucket = self.storage_client.bucket(self.bucket_name)
+                self.bucket = self.storage_clientcket(self.bucket_name)
             except Exception as e:
                 self.bucket = None
         else:
@@ -268,22 +268,23 @@ class EarlyStopping:
         os.makedirs(checkpointpath, exist_ok=True)
 
     def __call__(self, val_loss, model, epoch):
-        score = -val_loss
-        logger.set_context("OPTIMIZATION")
-        if self.best_score is None:
-            self.best_score = score
-            self.save_checkpoint(val_loss, model, epoch)
-        elif score < self.best_score + self.delta:
-            self.counter += 1
-            logger.info(
-                f"Validation Loss DOESN'T improve [{val_loss:.6f} >  {self.val_loss_min:.6f}] {self.counter} / {self.patience} epochs without improvements"
-            )
-            if self.counter >= self.patience:
-                self.early_stop = True
-        else:
-            self.best_score = score
-            self.save_checkpoint(val_loss, model, epoch)
-            self.counter = 0
+        if self.patience > 0:
+            score = -val_loss
+            logger.set_context("OPTIMIZATION")
+            if self.best_score is None:
+                self.best_score = score
+                self.save_checkpoint(val_loss, model, epoch)
+            elif score < self.best_score + self.delta:
+                self.counter += 1
+                logger.info(
+                    f"Validation Loss DOESN'T improve [{val_loss:.6f} >  {self.val_loss_min:.6f}] {self.counter} / {self.patience} epochs without improvements"
+                )
+                if self.counter >= self.patience:
+                    self.early_stop = True
+            else:
+                self.best_score = score
+                self.save_checkpoint(val_loss, model, epoch)
+                self.counter = 0
 
     def save_checkpoint(self, val_loss, model, epoch):
         """Saves model when validation loss decrease."""
@@ -300,6 +301,7 @@ class EarlyStopping:
             # Save state dict locally first
             checkpoint_path = os.path.join(self.checkpointpath, "weights_best.pt")
             model._forward_hooks.clear()
+
             torch.save(model.state_dict(), checkpoint_path, pickle_module=dill)
 
             # Get run name for artifact path

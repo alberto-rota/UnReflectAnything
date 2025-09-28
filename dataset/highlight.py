@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 
 
-from .rgbp import Mono3D_Dataset
+from .mono3d_dataset import Mono3D_Dataset
 
 class HighlightDataset(Mono3D_Dataset):
     """
@@ -583,7 +583,7 @@ class HighlightSCARED(HighlightDataset):
             return_rect: Whether to return cropped rectangles. Default: False
             **kwargs: Additional arguments passed to SCARED dataset constructor
         """
-        from . import SCARED  # Import here to avoid circular imports
+        from .mono3d_dataset import SCARED  # Import here to avoid circular imports
 
         params = {
             "original_width": 1280,

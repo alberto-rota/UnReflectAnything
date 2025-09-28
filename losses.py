@@ -1,662 +1,448 @@
-
-
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import cv2 as cv
-import torch.nn as nn
-from typing import Dict, List, Tuple, Optional, Set
-from dataclasses import dataclass
-import numpy as np
-from rich.tree import Tree
-from rich import print as rprint
 
 
-# -------------------------------------------------------------------------------------------
-# BASE LOSS FUNCTIONS
-# These loss functions are the lowest leveels one and take in inputs directly. They are not
-# combinations of other losses
-# -------------------------------------------------------------------------------------------
-class TripletLoss(nn.Module):
-    def __init__(self, margin=1):
-        super(TripletLoss, self).__init__()
-        self.margin = margin
-
-    def dist(self, A, B):
-        cosine_sim = nn.functional.cosine_similarity(A, B)
-        return torch.sqrt(torch.clamp(2 - 2 * cosine_sim, min=0))
-
-    def forward(self, A, P, N):
-        return torch.mean(
-            torch.clamp(self.margin + self.dist(A, P) - self.dist(A, N), min=0)
-        )
-
-
-class EpipolarLoss(nn.Module):
-    """PyTorch module implementing robust symmetric epipolar distance loss.
-
-    This loss computes the robust symmetric epipolar distance between corresponding points
-    in two images given a predicted fundamental matrix.
-    """
-
-    def __init__(self, gamma=0.5):
-        """Initialize the loss module.
-
-        Args:
-            gamma (float): Robust parameter for clamping the loss. Defaults to 0.5.
-        """
+# -------------------------
+#   Low-level loss pieces
+# -------------------------
+class SSIMLoss(nn.Module):
+    def __init__(self, window_size=11, sigma=1.5):
         super().__init__()
-        self.gamma = gamma
+        self.window_size = window_size
+        self.sigma = sigma
+        self.register_buffer("window", self._create_window())
 
-    def _symmetric_epipolar_distance(self, pts1, pts2, F):
-        """Compute symmetric epipolar distance.
+    def _create_window(self):
+        coords = torch.arange(self.window_size, dtype=torch.float32)
+        coords -= self.window_size // 2
+        g = torch.exp(-(coords**2) / (2 * self.sigma**2))
+        g /= g.sum()
+        window = g.unsqueeze(1) @ g.unsqueeze(0)  # [w,w]
+        return window.unsqueeze(0).unsqueeze(0)    # [1,1,w,w]
 
-        Args:
-            pts1 (torch.Tensor): Points in first image (B, N, 3)
-            pts2 (torch.Tensor): Points in second image (B, N, 3)
-            F (torch.Tensor): Fundamental matrix (B, 3, 3)
+    def forward(self, x, y):
+        # x, y: [B, C, H, W]
+        B, C, H, W = x.shape
+        window = self.window.to(device=x.device, dtype=x.dtype).expand(C, 1, -1, -1)
 
-        Returns:
-            torch.Tensor: Symmetric epipolar distance (B, N)
-        """
+        mu_x = F.conv2d(x, window, padding=self.window_size // 2, groups=C)
+        mu_y = F.conv2d(y, window, padding=self.window_size // 2, groups=C)
 
-        # Normalize points to [-1, 1]
-        pts1 = pts1 / 192 - 1
-        pts2 = pts2 / 192 - 1
-        # COnvert points to homogeneous coordinates
-        pts1 = torch.cat([pts1, torch.ones_like(pts1[:, :, :1])], dim=2)  # (B, N, 3)
-        pts2 = torch.cat([pts2, torch.ones_like(pts2[:, :, :1])], dim=2)  # (B, N, 3)
+        mu_x_sq = mu_x**2
+        mu_y_sq = mu_y**2
+        mu_xy = mu_x * mu_y
 
-        # Compute epipolar lines
-        line1 = torch.bmm(pts1, F)  # (B, N, 3)
-        line2 = torch.bmm(pts2, F.permute(0, 2, 1))  # (B, N, 3)
+        sigma_x_sq = F.conv2d(x * x, window, padding=self.window_size // 2, groups=C) - mu_x_sq
+        sigma_y_sq = F.conv2d(y * y, window, padding=self.window_size // 2, groups=C) - mu_y_sq
+        sigma_xy = F.conv2d(x * y, window, padding=self.window_size // 2, groups=C) - mu_xy
 
-        # Compute scalar product
-        scalar_product = (pts2 * line1).sum(2)  # (B, N)
-
-        # Compute normalized distance
-        norm_term = 1 / line1[:, :, :2].norm(2, 2) + 1 / line2[:, :, :2].norm(  # (B, N)
-            2, 2
-        )  # (B, N)
-
-        return scalar_product.abs() * norm_term
-
-    def forward(self, F_pred, pts1, pts2, gamma=None):
-        """Forward pass computing the loss.
-
-        Args:
-            F_pred (torch.Tensor): Predicted fundamental matrix (B, 3, 3)
-            pts1 (torch.Tensor): Points in first image (B, N, 3)
-            pts2 (torch.Tensor): Points in second image (B, N, 3)
-            gamma (float, optional): Override default gamma value. Defaults to None.
-
-        Returns:
-            torch.Tensor: Mean robust symmetric epipolar distance
-        """
-        if gamma is None:
-            gamma = self.gamma
-
-        # Compute symmetric epipolar distance
-        sed = self._symmetric_epipolar_distance(pts1, pts2, F_pred)
-
-        # Apply robust clamping
-        loss = torch.clamp(sed, max=gamma)
-
-        # Return mean loss
-        return loss.mean()
-
-
-class InliersLoss(nn.Module):
-    def __init__(self, threshold=0.75):
-        super(InliersLoss, self).__init__()
-        self.threshold = threshold
-        self.eps = 1e-12
-
-    def forward(self, F_pred, F_gt, pts1, pts2):
-        """
-        Compute F1 score based on inlier classification.
-
-        pts1: Tensor of shape (B, N, 2) - pixel coordinates in image 1
-        pts2: Tensor of shape (B, N, 2) - pixel coordinates in image 2
-        F_pred: Tensor of shape (B, 3, 3) - predicted fundamental matrix
-        F_gt: Tensor of shape (B, 3, 3) - ground truth fundamental matrix
-        """
-        # Convert pixel coordinates to homogeneous coordinates
-        batch_size, num_pts, _ = pts1.size()
-        hom_pts1 = torch.cat(
-            [pts1, torch.ones(batch_size, num_pts, 1, device=pts1.device)], dim=2
-        )  # (B, N, 3)
-        hom_pts2 = torch.cat(
-            [pts2, torch.ones(batch_size, num_pts, 1, device=pts2.device)], dim=2
-        )  # (B, N, 3)
-
-        def epipolar_error(hom_pts1, hom_pts2, F):
-            """Compute symmetric epipolar error for a batch."""
-            Ft_pts2 = torch.bmm(
-                F.transpose(1, 2), hom_pts2.transpose(1, 2)
-            )  # (B, 3, N)
-            F_pts1 = torch.bmm(F, hom_pts1.transpose(1, 2))  # (B, 3, N)
-
-            res = 1 / (Ft_pts2[:, :2, :].norm(dim=1) + self.eps)  # (B, N)
-            res += 1 / (F_pts1[:, :2, :].norm(dim=1) + self.eps)  # (B, N)
-            res *= torch.abs(
-                torch.sum(
-                    hom_pts2 * torch.bmm(F, hom_pts1.transpose(1, 2)).transpose(1, 2),
-                    dim=2,
-                )
-            )  # (B, N)
-            return res
-
-        # Compute epipolar errors
-        est_res = epipolar_error(hom_pts1, hom_pts2, F_pred)  # (B, N)
-        gt_res = epipolar_error(hom_pts1, hom_pts2, F_gt)  # (B, N)
-
-        # Determine inliers
-        est_inliers = est_res < self.threshold  # (B, N)
-        gt_inliers = gt_res < self.threshold  # (B, N)
-        true_positives = est_inliers & gt_inliers  # (B, N)
-
-        gt_inlier_count = gt_inliers.float().sum(dim=1)  # (B,)
-        est_inlier_count = est_inliers.float().sum(dim=1)  # (B,)
-        true_positive_count = true_positives.float().sum(dim=1)  # (B,)
-
-        # Precision and recall
-        precision = true_positive_count / (est_inlier_count + self.eps)  # (B,)
-        recall = true_positive_count / (gt_inlier_count + self.eps)  # (B,)
-
-        # F1 score
-        f1_score = 2 * precision * recall / (precision + recall + self.eps)  # (B,)
-
-        return 1 - f1_score.mean()
-
-
-class SoftRankLoss(nn.Module):
-
-    def __init__(self):
-        super(SoftRankLoss, self).__init__()
-
-    def forward(self, F, delta=1e-6):
-        # Ensure F is positive definite by computing F^T F
-        F_t_F = torch.bmm(F.transpose(1, 2), F)
-
-        # Add delta * I to ensure numerical stability
-        batch_size, n, _ = F_t_F.shape
-        identity = delta * torch.eye(n, device=F.device).unsqueeze(0).expand(
-            batch_size, -1, -1
+        C1, C2 = 0.01**2, 0.03**2
+        ssim_map = ((2 * mu_xy + C1) * (2 * sigma_xy + C2)) / (
+            (mu_x_sq + mu_y_sq + C1) * (sigma_x_sq + sigma_y_sq + C2)
         )
-        F_t_F_stable = F_t_F + identity
+        return ssim_map.mean()
 
-        # Compute log-det loss
-        log_det = torch.linalg.slogdet(F_t_F_stable).logabsdet
-        loss = torch.sum(log_det)
 
+class CharbonnierLoss(nn.Module):
+    """Smooth L1:  sqrt((x)^2 + eps^2).mean()  — zero at equality."""
+    def __init__(self, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, pred, target):
+        return torch.sqrt((pred - target) ** 2 + self.eps**2).mean()
+
+
+class SquaredSoftDiceLoss(nn.Module):
+    """
+    Soft-Dice with squared denominator:
+    Dice = (2 * <p,y>) / (||p||^2 + ||y||^2)  ->  Loss = 1 - Dice
+    => Loss == 0 when pred == target, even for soft labels.
+    """
+    def __init__(self, smooth=1e-6):
+        super().__init__()
+        self.smooth = smooth
+
+    def forward(self, pred, target):
+        B = pred.size(0)
+        p = pred.view(B, -1)
+        y = target.view(B, -1)
+        inter = (p * y).sum(dim=1)
+        denom = (p.pow(2).sum(dim=1) + y.pow(2).sum(dim=1))
+        dice = (2 * inter + self.smooth) / (denom + self.smooth)
+        return 1.0 - dice.mean()
+
+
+class GradientLoss(nn.Module):
+    """Match finite-difference gradients — zero at equality."""
+    def __init__(self):
+        super().__init__()
+        kx = torch.tensor([[-1, 1]], dtype=torch.float32).view(1, 1, 1, 2)
+        ky = torch.tensor([[-1], [1]], dtype=torch.float32).view(1, 1, 2, 1)
+        self.register_buffer("kx", kx)
+        self.register_buffer("ky", ky)
+
+    def forward(self, pred, target):
+        dx_p = F.conv2d(pred, self.kx)
+        dy_p = F.conv2d(pred, self.ky)
+        dx_t = F.conv2d(target, self.kx)
+        dy_t = F.conv2d(target, self.ky)
+        return (dx_p - dx_t).abs().mean() + (dy_p - dy_t).abs().mean()
+
+
+class TVLoss(nn.Module):
+    """Total variation on the prediction."""
+    def forward(self, x):
+        tv_h = (x[:, :, 1:, :] - x[:, :, :-1, :]).abs().mean()
+        tv_w = (x[:, :, :, 1:] - x[:, :, :, :-1]).abs().mean()
+        return tv_h + tv_w
+
+
+# -------------------------------------
+#   Highlight regression (alpha in [0,1])
+# -------------------------------------
+class HighlightRegressionLoss(nn.Module):
+    """
+    Per-pixel regression loss for soft highlight fraction alpha ∈ [0,1].
+    All selected terms are 0 when pred == gt.
+    """
+    def __init__(
+        self,
+        w_l1=1.0,              # Charbonnier/L1 main term
+        use_charbonnier=True,
+        w_dice=0.0,            # squared soft-Dice
+        w_ssim=0.0,            # SSIM on alpha
+        w_grad=0.0,            # gradient consistency
+        w_tv=0.0,              # TV on pred (regularizer)
+        ssim_impl=None,        # pass SSIMLoss() if using SSIM
+        dice_smooth=1e-6,
+        charbonnier_eps=1e-6,
+        clamp_to_unit=True,
+        # New: class-imbalance and stabilization options (backward compatible)
+        balance_mode: str = "none",   # 'none' | 'auto' | 'pos_weight'
+        pos_weight: float = 1.0,       # used when balance_mode == 'pos_weight'
+        focal_gamma: float = 0.0,      # >0 to focus large errors, 0 keeps old behavior
+    ):
+        super().__init__()
+        self.w_l1 = w_l1
+        self.w_dice = w_dice
+        self.w_ssim = w_ssim
+        self.w_grad = w_grad
+        self.w_tv = w_tv
+        self.clamp_to_unit = clamp_to_unit
+
+        self.l_main = CharbonnierLoss(eps=charbonnier_eps) if use_charbonnier else nn.L1Loss()
+        self.l_dice = SquaredSoftDiceLoss(smooth=dice_smooth)
+        self.l_grad = GradientLoss()
+        self.l_tv = TVLoss()
+        self.ssim = ssim_impl
+        self.balance_mode = balance_mode
+        self.pos_weight = pos_weight
+        self.focal_gamma = focal_gamma
+
+    def forward(self, pred, target):
+        if self.clamp_to_unit:
+            pred = torch.clamp(pred, 0.0, 1.0)
+            target = torch.clamp(target, 0.0, 1.0)
+
+        loss = 0.0
+        if self.w_l1 > 0:
+            # Optional focal modulation on the per-pixel residual (keeps grads for small errors too)
+            if self.focal_gamma > 0.0:
+                # detach target to avoid second-order effects; keep pred in graph
+                resid = (pred - target).abs()
+                focal_w = torch.pow(resid.clamp_min(1e-6), self.focal_gamma)
+            else:
+                focal_w = 1.0
+
+            if self.balance_mode == "none":
+                main_term = self.l_main(pred * focal_w, target * focal_w)
+            else:
+                # Compute per-pixel weights
+                if self.balance_mode == "auto":
+                    # Balance positives/negatives to contribute equally
+                    # target assumed in [0,1]; threshold at 0.5 for positives
+                    with torch.no_grad():
+                        pos_frac = (target >= 0.5).float().mean().clamp_min(1e-6)
+                        w_pos = 0.5 / pos_frac
+                        w_neg = 0.5 / (1.0 - pos_frac)
+                        pixel_w = torch.where(target >= 0.5, w_pos, w_neg)
+                elif self.balance_mode == "pos_weight":
+                    pixel_w = torch.where(target >= 0.5, self.pos_weight, 1.0)
+                else:
+                    pixel_w = 1.0
+
+                if isinstance(self.l_main, CharbonnierLoss):
+                    # Inline charbonnier to support per-pixel weights
+                    eps = self.l_main.eps
+                    main_term = torch.sqrt((pred - target) ** 2 + eps**2)
+                    main_term = (main_term * pixel_w * focal_w).mean()
+                else:
+                    main_term = ((pred - target).abs() * pixel_w * focal_w).mean()
+
+            loss = loss + self.w_l1 * main_term
+        if self.w_dice > 0:
+            loss = loss + self.w_dice * self.l_dice(pred, target)
+        if self.w_ssim > 0 and self.ssim is not None:
+            loss = loss + self.w_ssim * (1.0 - self.ssim(pred, target))
+        if self.w_grad > 0:
+            loss = loss + self.w_grad * self.l_grad(pred, target)
+        if self.w_tv > 0:
+            loss = loss + self.w_tv * self.l_tv(pred)
         return loss
 
 
-class SSIMLoss(nn.Module):
+# -------------------------
+#   Compositing utilities
+# -------------------------
+def alpha_composite(components):
     """
-    ------------------------------------------------------------------------------------------------
-    Copyright of this class fully belongs to Shuwei Shao @ https://github.com/ShuweiShao/AF-SfMLearner
-    -------------------------------------------------------------------------------------------------
-    Layer to compute the SSIMLoss loss between a pair of images
+    Alpha composite multiple RGBA components, over black.
+    components: list of [B,4,H,W] tensors
+    returns: [B,3,H,W]
     """
-
-    def __init__(self):
-        super(SSIMLoss, self).__init__()
-        self.mu_x_pool = nn.AvgPool2d(3, 1)
-        self.mu_y_pool = nn.AvgPool2d(3, 1)
-        self.sig_x_pool = nn.AvgPool2d(3, 1)
-        self.sig_y_pool = nn.AvgPool2d(3, 1)
-        self.sig_xy_pool = nn.AvgPool2d(3, 1)
-
-        self.refl = nn.ReflectionPad2d(1)
-
-        self.C1 = 0.01**2
-        self.C2 = 0.03**2
-
-    def forward(self, target: torch.Tensor, warped: torch.Tensor) -> torch.Tensor:
-        x = self.refl(target)
-        y = self.refl(warped)
-
-        mu_x = self.mu_x_pool(x)
-        mu_y = self.mu_y_pool(y)
-
-        sigma_x = self.sig_x_pool(x**2) - mu_x**2
-        sigma_y = self.sig_y_pool(y**2) - mu_y**2
-        sigma_xy = self.sig_xy_pool(x * y) - mu_x * mu_y
-
-        SSIM_n = (2 * mu_x * mu_y + self.C1) * (2 * sigma_xy + self.C2)
-        SSIM_d = (mu_x**2 + mu_y**2 + self.C1) * (sigma_x + sigma_y + self.C2)
-
-        return torch.clamp((1 - SSIM_n / SSIM_d) / 2, 0, 1).mean()
-
-    def __str__(self):
-        return "SSIMLoss()"
+    result = torch.zeros_like(components[0][:, :3])
+    for comp in components:
+        rgb = comp[:, :3]
+        a = comp[:, 3:4]
+        result = a * rgb + (1 - a) * result
+    return result
 
 
-class L1Loss(nn.Module):
-    """L1 Loss."""
-
-    def __init__(self):
-        super(L1Loss, self).__init__()
-
-    def forward(self, target: torch.Tensor, warped: torch.Tensor) -> torch.Tensor:
-        """Compute the L1 loss.
-
-        Args:
-            target (torch.Tensor): Target image.
-            warped (torch.Tensor): Warped image.
-            depthmap (torch.Tensor, optional): Depth map. Defaults to None.
-
-        Returns:
-            torch.Tensor: L1 loss.
-        """
-        l1_loss = torch.mean(torch.abs(target - warped))
-        return l1_loss
-
-    def __str__(self):
-        return "L1Loss()"
-
-
-class EASLoss(nn.Module):
-    """Edge-Aware Smoothness (EAS) Loss."""
-
-    def __init__(self, alpha: int = 1):
-        super(EASLoss, self).__init__()
-        self.alpha = alpha
-
-    def forward(self, warped: torch.Tensor, depthmap: torch.Tensor) -> torch.Tensor:
-        """Compute the EAS loss.
-
-        Args:
-            target (torch.Tensor): Target image.
-            warped (torch.Tensor): Warped image.
-            depthmap (torch.Tensor): Depth map.
-
-        Returns:
-            torch.Tensor: EAS loss.
-        """
-        # Calculate horizontal and vertical gradients of the disparity map
-        # Calculate horizontal and vertical gradients of the image
-        disparity_gradients_x = torch.abs(depthmap[:, :, :-1] - depthmap[:, :, 1:])
-        disparity_gradients_y = torch.abs(depthmap[:, :-1, :] - depthmap[:, 1:, :])
-
-        image_gradients_x = torch.mean(
-            torch.abs(warped[:, :, :, :-1] - warped[:, :, :, 1:]), dim=1
-        )  # Resulting shape: Bx1x448x447
-        image_gradients_y = torch.mean(
-            torch.abs(warped[:, :, :-1, :] - warped[:, :, 1:, :]), dim=1
-        )  # Resulting shape: Bx1x447x448
-        # Adjust disparity gradients to match the shape of image gradients
-        disparity_gradients_x = disparity_gradients_x[:, :-1, :]  # Shape: Bx447x447
-        disparity_gradients_y = disparity_gradients_y[:, :, :-1]  # Shape: Bx447x447
-
-        # Match the dimensions for smoothness loss calculation
-        image_gradients_x = image_gradients_x[:, :-1, :]  # Shape: Bx1x447x447
-        image_gradients_y = image_gradients_y[:, :, :-1]  # Shape: Bx1x447x447
-
-        # Calculate the smoothness loss
-        smoothness_loss = disparity_gradients_x * torch.exp(
-            -image_gradients_x
-        ) + disparity_gradients_y * torch.exp(-image_gradients_y)
-
-        # Calculate the average loss
-        smoothness_loss = torch.mean(smoothness_loss)
-
-        # Scale the loss by alpha
-        smoothness_loss = self.alpha * smoothness_loss
-
-        return smoothness_loss
-
-    def __str__(self):
-        return f"EASLoss(alpha={self.alpha})"
-
-
-class ScaleLoss(nn.Module):
-    """Scale Loss."""
-
-    def __init__(self):
-        super(ScaleLoss, self).__init__()
-        self.mse = nn.MSELoss()
-
-    def forward(self, pose_gt: torch.Tensor, pose_pred: torch.Tensor) -> torch.Tensor:
-        """Compute the scale loss.
-
-        Args:
-            pose_gt (torch.Tensor): Ground truth pose.
-            pose_pred (torch.Tensor): Predicted pose.
-            source (torch.Tensor): Source image.
-            target (torch.Tensor): Target image.
-
-        Returns:
-            torch.Tensor: Scale loss.
-        """
-        # Calculate the translation scale
-        return self.mse(pose_gt, pose_pred)
-
-    def __str__(self):
-        return "ScaleLoss()"
-
-
-# -------------------------------------------------------------------------------------------
-# COMBINATION LOSS FUNCTIONS
-# These loss functions are linear combinations of other losses
-# -------------------------------------------------------------------------------------------
-@dataclass
-class LossComponent:
+def compose_diffuse_highlight_and_layers(
+    diffuse_rgb, additive_highlights_rgb, layered_rgba, clamp_after_add=True
+):
     """
-    Dataclass to store information about a loss component and its required parameters
+    diffuse_rgb: [B,3,H,W]
+    additive_highlights_rgb: list of [B,3,H,W] tensors to ADD (e.g., alpha * color)
+    layered_rgba: list of [B,4,H,W] layers to alpha-over on top
     """
+    result = diffuse_rgb
+    for h in additive_highlights_rgb:
+        result = result + h
+    if clamp_after_add:
+        result = torch.clamp(result, 0.0, 1.0)
+    # Alpha-over any actual layers on top (rare for this use-case)
+    for comp in layered_rgba:
+        rgb = comp[:, :3]
+        a = comp[:, 3:4]
+        result = a * rgb + (1 - a) * result
+    return result
 
-    name: str
-    loss_fn: nn.Module
-    weight: float
-    required_params: Set[str]
-    decay_rate: Optional[float] = None
 
-    @property
-    def current_weight(self) -> float:
-        """Get the current weight after decay"""
-        return self.weight
-
-
-class WeightedCombinationLoss(nn.Module):
+# -------------------------
+#   Main Decomposition loss
+# -------------------------
+class DecompositionLoss(nn.Module):
     """
-    A loss module that combines multiple loss functions with weights.
-    """
+    Flexible intrinsic decomposition objective.
 
+    - Diffuse, Specular: supervised with L1 + (1 - SSIM) (+ optional alpha L1 if RGBA).
+    - Highlight (1-ch): treated as per-pixel regression alpha ∈ [0,1].
+    - Reconstruction: ADDITIVE highlight composition:
+        I_recon = diffuse + alpha_highlight * color_highlight  (clamped)
+      so perfect diffuse & highlight -> zero reconstruction loss.
+    - Alpha regularization: configurable (disabled by default to allow 0 total at perfection).
+    """
     def __init__(
         self,
-        components: List[Tuple[str, nn.Module, float, Set[str]]],
-        decay_config: Optional[Dict[str, float]] = None,
+        component_weights=None,
+        # Individual component loss weights
+        weight_specular_loss=1.0,
+        weight_diffuse_loss=1.0,
+        weight_highlight_loss=1.0,
+
+        # Global loss term weights
+        weight_component_matching=1.0,      # How well components match their ground truth
+        weight_image_reconstruction=0.5,    # How well reconstructed image matches input
+        weight_alpha_regularization=0.0,    # Default 0.0 to allow exact-0 totals in debug
+        weight_spatial_consistency=0.0,     # Reserved hook (unused here)
+
+        # highlight regression config
+        hlreg_w_l1=1.0,
+        hlreg_use_charb=True,
+        hlreg_w_dice=0.2,
+        hlreg_w_ssim=0.0,
+        hlreg_w_grad=0.0,
+        hlreg_w_tv=0.0,
+        # New knobs (forwarded to HighlightRegressionLoss)
+        hlreg_balance_mode: str = "none",
+        hlreg_pos_weight: float = 1.0,
+        hlreg_focal_gamma: float = 0.0,
+
+        # highlight rendering
+        highlight_color=(1.0, 1.0, 1.0),  # C_highlight
+        clamp_after_add=True,
+
+        # alpha regularization behavior
+        alpha_reg_mode="none",    # 'none' | 'variance' | 'match_gt'
     ):
-        """
-        Initialize the WeightedCombinationLoss module.
-        """
-        super(WeightedCombinationLoss, self).__init__()
+        super().__init__()
 
-        # Normalize weights to sum to 1
-        total_weight = sum(weight for _, _, weight, _ in components)
-        decay_config = decay_config or {}
+        # component weights
+        if component_weights is not None:
+            self.component_weights = dict(component_weights)
+        else:
+            self.component_weights = {
+                "specular": weight_specular_loss,
+                "diffuse":  weight_diffuse_loss,
+                "highlight": weight_highlight_loss,
+            }
+        self.default_component_weight = 1.0
 
-        # Create loss components
-        self.components = [
-            LossComponent(
-                name=name,
-                loss_fn=loss_fn,
-                weight=weight,  # / total_weight,
-                required_params=required_params,
-                decay_rate=decay_config.get(name),
-            )
-            for name, loss_fn, weight, required_params in components
-        ]
+        # global weights
+        self.weight_component_matching = weight_component_matching
+        self.weight_image_reconstruction = weight_image_reconstruction
+        self.weight_alpha_regularization = weight_alpha_regularization
+        self.weight_spatial_consistency = weight_spatial_consistency
 
-        # Store all required parameters
-        self.all_required_params = set().union(
-            *(comp.required_params for comp in self.components)
+        # highlight rendering
+        self.highlight_color = highlight_color
+        self.clamp_after_add = clamp_after_add
+
+        # alpha reg behavior
+        assert alpha_reg_mode in ("none", "variance", "match_gt")
+        self.alpha_reg_mode = alpha_reg_mode
+
+        # losses
+        self.ssim_loss = SSIMLoss()
+        self.highlight_regression_loss = HighlightRegressionLoss(
+            w_l1=hlreg_w_l1,
+            use_charbonnier=hlreg_use_charb,
+            w_dice=hlreg_w_dice,
+            w_ssim=hlreg_w_ssim,
+            w_grad=hlreg_w_grad,
+            w_tv=hlreg_w_tv,
+            ssim_impl=self.ssim_loss,
+            balance_mode=hlreg_balance_mode,
+            pos_weight=hlreg_pos_weight,
+            focal_gamma=hlreg_focal_gamma,
         )
 
-        self.step_count = 0
+    # --- helpers ---
+    def _single_to_rgb_highlight(self, highlight_single):
+        """[B,1,H,W] -> [B,3,H,W] as alpha * color."""
+        r, g, b = self.highlight_color
+        return torch.cat(
+            [
+                highlight_single * r,
+                highlight_single * g,
+                highlight_single * b,
+            ],
+            dim=1,
+        )
 
-    def forward(self, **kwargs):
+    def _single_to_rgba_highlight(self, highlight_single):
+        """If you ever want to alpha-over highlights (not recommended for energy), keep this."""
+        rgb = self._single_to_rgb_highlight(highlight_single)
+        return torch.cat([rgb, highlight_single], dim=1)  # [B,4,H,W]
+
+    # --- main forward ---
+    def forward(self, pred_components, gt_components):
         """
-        Compute the combined loss from all components.
+        pred_components: dict mapping name -> [B,C,H,W]
+        gt_components:   dict mapping name -> [B,C,H,W], requires key 'rgb'
         """
-        # Validate that all required parameters are provided
-        missing_params = self.all_required_params - set(kwargs.keys())
-        if missing_params:
-            raise ValueError(f"Missing required parameters: {missing_params}")
+        losses = {}
+        input_rgb = gt_components["rgb"]
 
-        total_loss = 0.0
+        # components present on both sides (except 'rgb')
+        available_components = [k for k in pred_components.keys()
+                                if (k in gt_components and k != "rgb")]
+        if not available_components:
+            raise ValueError("No matching components found between predictions and ground truth")
 
-        for component in self.components:
-            # Extract only the arguments needed for this specific loss function
-            fn_args = {k: kwargs[k] for k in component.required_params}
+        decomposition_loss = 0.0
 
-            loss = component.loss_fn(**fn_args)
-            total_loss += loss * component.current_weight
+        diffuse_rgb = None
+        additive_highlights = []     # list of [B,3,H,W] added to diffuse
+        layered_rgba = []            # optional layers to alpha-over
 
-        return total_loss
+        for comp_name in available_components:
+            pred_comp = pred_components[comp_name]
+            gt_comp = gt_components[comp_name]
+            comp_weight = self.component_weights.get(comp_name, self.default_component_weight)
 
-    def get_dict(self, prepend_tonames="", **kwargs):
-        """
-        Get detailed breafkdown of all loss components.
-        """
-        # Validate parameters first
-        missing_params = self.all_required_params - set(kwargs.keys())
-        if missing_params:
-            raise ValueError(f"Missing required parameters: {missing_params}")
+            # ---- Highlight: 1 channel regression ----
+            if comp_name.lower() == "highlight" and pred_comp.shape[1] == 1 and gt_comp.shape[1] == 1:
+                pred_h = torch.clamp(pred_comp, 0.0, 1.0)
+                gt_h   = torch.clamp(gt_comp,   0.0, 1.0)
 
-        results = {}
-        total_loss = 0.0
+                hl_loss = self.highlight_regression_loss(pred_h, gt_h)
+                losses["HighlightRegression"] = hl_loss
+                decomposition_loss = decomposition_loss + comp_weight * hl_loss
 
-        for component in self.components:
-            component_loss = 0.0
-            currentcomponentname = f"{prepend_tonames}{component.name}"
-            fn_args = {k: kwargs[k] for k in component.required_params}
+                # for reconstruction: ADDITIVE energy
+                additive_highlights.append(self._single_to_rgb_highlight(pred_h))
+                continue
 
-            # Handle nested loss functions that have their own get_dict
-            if hasattr(component.loss_fn, "get_dict"):
-                sub_losses = component.loss_fn.get_dict(
-                    prepend_tonames=f"{prepend_tonames}{component.name}/", **fn_args
-                )
-                results.update(sub_losses)
-                for c in component.loss_fn.components:
-                    fn_args = {k: kwargs[k] for k in c.required_params}
-                    loss = c.loss_fn(**fn_args)
-                    component_loss += loss * c.current_weight
-                results[f"{prepend_tonames}{component.name}"] = component_loss.item()
-
+            # ---- Diffuse / Specular / others ----
+            if pred_comp.shape[1] >= 3 and gt_comp.shape[1] >= 3:
+                rgb_l1 = F.l1_loss(pred_comp[:, :3], gt_comp[:, :3])
+                rgb_ssim = self.ssim_loss(pred_comp[:, :3], gt_comp[:, :3])
             else:
-                loss = component.loss_fn(**fn_args)
-                loss_value = loss.item()
-                results[f"{prepend_tonames}{component.name}"] = loss_value
+                rgb_l1 = F.l1_loss(pred_comp[:, :1], gt_comp[:, :1])
+                rgb_ssim = 0.0
 
-        return results
+            alpha_l1 = 0.0
+            if pred_comp.shape[1] == 4 and gt_comp.shape[1] == 4:
+                alpha_l1 = F.l1_loss(pred_comp[:, 3:4], gt_comp[:, 3:4])
 
-    def get_weights(self, prepend_tonames=""):
-        """
-        Recursively get a dictionary of weights for all components.
+            comp_loss = rgb_l1 + (1 - rgb_ssim) + alpha_l1
+            decomposition_loss = decomposition_loss + comp_weight * comp_loss
+            losses[f"{comp_name.capitalize()}"] = comp_loss
 
-        Args:
-            prepend_tonames: String to prepend to all loss names in the output dictionary
-
-        Returns:
-            Dict[str, float]: Dictionary mapping loss component names to their weights
-        """
-        weights = {}
-        for component in self.components:
-            component_name = f"{prepend_tonames}{component.name}"
-            if isinstance(component.loss_fn, WeightedCombinationLoss):
-                # Recurse into nested WeightedCombinationLoss
-                sub_weights = component.loss_fn.get_weights(
-                    prepend_tonames=f"{component_name}_"
-                )
-                weights.update(sub_weights)
-            weights[component_name] = component.current_weight
-        return weights
-
-    def step(self):
-        # print("Stepping", self.__class__.__name__)
-        """Update step count and decay weights if configured, recursively stepping child components."""
-        self.step_count += 1
-        for component in self.components:
-            # Decay the weight if a decay rate is specified
-            if component.decay_rate:
-                component.weight *= np.exp(-component.decay_rate * self.step_count)
-            # Recursively call step on nested WeightedCombinationLoss
-            if hasattr(component.loss_fn, "step"):
-                component.loss_fn.step()
-
-    def __str__(self):
-        """Create a hierarchical string representation of the loss structure"""
-        components_str = []
-        for comp in self.components:
-            weight_str = f"{comp.current_weight:.3f}"
-            if comp.decay_rate:
-                weight_str += f" (decaying @ {comp.decay_rate:.2e})"
-
-            loss_str = str(comp.loss_fn).replace("\n", "\n    ")
-
-            params_str = f"params={sorted(comp.required_params)}"
-            components_str.append(
-                f"    {weight_str} * {loss_str} [{comp.name}]\n    └─ {params_str}"
-            )
-
-        return f"{self.__class__.__name__}(\n" + "\n".join(components_str) + "\n)"
-
-    def rich_print(self, parent_tree=None):
-        """Print a rich tree visualization of the loss structure"""
-        if parent_tree is None:
-            tree = Tree(f"{self.__class__.__name__}")
-        else:
-            tree = parent_tree.add(f"{self.__class__.__name__}")
-
-        for comp in self.components:
-            weight_str = f"{comp.current_weight:.3f}"
-            if comp.decay_rate:
-                weight_str += f" (decay: {comp.decay_rate:.2e})"
-
-            branch = tree.add(
-                f"[blue]{comp.name}[/blue]([cyan]{','.join(comp.required_params)}[/cyan]) × [yellow]{weight_str}[/yellow]"
-            )
-
-            # Add parameters branch
-
-            # Add loss function branch
-            if hasattr(comp.loss_fn, "rich_print"):
-                comp.loss_fn.rich_print(branch)
+            # For reconstruction:
+            if comp_name.lower() == "diffuse":
+                diffuse_rgb = pred_comp[:, :3]
             else:
-                loss_str = str(comp.loss_fn).replace("\n", "\n    ")
-                # branch.add(f"[green]{loss_str}[/green]")
+                # If you truly have layered components, push RGBA layers here.
+                # If component is inherently additive (specular), you can add it to additive_highlights instead.
+                if pred_comp.shape[1] == 4:
+                    layered_rgba.append(pred_comp)
+                # elif pred_comp.shape[1] == 3:
+                #     additive_highlights.append(pred_comp)  # uncomment if you want additive behavior
 
-        if parent_tree is None:
-            rprint(tree)
+        losses["Decomposition"] = decomposition_loss
 
+        # ---- Reconstruction: additive highlight + optional layered alpha-over ----
+        reconstruction_loss = 0.0
+        if diffuse_rgb is not None:
+            pred_reconstruction = compose_diffuse_highlight_and_layers(
+                diffuse_rgb, additive_highlights, layered_rgba, clamp_after_add=self.clamp_after_add
+            )
+            recon_l1 = F.l1_loss(pred_reconstruction, input_rgb)
+            recon_ssim = self.ssim_loss(pred_reconstruction, input_rgb)
+            reconstruction_loss = recon_l1 + (1 - recon_ssim)
+        losses["Reconstruction"] = reconstruction_loss
 
-class MONO3D_Loss(WeightedCombinationLoss):
-    """
-    A flexible loss module that combines multiple loss functions with weights.
-    Supports weight decay and detailed loss reporting.
-    """
+        # ---- Alpha regularization (disabled by default; designed to be 0 when 'match_gt') ----
+        alpha_reg_loss = 0.0
+        if self.alpha_reg_mode != "none":
+            # For 'variance', penalize near-constant alphas (old behavior).
+            # For 'match_gt', encourage pred highlight == gt highlight (==0 at equality).
+            if self.alpha_reg_mode == "variance":
+                # variance penalty across any RGBA layer alphas (rarely used here)
+                for comp_name in available_components:
+                    if comp_name.lower() == "highlight":
+                        alpha = torch.clamp(pred_components[comp_name], 0, 1)
+                        alpha_var = torch.var(alpha.view(alpha.size(0), -1), dim=1).mean()
+                        alpha_reg_loss = alpha_reg_loss + torch.exp(-alpha_var)
+            elif self.alpha_reg_mode == "match_gt":
+                if "highlight" in pred_components and "highlight" in gt_components:
+                    pred_h = torch.clamp(pred_components["highlight"], 0, 1)
+                    gt_h   = torch.clamp(gt_components["highlight"], 0, 1)
+                    alpha_reg_loss = F.l1_loss(pred_h, gt_h)
 
-    def __init__(
-        self,
-        components: List[Tuple[str, nn.Module, float, Set[str]]],
-        decay_config: Optional[Dict[str, float]] = None,
-    ):
-        super(MONO3D_Loss, self).__init__(components, decay_config)
+        losses["AlphaReg"] = alpha_reg_loss
 
-    def get_dict(self, prepend_tonames="", **kwargs):
-        results = super().get_dict(prepend_tonames, **kwargs)
-        results[f"{prepend_tonames}Loss"] = super().forward(**kwargs).item()
-        return results
+        total_loss = (
+            self.weight_component_matching * losses["Decomposition"]
+            + self.weight_image_reconstruction * losses["Reconstruction"]
+            + self.weight_alpha_regularization * losses["AlphaReg"]
+        )
 
-    def __str__(self):
-        return super().__str__()
+        losses["total"] = total_loss
+        return losses
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-class SSIMLoss_v2(nn.Module):
-    def __init__(self, window_size: int = 11, channel: int = 1, size_average: bool = True):
-        super(SSIMLoss_v2, self).__init__()
-        self.window_size = window_size
-        self.channel = channel
-        self.size_average = size_average
-        self.register_buffer("window", self._create_window(window_size, channel))
-
-    def _gaussian_window(self, window_size: int, sigma: float):
-        gauss = torch.tensor([torch.exp(-(x - window_size//2)**2 / float(2*sigma**2))
-                              for x in range(window_size)])
-        return gauss / gauss.sum()
-
-    def _create_window(self, window_size: int, channel: int):
-        _1D_window = self._gaussian_window(window_size, 1.5).unsqueeze(1)
-        _2D_window = _1D_window @ _1D_window.t()
-        window = _2D_window.expand(channel, 1, window_size, window_size).contiguous()
-        return window
-
-    def _ssim(self, img1, img2, window, window_size, channel, size_average=True):
-        mu1 = F.conv2d(img1, window, padding=window_size//2, groups=channel)
-        mu2 = F.conv2d(img2, window, padding=window_size//2, groups=channel)
-
-        mu1_sq, mu2_sq, mu1_mu2 = mu1.pow(2), mu2.pow(2), mu1 * mu2
-
-        sigma1_sq = F.conv2d(img1 * img1, window, padding=window_size//2, groups=channel) - mu1_sq
-        sigma2_sq = F.conv2d(img2 * img2, window, padding=window_size//2, groups=channel) - mu2_sq
-        sigma12   = F.conv2d(img1 * img2, window, padding=window_size//2, groups=channel) - mu1_mu2
-
-        C1 = 0.01 ** 2
-        C2 = 0.03 ** 2
-
-        ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / \
-                   ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
-
-        return ssim_map.mean() if size_average else ssim_map.mean(1).mean(1).mean(1)
-
-    def forward(self, img1, img2):
-        (_, channel, _, _) = img1.size()
-        if channel == self.channel and self.window.dtype == img1.dtype:
-            window = self.window
-        else:
-            window = self._create_window(self.window_size, channel).to(img1.device).type(img1.dtype)
-            self.channel = channel
-            self.window = window
-
-        ssim_val = self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
-        return 1 - ssim_val  # SSIM Loss = 1 - SSIM
-
-def specular_loss(batch, out, recon_loss, weights=None, eps=1e-7):
-    """
-    batch: dict with 'rgb' and 'f_spec'
-    out: dict with 'specular','diffuse','recon'
-    recon_loss: your SSIMLoss instance
-    """
-    if weights is None:
-        weights = dict(ssim=1.0, bce=1.0, dice=0.5, off=0.5, on=0.5, achro=0.1)
-
-    S = out["specular"]
-    R = batch["rgb"].cuda()
-    F_gt = batch["f_spec"].cuda().clamp(0, 1)
-
-    # spec magnitude map
-    m_pred = S.mean(dim=1, keepdim=True)  # (B,1,H,W)
-
-    # mask losses
-    L_bce = F.binary_cross_entropy(m_pred, F_gt)
-
-    num = (2.0 * (m_pred * F_gt).sum(dim=(1,2,3)) + eps)
-    den = (m_pred.sum(dim=(1,2,3)) + F_gt.sum(dim=(1,2,3)) + eps)
-    L_dice = 1.0 - (num / den).mean()
-
-    L_off = ((1.0 - F_gt) * m_pred).mean()
-    L_on  = (F_gt * (1.0 - m_pred)).mean()
-
-    # reconstruction with SSIM
-    L_ssim = recon_loss(out["recon"], R)
-
-    # optional: achromaticity of specular
-    S_mean = S.mean(dim=1, keepdim=True)
-    L_achro = ((S - S_mean)**2).mean()
-
-    total = (
-        weights["ssim"] * L_ssim +
-        weights["bce"]  * L_bce  +
-        weights["dice"] * L_dice +
-        weights["off"]  * L_off  +
-        weights["on"]   * L_on   +
-        weights["achro"]* L_achro
-    )
-
-    return {
-        "total": total,
-        "SSIM": L_ssim,
-        "BCE": L_bce,
-        "Dice": L_dice,
-        "OffMask": L_off,
-        "OnMask": L_on,
-        "Achro": L_achro
-    }

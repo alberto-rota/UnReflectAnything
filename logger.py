@@ -320,7 +320,7 @@ class CustomLogger:
 _loggers = {}
 
 
-def get_logger(module_name, log_to_file=True, relative_log_dir="$RESULTS_DIR/tmp"):
+def get_logger(module_name, log_to_file=True, relative_log_dir="$RESULTS_DIR/tmp/"):
     """
     Get or create a logger for the specified module.
 

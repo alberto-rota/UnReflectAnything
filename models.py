@@ -8,7 +8,7 @@ from transformers import AutoImageProcessor, AutoModel
 
 class DINOv3(nn.Module):
     """
-    Configurable DINOv3 model with flexible return options.
+    Configurable DINOv3 model with flexible return optionas.
     Supports returning hidden states and feature maps in various formats.
     """
 
@@ -398,7 +398,6 @@ class DPT_Decoder(nn.Module):
         }
 
         self.config = {**default_config, **(config or {})}
-
         self.out_image_size = self.config["output_image_size"]
         # Create reassemble layers for multi-scale feature extraction
         self.reassemble_layers = nn.ModuleList(
@@ -436,7 +435,7 @@ class DPT_Decoder(nn.Module):
             nn.BatchNorm2d(128) if self.config["use_bn"] else nn.Identity(),
             nn.ReLU(inplace=True),
             nn.Upsample(
-                scale_factor=2, mode="bilinear", align_corners=False
+                scale_factor=2, mode="bilinear", align_corners=True
             ),  # 192x192 -> 384x384
             # Second stage: 128 -> 64 channels with feature refinement
             nn.Conv2d(128, 64, kernel_size=3, padding=1),
@@ -489,7 +488,7 @@ class DPT_Decoder(nn.Module):
         # Start with smallest scale (stage 3)
         fused = self.fusion_blocks[3](reassembled_features[3])  # [B, 256, 12, 12]
         fused = F.interpolate(
-            fused, scale_factor=2, mode="bilinear", align_corners=False
+            fused, scale_factor=2, mode="bilinear", align_corners=True
         )  # [B, 256, 24, 24]
 
         # Add stage 2 features
@@ -497,7 +496,7 @@ class DPT_Decoder(nn.Module):
             reassembled_features[2]
         )  # [B, 256, 24, 24]
         fused = F.interpolate(
-            fused, scale_factor=2, mode="bilinear", align_corners=False
+            fused, scale_factor=2, mode="bilinear", align_corners=True
         )  # [B, 256, 48, 48]
 
         # Add stage 1 features
@@ -505,7 +504,7 @@ class DPT_Decoder(nn.Module):
             reassembled_features[1]
         )  # [B, 256, 48, 48]
         fused = F.interpolate(
-            fused, scale_factor=2, mode="bilinear", align_corners=False
+            fused, scale_factor=2, mode="bilinear", align_corners=True
         )  # [B, 256, 96, 96]
 
         # Add stage 0 features
@@ -513,7 +512,7 @@ class DPT_Decoder(nn.Module):
             reassembled_features[0]
         )  # [B, 256, 96, 96]
         fused = F.interpolate(
-            fused, scale_factor=2, mode="bilinear", align_corners=False
+            fused, scale_factor=2, mode="bilinear", align_corners=True
         )  # [B, 256, 192, 192]
 
         # Apply RGB head
@@ -528,7 +527,7 @@ class DPT_Decoder(nn.Module):
                 input_width,
             )
             rgb_output = F.interpolate(
-                rgb_output, size=target_size, mode="bilinear", align_corners=False
+                rgb_output, size=target_size, mode="bilinear", align_corners=True
             )
 
         return rgb_output
@@ -774,7 +773,7 @@ def _build(component, cls):
 
 class RGBPOLDecomposer(nn.Module):
     """
-    RGB + POL decomposition with cross-attention and three DPT decoders.
+    RGB + POL decomposition with cross-attention and flexible DPT decoders.
 
     Inputs (forward):
       batch["rgb"] : (B,3,H,W) in [0,1]
@@ -783,10 +782,7 @@ class RGBPOLDecomposer(nn.Module):
 
     Returns:
       {
-        "specular":  (B,3,H,W),
-        "diffuse":   (B,3,H,W),
-        "highlight": (B,1 or 3,H,W)  # depends on decoder config
-        "recon":     (B,3,H,W),      # typically specular + diffuse
+        "decoder_name": (B,C,H,W) for each configured decoder
         "tokens": {
            "rgb": (B,N,C),
            "pol": (B,N,C),
@@ -803,7 +799,9 @@ class RGBPOLDecomposer(nn.Module):
         pol_encoder=None,  # POLViTEncoder instance or dict
         pol_preprocess=None,  # PolarizationPreprocess instance or dict
         pol_cross_attn=None,  # RGBPOLCrossFuse instance or dict
-        # 3) Decoders — three DPT_Decoder instances or dict configs
+        # 3) Flexible decoders — dict of decoder_name -> DPT_Decoder config/instance
+        decoders=None,  # Dict[str, DPT_Decoder instance or dict config]
+        # Legacy support for backward compatibility (will be deprecated)
         spec_decoder=None,  # DPT_Decoder instance or dict
         diffuse_decoder=None,  # DPT_Decoder instance or dict
         highlight_decoder=None,  # DPT_Decoder instance or dict
@@ -860,34 +858,9 @@ class RGBPOLDecomposer(nn.Module):
             )
 
         # ---- Decoders (DPT_Decoder) ----
-        # Each can control its own out_channels inside the config (e.g., 3 for S/D, 1 for H)
-        if spec_decoder is None:
-            # Minimal default: your DPT_Decoder likely needs at least decoder_config / dim / image_size
-            spec_decoder = {
-                "decoder_config": {"use_bn": True, "readout_type": "project"},
-                "embed_dim": self.embed_dim,
-                "image_size": self.image_size,
-            }
-        if diffuse_decoder is None:
-            diffuse_decoder = {
-                "decoder_config": {"use_bn": True, "readout_type": "project"},
-                "embed_dim": self.embed_dim,
-                "image_size": self.image_size,
-            }
-        if highlight_decoder is None:
-            # Often a 1-channel mask is useful; set out_channels=1 if your DPT_Decoder supports it.
-            highlight_decoder = {
-                "decoder_config": {
-                    "use_bn": True,
-                    "readout_type": "project",
-                    "out_channels": 1,
-                },
-                "embed_dim": self.embed_dim,
-                "image_size": self.image_size,
-            }
-
-        # Normalize configs → instances
+        # Handle flexible decoder configuration with legacy support
         def build_dpt(dec):
+            """Build DPT decoder from config or instance."""
             if isinstance(dec, DPT_Decoder):
                 return dec
             if isinstance(dec, dict):
@@ -899,9 +872,50 @@ class RGBPOLDecomposer(nn.Module):
                 return DPT_Decoder(config)
             raise TypeError("Decoder must be DPT_Decoder instance or dict.")
 
-        self.decS = build_dpt(spec_decoder)
-        self.decD = build_dpt(diffuse_decoder)
-        self.decH = build_dpt(highlight_decoder)
+        # Use flexible decoders if provided, otherwise fall back to legacy format
+        if decoders is not None:
+            self.decoder_names = list(decoders.keys())
+            self.decoders = nn.ModuleDict()
+            for decoder_name, decoder_config in decoders.items():
+                self.decoders[decoder_name] = build_dpt(decoder_config)
+        else:
+            # Legacy support - create decoders from individual parameters
+            legacy_decoders = {}
+            
+            # Specular decoder
+            if spec_decoder is not None:
+                legacy_decoders["specular"] = spec_decoder
+            else:
+                legacy_decoders["specular"] = {
+                    "use_bn": True, 
+                    "readout_type": "project",
+                    "output_channels": 3,
+                }
+            
+            # Diffuse decoder  
+            if diffuse_decoder is not None:
+                legacy_decoders["diffuse"] = diffuse_decoder
+            else:
+                legacy_decoders["diffuse"] = {
+                    "use_bn": True,
+                    "readout_type": "project", 
+                    "output_channels": 3,
+                }
+                
+            # Highlight decoder
+            if highlight_decoder is not None:
+                legacy_decoders["highlight"] = highlight_decoder
+            else:
+                legacy_decoders["highlight"] = {
+                    "use_bn": True,
+                    "readout_type": "project",
+                    "output_channels": 1,
+                }
+            
+            self.decoder_names = list(legacy_decoders.keys())
+            self.decoders = nn.ModuleDict()
+            for decoder_name, decoder_config in legacy_decoders.items():
+                self.decoders[decoder_name] = build_dpt(decoder_config)
 
     def _rgb_tokens(self, rgb_preproc):
         """Extract DINOv3 tokens and infer (Hp, Wp) if wrapper doesn’t return them."""
@@ -910,13 +924,13 @@ class RGBPOLDecomposer(nn.Module):
         tokens = out.get("last_hidden_state", out.get("tokens"))
         if tokens is None:
             raise KeyError(
-                "DINOv3 wrapper must return 'last_hidden_state' or 'tokens'."
+                # "DINOv3 wrapper must return 'last_hidden_state' or 'tokens'."
             )
         Hp = self.image_size // self.patch_size
         Wp = self.image_size // self.patch_size
         return tokens, (Hp, Wp)
 
-    def forward(self, batch):
+    def forward(self, batch, ):
         # 1) RGB → DINO tokens
         rgb_in = self.dinov3.preprocess_image(batch["rgb"])
         rgb_tokens = self.dinov3(rgb_in)["selected_hidden_states"]
@@ -929,34 +943,32 @@ class RGBPOLDecomposer(nn.Module):
         for i in range(4):
             cross_tokens.append(self.cross[i](rgb_tokens[i], pol_tokens[i]))
 
-        # 6) Decode with three DPT_Decoder heads
-        S = self.decS(cross_tokens)  # Specular  (B,3,H,W)
-        D = self.decD(cross_tokens)  # Diffuse   (B,3,H,W)
-        H = self.decH(cross_tokens)  # Highlight (B,3,H,W)
+        # 6) Decode with flexible decoder heads
+        outputs = {}
+        for decoder_name in self.decoder_names:
+            decoder_output = self.decoders[decoder_name](cross_tokens)
+            outputs[decoder_name] = decoder_output
 
-        return {
-            "specular": S,
-            "diffuse": D,
-            "highlight": H,
-            "rgb_tokens": rgb_tokens,
-            "pol_tokens": pol_tokens,
-            "cross_tokens": cross_tokens,
-        }
+        # Optional: Add tokens for debugging/analysis
+        # outputs.update({
+        #     "rgb_tokens": rgb_tokens,
+        #     "pol_tokens": pol_tokens,
+        #     "cross_tokens": cross_tokens,
+        # })
+
+        return outputs
 
 
 class RGBDistillDecomposer(nn.Module):
     """
-    RGB with cross-attention and three DPT decoders.
+    RGB with flexible DPT decoders.
 
     Inputs (forward):
       batch["rgb"] : (B,3,H,W) in [0,1]
 
     Returns:
       {
-        "specular":  (B,3,H,W),
-        "diffuse":   (B,3,H,W),
-        "highlight": (B,1 or 3,H,W)  # depends on decoder config
-        "recon":     (B,3,H,W),      # typically specular + diffuse
+        "decoder_name": (B,C,H,W) for each configured decoder
         "tokens": {
            "rgb": (B,N,C),
         }
@@ -967,12 +979,15 @@ class RGBDistillDecomposer(nn.Module):
         self,
         # 1) RGB encoder (DINOv3) — instance or config dict
         dinov3,
-        # 3) Decoders — three DPT_Decoder instances or dict configs
+        # 2) Flexible decoders — dict of decoder_name -> DPT_Decoder config/instance
+        decoders=None,  # Dict[str, DPT_Decoder instance or dict config]
+        # Legacy support for backward compatibility (will be deprecated)
         spec_decoder=None,  # DPT_Decoder instance or dict
         diffuse_decoder=None,  # DPT_Decoder instance or dict
         highlight_decoder=None,  # DPT_Decoder instance or dict
         # Optional: if your DINO wrapper needs these hints
         patch_size: int = 16,
+        **kwargs,
     ):
         super().__init__()
 
@@ -985,34 +1000,9 @@ class RGBDistillDecomposer(nn.Module):
         self.embed_dim = self.dinov3.feature_dim
 
         # ---- Decoders (DPT_Decoder) ----
-        # Each can control its own out_channels inside the config (e.g., 3 for S/D, 1 for H)
-        if spec_decoder is None:
-            # Minimal default: your DPT_Decoder likely needs at least decoder_config / dim / image_size
-            spec_decoder = {
-                "decoder_config": {"use_bn": True, "readout_type": "project"},
-                "embed_dim": self.embed_dim,
-                "image_size": self.image_size,
-            }
-        if diffuse_decoder is None:
-            diffuse_decoder = {
-                "decoder_config": {"use_bn": True, "readout_type": "project"},
-                "embed_dim": self.embed_dim,
-                "image_size": self.image_size,
-            }
-        if highlight_decoder is None:
-            # Often a 1-channel mask is useful; set out_channels=1 if your DPT_Decoder supports it.
-            highlight_decoder = {
-                "decoder_config": {
-                    "use_bn": True,
-                    "readout_type": "project",
-                    "out_channels": 1,
-                },
-                "embed_dim": self.embed_dim,
-                "image_size": self.image_size,
-            }
-
-        # Normalize configs → instances
+        # Handle flexible decoder configuration with legacy support
         def build_dpt(dec):
+            """Build DPT decoder from config or instance."""
             if isinstance(dec, DPT_Decoder):
                 return dec
             if isinstance(dec, dict):
@@ -1024,9 +1014,50 @@ class RGBDistillDecomposer(nn.Module):
                 return DPT_Decoder(config)
             raise TypeError("Decoder must be DPT_Decoder instance or dict.")
 
-        self.decS = build_dpt(spec_decoder)
-        self.decD = build_dpt(diffuse_decoder)
-        self.decH = build_dpt(highlight_decoder)
+        # Use flexible decoders if provided, otherwise fall back to legacy format
+        if decoders is not None:
+            self.decoder_names = list(decoders.keys())
+            self.decoders = nn.ModuleDict()
+            for decoder_name, decoder_config in decoders.items():
+                self.decoders[decoder_name] = build_dpt(decoder_config)
+        else:
+            # Legacy support - create decoders from individual parameters
+            legacy_decoders = {}
+            
+            # Specular decoder
+            if spec_decoder is not None:
+                legacy_decoders["specular"] = spec_decoder
+            else:
+                legacy_decoders["specular"] = {
+                    "use_bn": True, 
+                    "readout_type": "project",
+                    "output_channels": 3,
+                }
+            
+            # Diffuse decoder  
+            if diffuse_decoder is not None:
+                legacy_decoders["diffuse"] = diffuse_decoder
+            else:
+                legacy_decoders["diffuse"] = {
+                    "use_bn": True,
+                    "readout_type": "project", 
+                    "output_channels": 3,
+                }
+                
+            # Highlight decoder
+            if highlight_decoder is not None:
+                legacy_decoders["highlight"] = highlight_decoder
+            else:
+                legacy_decoders["highlight"] = {
+                    "use_bn": True,
+                    "readout_type": "project",
+                    "output_channels": 1,
+                }
+            
+            self.decoder_names = list(legacy_decoders.keys())
+            self.decoders = nn.ModuleDict()
+            for decoder_name, decoder_config in legacy_decoders.items():
+                self.decoders[decoder_name] = build_dpt(decoder_config)
 
     def _rgb_tokens(self, rgb_preproc):
         """Extract DINOv3 tokens and infer (Hp, Wp) if wrapper doesn’t return them."""
@@ -1046,17 +1077,18 @@ class RGBDistillDecomposer(nn.Module):
         rgb_in = self.dinov3.preprocess_image(batch["rgb"])
         rgb_tokens = self.dinov3(rgb_in)["selected_hidden_states"]
 
-        # 6) Decode with three DPT_Decoder heads
-        S = self.decS(rgb_tokens)  # Specular  (B,3,H,W)
-        D = self.decD(rgb_tokens)  # Diffuse   (B,3,H,W)
-        H = self.decH(rgb_tokens)  # Highlight (B,3,H,W)
+        # 6) Decode with flexible decoder heads
+        outputs = {}
+        for decoder_name in self.decoder_names:
+            decoder_output = self.decoders[decoder_name](rgb_tokens)
+            outputs[decoder_name] = decoder_output
 
-        return {
-            "specular": S,
-            "diffuse": D,
-            "highlight": H,
-            "rgb_tokens": rgb_tokens,
-        }
+        # Optional: Add tokens for debugging/analysis
+        # outputs.update({
+        #     "rgb_tokens": rgb_tokens,
+        # })
+
+        return outputs
 
 def get_model_parameter_summary(model):
     """

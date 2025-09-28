@@ -30,8 +30,7 @@ from .rgbp import (
     POLARGB_Dataset,
     RGBP_Dataset,
     SCRREAM_Dataset,
-    create_datasets_from_config,
-    load_config_and_create_datasets,
+    from_config,
 )
 from .utils import (
     adapt_intrinsics_two_step,
@@ -51,8 +50,7 @@ __all__ = [
     "POLARGB_Dataset",
     # Dataset creation functions
     "initialize_from_config",
-    "create_datasets_from_config",
-    "load_config_and_create_datasets",
+    "from_config",
     # Utility functions
     "adapt_intrinsics_two_step",
     "split_videos",

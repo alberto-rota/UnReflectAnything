@@ -12,9 +12,11 @@ import math
 
 import optimization
 import utilities.engine_initializers as initialize
+import utilities.system_ops as system_ops
 import wandb
 from logger import get_logger
-from losses import SSIMLoss, specular_loss
+from losses import DecompositionLoss, alpha_composite
+from polar_highlighter import PolarHighlighter, get_soft_highlight_map
 
 
 class Engine:
@@ -62,7 +64,7 @@ class Engine:
                 setattr(self, key, value)
             return result
 
-        # Initialize the model
+        # Initialize the models
         self.model = model
 
         # Initialize all components using engine_initializers
@@ -70,7 +72,6 @@ class Engine:
         init(initialize.dimensions, self.training_dl, config)
         init(initialize.hyperparameters, config)
         init(initialize.optimizers, self.model, config)
-        init(initialize.loss_functions, config)
         init(initialize.schedulers, self.optimizer, config, self.training_dl)
         init(initialize.transforms, self.height, self.width)
         init(initialize.wandb, config, self.model, notes, no_wandb)
@@ -83,6 +84,9 @@ class Engine:
             self.runname,
         )
         self.config["name"] = self.runname
+        self.add_polar_highlights = PolarHighlighter(
+            height=self.height, width=self.width
+        ).to(self.device)
 
         # Save hyperparameters to json
         initialize.save_hyperparameters_json(self.RUN_DIR, self.config)
@@ -101,7 +105,149 @@ class Engine:
         self.logger = get_logger(
             __name__, log_to_file=True, relative_log_dir=self.RUN_DIR
         )
-        self.recon_loss = SSIMLoss()
+        self.loss = DecompositionLoss(
+            weight_specular_loss=self.config.SPECULAR_LOSS_WEIGHT,
+            weight_diffuse_loss=self.config.DIFFUSE_LOSS_WEIGHT,
+            weight_highlight_loss=self.config.HIGHLIGHT_LOSS_WEIGHT,
+            weight_component_matching=self.config.COMPONENT_MATCHING_LOSS_WEIGHT,
+            weight_image_reconstruction=self.config.IMAGE_RECONSTRUCTION_LOSS_WEIGHT,
+            weight_alpha_regularization=self.config.ALPHA_REGULARIZATION_LOSS_WEIGHT,
+            weight_spatial_consistency=self.config.SPATIAL_CONSISTENCY_LOSS_WEIGHT,
+            # HL regression extra knobs (optional in config; keep defaults if missing)
+            hlreg_balance_mode=self.config.get("HLREG_BALANCE_MODE", "none"),
+            hlreg_pos_weight=self.config.get("HLREG_POS_WEIGHT", 1.0),
+            hlreg_focal_gamma=self.config.get("HLREG_FOCAL_GAMMA", 0.0),
+        ).to(self.device)
+
+        # Memory management settings for optimal GPU memory usage
+        self.memory_cleanup_frequency = config.get(
+            "MEMORY_CLEANUP_FREQUENCY", 5
+        )  # Clean every N batches
+        self.aggressive_cleanup = config.get(
+            "AGGRESSIVE_MEMORY_CLEANUP", True
+        )  # Use gpuClean utility
+        self.memory_monitoring = config.get(
+            "MEMORY_MONITORING", False
+        )  # Log memory usage
+
+    def _log_memory_usage(self, context: str = ""):
+        """Log current GPU memory usage for monitoring"""
+        if self.memory_monitoring and torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+            reserved = torch.cuda.memory_reserved() / 1024**3  # GB
+            self.logger.info(
+                f"GPU Memory - {context}: Allocated: {allocated:.2f}GB, Reserved: {reserved:.2f}GB"
+            )
+
+    def _aggressive_memory_cleanup(self, exclude_vars: list = None):
+        """
+        Perform aggressive memory cleanup using the gpuClean utility.
+
+        Args:
+            exclude_vars (list): Variables to exclude from cleanup
+        """
+        if not self.aggressive_cleanup:
+            return
+
+        try:
+            # Use the existing gpuClean utility
+            freed_count, memory_freed = system_ops.gpuClean(
+                frame_up=1, exclude_vars=exclude_vars or [], verbose=False
+            )
+
+            if self.memory_monitoring and freed_count > 0:
+                self.logger.info(
+                    f"Memory cleanup: Freed {freed_count} tensors, {memory_freed:.2f}MB"
+                )
+
+        except Exception as e:
+            self.logger.warning(f"Memory cleanup failed: {e}")
+
+    def _strategic_memory_cleanup(
+        self, phase: str, batch_idx: int, exclude_vars: list = None
+    ):
+        """
+        Perform strategic memory cleanup based on training phase and batch index.
+
+        Args:
+            phase (str): Current phase (Training, Validation, Test)
+            batch_idx (int): Current batch index
+            exclude_vars (list): Variables to exclude from cleanup
+        """
+        # Clean up every N batches or at specific intervals
+        should_cleanup = batch_idx % self.memory_cleanup_frequency == 0 or (
+            phase == "Training" and batch_idx % (self.memory_cleanup_frequency * 2) == 0
+        )
+
+        if should_cleanup:
+            self._aggressive_memory_cleanup(exclude_vars)
+
+    def _cleanup_tensor_dict(self, tensor_dict: dict, keys_to_keep: list = None):
+        """
+        Clean up a dictionary of tensors, optionally keeping specified keys.
+
+        Args:
+            tensor_dict (dict): Dictionary containing tensors
+            keys_to_keep (list): Keys to preserve in the dictionary
+        """
+        if tensor_dict is None:
+            return
+
+        keys_to_keep = keys_to_keep or []
+        keys_to_delete = [k for k in tensor_dict.keys() if k not in keys_to_keep]
+
+        for key in keys_to_delete:
+            if isinstance(tensor_dict[key], torch.Tensor):
+                tensor_dict[key].detach_()
+                if tensor_dict[key].is_cuda:
+                    tensor_dict[key].cpu()
+                del tensor_dict[key]
+            elif isinstance(tensor_dict[key], dict):
+                self._cleanup_tensor_dict(tensor_dict[key])
+                del tensor_dict[key]
+
+    def composite_specular_diffuse(
+        self, specular: torch.Tensor, diffuse: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Composite specular and diffuse components into a reconstructed image.
+        Optimized for memory efficiency with strategic cleanup.
+
+        Args:
+            specular (torch.Tensor): Specular component [B, C, H, W]
+            diffuse (torch.Tensor): Diffuse component [B, C, H, W]
+
+        Returns:
+            torch.Tensor: Reconstructed image [B, 3, H, W] or [B, 4, H, W]
+        """
+        # Log memory usage before compositing if monitoring is enabled
+        if self.memory_monitoring:
+            self._log_memory_usage("Before compositing")
+
+        if specular.shape[1] == 4 and diffuse.shape[1] == 4:  # RGBA format
+            # For RGBA, use alpha compositing with diffuse as background, specular as foreground
+            spec_rgb = specular[:, :3]  # [B, 3, H, W] - foreground RGB
+            spec_alpha = specular[:, 3:4]  # [B, 1, H, W] - foreground alpha
+            diff_rgb = diffuse[:, :3]  # [B, 3, H, W] - background RGB
+            diff_alpha = diffuse[:, 3:4]  # [B, 1, H, W] - background alpha
+
+            # Alpha compositing: C_out = C_fg * α_fg + C_bg * α_bg * (1 - α_fg)
+            # Final alpha: α_out = α_fg + α_bg * (1 - α_fg)
+            recon_rgb = spec_rgb * spec_alpha + diff_rgb * diff_alpha * (1 - spec_alpha)
+            recon_alpha = spec_alpha + diff_alpha * (1 - spec_alpha)
+            recon_alpha = torch.clamp(recon_alpha, 0, 1)
+
+            # Clean up intermediate tensors to free memory
+            del spec_rgb, spec_alpha, diff_rgb, diff_alpha
+            torch.cuda.empty_cache()
+
+            return recon_rgb
+        else:  # RGB format
+            # Simple addition for RGB
+            recon = specular + diffuse  # [B, 3, H, W]
+            recon = recon / recon.max()
+            recon = torch.clamp(recon, 0, 1)
+            return recon
 
     def trainloop(self):
         """
@@ -274,8 +420,7 @@ class Engine:
             f"E {str(epoch + 1)}/{self.epochs} ", 10, "right"
         ) + align(f"B {str(batch_idx + 1)}/{dataloader_len} ", 10, "left")
 
-        if extra_info is not None:
-            phase_indicator = f"[purple]{extra_info}[/purple]"
+        # Note: extra_info is used in console logging but phase_indicator was unused
 
         # Print header with run name and status information
         if "offline" in self.runname:
@@ -336,26 +481,46 @@ class Engine:
             with open(self.paths_file, mode="a") as file:
                 file.write(f"{self.step[f'{phase}_batch']},{paths}\n")
 
-    def backward_pass(self, loss_tensor, accumulate_gradients=False, phase="Training"):
+    def backward_pass(
+        self,
+        loss_tensor,
+        accumulate_gradients=False,
+        phase="Training",
+        submodules_to_monitor=None,
+    ):
         """
         Performs the backward pass, including gradient calculation, clipping, and optimization steps.
+        Optimized for memory efficiency with strategic cleanup.
 
         Args:
             loss_tensor (torch.Tensor): The loss tensor to backpropagate
             accumulate_gradients (bool): If True, will update weights after backpropagation
                                         assuming gradient accumulation is complete
             phase (str): Current phase ("Training", "Validation", "Test")
+            submodules_to_monitor (dict, optional): Dictionary mapping submodule names to submodule objects
+                                                   for separate gradient/weight norm monitoring
 
         Returns:
-            dict: A dictionary containing gradient norms and error status
+            dict: A dictionary containing gradient norms, weight norms, and error status
         """
+        # Initialize return values
+        grad_norm = np.nan
+        weight_norm = np.nan
+        submodule_norms = {}
+
         if phase != "Training":
             loss_tensor.detach()
             torch.cuda.empty_cache()
             return {
-                "grad_norm": np.nan,
-                "weight_norm": np.nan,
+                "ERROR_IN_BACKWARD_PASS": False,
+                "grad_norm": grad_norm,
+                "weight_norm": weight_norm,
+                "submodule_norms": submodule_norms,
             }
+
+        # Log memory usage before backward pass if monitoring is enabled
+        if self.memory_monitoring:
+            self._log_memory_usage("Before backward pass")
 
         ERROR_IN_BACKWARD_PASS = False
         try:
@@ -366,12 +531,44 @@ class Engine:
             )
             ERROR_IN_BACKWARD_PASS = True
 
-        # Calculate gradient and weight norms using the matching pipeline model
-        grad_norm, weight_norm = optimization.get_norms(self.model.parameters())
-        # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(), max_norm=self.config.GRADIENT_CLIPPING_MAX_NORM
-        )
+        # Gradient clipping with memory optimization
+        if (
+            self.config.GRADIENT_CLIPPING_MAX_NORM is not None
+            and not ERROR_IN_BACKWARD_PASS
+        ):
+            try:
+                # Calculate gradient and weight norms for the whole model
+                grad_norm, weight_norm = optimization.get_norms(self.model.parameters())
+
+                # Calculate norms for specific submodules if requested
+                if submodules_to_monitor is not None:
+                    for submodule_name, submodule in submodules_to_monitor.items():
+                        if submodule is None:
+                            continue
+                        try:
+                            sub_grad_norm, sub_weight_norm = optimization.get_norms(
+                                submodule.parameters()
+                            )
+                            submodule_norms[submodule_name] = {
+                                "grad_norm": sub_grad_norm,
+                                "weight_norm": sub_weight_norm,
+                            }
+                        except Exception as e:
+                            self.logger.warning(
+                                f"Failed to compute norms for submodule {submodule_name}: {e}"
+                            )
+                            submodule_norms[submodule_name] = {
+                                "grad_norm": np.nan,
+                                "weight_norm": np.nan,
+                            }
+
+                if self.config.GRADIENT_CLIPPING_MAX_NORM > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        max_norm=self.config.GRADIENT_CLIPPING_MAX_NORM,
+                    )
+            except Exception as e:
+                self.logger.warning(f"Gradient clipping failed: {e}")
 
         # Step only if warmup phase is finished and we are backpropagating the accumulated gradients
         if accumulate_gradients:
@@ -380,13 +577,29 @@ class Engine:
                 self.optimizer.zero_grad()
             self.LRscheduler.step()
 
+        # Aggressive memory cleanup after backward pass
         loss_tensor.detach()
-        torch.cuda.empty_cache()
+        del loss_tensor
+
+        # Clean up gradients and intermediate computations
+        if self.aggressive_cleanup:
+            # Only clear gradients if we actually performed an optimizer step; otherwise
+            # leave them to accumulate for gradient accumulation.
+            if accumulate_gradients:
+                for param in self.model.parameters():
+                    if param.grad is not None:
+                        param.grad.detach_()
+                        param.grad = None
+
+            # Force garbage collection and cache clearing
+            torch.cuda.empty_cache()
+            gc.collect()
 
         return {
             "ERROR_IN_BACKWARD_PASS": ERROR_IN_BACKWARD_PASS,
             "grad_norm": grad_norm,
             "weight_norm": weight_norm,
+            "submodule_norms": submodule_norms,
         }
 
     def switch_optimizer(self, current_epoch):
@@ -430,8 +643,6 @@ class Engine:
         """
         # Phase setup
         is_training = phase == "Training"
-        is_validation = phase == "Validation"
-        is_test = phase == "Test"
 
         if is_training:
             self.model.train()
@@ -448,12 +659,14 @@ class Engine:
             return None
 
         cpu_affinity = os.sched_getaffinity(os.getpid())
-        AUTO_NUM_WORKERS = int(math.floor(0.9*len(list(cpu_affinity))))
+        AUTO_NUM_WORKERS = int(math.floor(0.9 * len(list(cpu_affinity))))
         # Create dataloader using the initialized parameters
         dataloader = torch.utils.data.DataLoader(
             dataset,
             batch_size=self.batch_size,
-            num_workers=AUTO_NUM_WORKERS if self.config.NUM_WORKERS == "auto" else self.config.NUM_WORKERS,
+            num_workers=AUTO_NUM_WORKERS
+            if self.config.NUM_WORKERS == "auto"
+            else self.config.NUM_WORKERS,
             drop_last=True,
             pin_memory=self.config.PIN_MEMORY,
             prefetch_factor=self.config.PREFETCH_FACTOR,
@@ -480,8 +693,11 @@ class Engine:
 
         with self.choose_if_grad(phase):
             for batch_idx, sample in enumerate(dataloader):
-                # Memory management - clear cache at start
-                torch.cuda.empty_cache()
+                # Strategic memory cleanup at batch start
+                if batch_idx == 0 or batch_idx % self.memory_cleanup_frequency == 0:
+                    torch.cuda.empty_cache()
+                    if self.aggressive_cleanup:
+                        gc.collect()
 
                 # Calculate step for warmup logic
                 step = self.step["epoch"] * len(dataloader) + batch_idx
@@ -500,47 +716,90 @@ class Engine:
                     for param_group in self.optimizer.param_groups:
                         param_group["lr"] = current_lr
 
-                # Create batch dictionary for the model
-                batch = {
-                    "rgb": sample["rgb"].to(self.device),
-                    "AoP": sample["AoP"].to(self.device),
-                    "DoP": sample["DoP"].to(self.device),
-                    "f_spec": sample["f_spec"].to(self.device),
+                highlight_result = self.add_polar_highlights(
+                    rgb=sample["rgb"].to(self.device, non_blocking=True),
+                    pol=sample["stokes"].to(self.device, non_blocking=True)
+                    if "stokes" in sample
+                    else None,
+                    intrinsic=sample["intrinsics"].to(self.device, non_blocking=True),
+                    shininess=self.config.SHININESS,
+                    ks=self.config.KS,
+                )
+                soft_highlight_map = get_soft_highlight_map(
+                    sample["rgb"].to(self.device, non_blocking=True),
+                    threshold=self.config.SOFT_HIGHLIGHT_THRESHOLD,
+                )
+                highlight_mask = (
+                    highlight_result["highlight"] + soft_highlight_map
+                ).clamp(0, 1)
+                rgb_highlighted = highlight_result["rgb_highlighted"]
+
+                # Create input_data dictionary for the model. Only contains model inputs and GTs
+                # Prefer cropped rect if present; keep its native size
+                rgb_img = sample["rect_crop"].to(self.device, non_blocking=True) if "rect_crop" in sample else sample["rgb"].to(self.device, non_blocking=True)
+                input_data = {
+                    "diffuse": rgb_img,#sample["rgb"].to(self.device, non_blocking=True),
+                    "rgb": rgb_highlighted,
+                    "specular": sample["specular"].to(self.device, non_blocking=True),
+                    "highlight": highlight_mask,  # .repeat(1, 4, 1, 1),
                 }
-                # Forward pass through the model
-                decomposition = self.model(batch)
-                specular = decomposition["specular"]  # [B, C, H, W]
-                diffuse = decomposition["diffuse"]  # [B, C, H, W]
 
-                ### Compositing Specular and Diffuse RGBA
-                if specular.shape[1] == 4 and diffuse.shape[1] == 4:  # RGBA format
-                    # For RGBA, use alpha compositing with diffuse as background, specular as foreground
-                    spec_rgb = specular[:, :3]  # [B, 3, H, W] - foreground RGB
-                    spec_alpha = specular[:, 3:4]  # [B, 1, H, W] - foreground alpha
-                    diff_rgb = diffuse[:, :3]  # [B, 3, H, W] - background RGB
-                    diff_alpha = diffuse[:, 3:4]  # [B, 1, H, W] - background alpha
-
-                    # Alpha compositing: C_out = C_fg * α_fg + C_bg * α_bg * (1 - α_fg)
-                    # Final alpha: α_out = α_fg + α_bg * (1 - α_fg)
-                    recon_rgb = spec_rgb * spec_alpha + diff_rgb * diff_alpha * (
-                        1 - spec_alpha
+                # Add optional polarization data if available
+                if "AoP" in sample:
+                    input_data["AoP"] = sample["AoP"].to(self.device, non_blocking=True)
+                if "DoP" in sample:
+                    input_data["DoP"] = sample["DoP"].to(self.device, non_blocking=True)
+                if "f_spec" in sample:
+                    input_data["f_spec"] = sample["f_spec"].to(
+                        self.device, non_blocking=True
                     )
-                    recon_alpha = spec_alpha + diff_alpha * (1 - spec_alpha)
-                    recon_alpha = torch.clamp(recon_alpha, 0, 1)
-                    decomposition["recon"] = recon_rgb
-                    # recon = torch.cat([recon_rgb, recon_alpha], dim=1)  # [B, 4, H, W]
-                else:  # RGB format
-                    # Simple addition for RGB
-                    recon = specular + diffuse  # [B, 3, H, W]
-                    recon = recon / recon.max()
-                    recon = torch.clamp(recon, 0, 1)
-                    decomposition["recon"] = recon
 
-                # Compute losses using the specular_loss function
-                losses = specular_loss(batch, decomposition, recon_loss=self.recon_loss)
+                # Clean up sample from CPU memory immediately
+                del sample
+
+                # Log memory usage before forward pass if monitoring
+                if self.memory_monitoring and batch_idx % 10 == 0:
+                    self._log_memory_usage(f"Before forward pass - batch {batch_idx}")
+
+                ### Forward pass
+                decomposition = self.model(input_data)
+
+                ### Loss Computation
+                losses = self.loss(decomposition, input_data)
                 loss_value = losses["total"]
 
+                ### Compositing available components with alpha channels
+                # Find components with alpha channels (4 channels) for composition
+                components_for_composition = []
+                for comp_name, comp_tensor in decomposition.items():
+                    if (
+                        isinstance(comp_tensor, torch.Tensor)
+                        and comp_tensor.dim() == 4
+                        and comp_tensor.shape[1] == 4
+                    ):
+                        components_for_composition.append(comp_tensor)
+
+                # Only do alpha composition if we have components with alpha channels
+                if len(components_for_composition) > 0:
+                    decomposition["recon"] = alpha_composite(components_for_composition)
+                else:
+                    # If no alpha channels, just sum RGB components (fallback)
+                    rgb_components = []
+                    for comp_name, comp_tensor in decomposition.items():
+                        if (
+                            isinstance(comp_tensor, torch.Tensor)
+                            and comp_tensor.dim() == 4
+                            and comp_tensor.shape[1] == 3
+                        ):
+                            rgb_components.append(comp_tensor)
+
+                    if len(rgb_components) > 0:
+                        decomposition["recon"] = sum(rgb_components)
+                    else:
+                        # No valid components found - this shouldn't happen but handle gracefully
+                        decomposition["recon"] = input_data["rgb"]
                 # Backward pass for training
+                backward_output = None
                 if is_training:
                     try:
                         # Check if we should accumulate gradients
@@ -554,6 +813,12 @@ class Engine:
                             loss_value,
                             accumulate_gradients=accumulate_gradients,
                             phase=phase,
+                            submodules_to_monitor={
+                                "highlight_decoder": self.model.decoders["highlight"] if "highlight" in self.model.decoders else None,
+                                "diffuse_decoder": self.model.decoders["diffuse"] if "diffuse" in self.model.decoders else None,
+                                "specular_decoder": self.model.decoders["specular"] if "specular" in self.model.decoders else None,
+                                "dinov3": self.model.dinov3,
+                            },
                         )
 
                     except Exception as e:
@@ -577,7 +842,7 @@ class Engine:
                 }
 
                 # Add individual loss components if available
-                if "losses" in locals() and isinstance(losses, dict):
+                if isinstance(losses, dict):
                     for loss_name, loss_val in losses.items():
                         if isinstance(loss_val, torch.Tensor) and loss_name != "total":
                             # Use the loss name directly (without "Loss_" prefix) for better display
@@ -585,11 +850,23 @@ class Engine:
 
                 # Add gradient information if available
                 if (
-                    "backward_output" in locals()
+                    backward_output is not None
                     and backward_output.get("grad_norm") is not None
                 ):
-                    metrics["Gradients/GradNorm"] = backward_output["grad_norm"]
-                    metrics["Gradients/WeightNorm"] = backward_output["weight_norm"]
+                    metrics["Gradients/MODEL_GradNorm"] = backward_output["grad_norm"]
+                    metrics["Gradients/MODEL_WeightNorm"] = backward_output["weight_norm"]
+
+                    # Add submodule gradient norms if available
+                    if "submodule_norms" in backward_output:
+                        for submodule_name, norms in backward_output[
+                            "submodule_norms"
+                        ].items():
+                            metrics[f"Gradients/{submodule_name}_GradNorm"] = norms[
+                                "grad_norm"
+                            ]
+                            metrics[f"Gradients/{submodule_name}_WeightNorm"] = norms[
+                                "weight_norm"
+                            ]
 
                 # Update the metrics dataframe
                 self.metrics[phase] = pd.concat(
@@ -597,15 +874,37 @@ class Engine:
                     ignore_index=True,
                 )
 
-                # Image logging to wandb
+                # Image logging to wandb - with aggressive cleanup after
                 if log_images_this_batch and self.wandb:
                     try:
+                        # Create a copy of sample for visualization (since we deleted it earlier)
+                        gt_data = {
+                            "rgb": input_data["rgb"].cpu(),
+                        }
+                        # Add optional polarization data if available
+                        if "AoP" in input_data:
+                            gt_data["AoP"] = input_data["AoP"].cpu()
+                        if "DoP" in input_data:
+                            gt_data["DoP"] = input_data["DoP"].cpu()
+                        if "f_spec" in input_data:
+                            gt_data["f_spec"] = input_data["f_spec"].cpu()
+                        if "highlight" in input_data:
+                            gt_data["highlight"] = input_data["highlight"].cpu()
+                        if "rgb_highlighted" in input_data:
+                            gt_data["rgb_highlighted"] = input_data[
+                                "rgb_highlighted"
+                            ].cpu()
+
                         images = self.create_visualization_images(
-                            batch, decomposition, sample
+                            input_data, decomposition, gt_data
                         )
                         if images:
                             metrics.update(images)
                             images_logged = True
+
+                        # Clean up sample copy immediately
+                        del gt_data
+
                     except Exception as e:
                         self.logger.warning(
                             f"Failed to create visualization images: {e}",
@@ -639,19 +938,20 @@ class Engine:
                     wandb_metrics[f"Step/{batch_str}"] = self.step[f"{phase}_batch"]
                     self.wandb.log(wandb_metrics)
 
-                # Memory cleanup
-                if "batch" in locals():
-                    del batch
-                if "decomposition" in locals():
-                    del decomposition
-                if "recon" in locals():
-                    del recon
-                if "losses" in locals():
-                    del losses
-                if "backward_output" in locals():
+                # Strategic memory cleanup - more aggressive for larger batches
+                self._strategic_memory_cleanup(
+                    phase, batch_idx, exclude_vars=["self", "dataloader"]
+                )
+
+                # Clean up variables that are no longer needed
+                del input_data, decomposition, losses, loss_value
+                if backward_output is not None:
                     del backward_output
-                torch.cuda.empty_cache()
-                gc.collect()
+
+                # Force cleanup every few batches for maximum memory efficiency
+                if batch_idx % self.memory_cleanup_frequency == 0:
+                    torch.cuda.empty_cache()
+                    gc.collect()
 
         # Compute average loss for epoch
         avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
@@ -711,6 +1011,7 @@ class Engine:
     def create_visualization_images(self, batch, decomposition, sample, batch_idx=0):
         """
         Creates visualization images for polarization-based reflection removal training.
+        Optimized for memory efficiency with aggressive cleanup.
 
         Args:
             batch (dict): Input batch containing rgb, AoP, DoP, f_spec
@@ -723,84 +1024,114 @@ class Engine:
         """
         try:
             import torchvision.transforms as transforms
-            from PIL import Image
-
             import wandb
 
-            # Convert tensors to CPU and detach for visualization
             def to_cpu_image(tensor):
+                """Convert tensor to PIL Image with memory optimization"""
                 if tensor is None:
                     return None
 
+                # Handle different tensor dimensions
                 if tensor.dim() == 4:  # [B, C, H, W]
-                    tensor = tensor[batch_idx]  # Take first batch
+                    tensor = tensor[batch_idx].clone()
                 elif tensor.dim() == 3:  # [C, H, W]
-                    pass
+                    tensor = tensor.clone()
                 elif tensor.dim() == 2:  # [H, W] - single channel
-                    tensor = tensor.unsqueeze(0)  # Add channel dimension
+                    tensor = tensor.unsqueeze(0).clone()
                 else:
                     return None
 
-                # Convert to PIL Image
+                # Convert to CPU and detach immediately
                 tensor = tensor.cpu().detach().clamp(0, 1)
+
+                # Convert to PIL Image
                 to_pil = transforms.ToPILImage()
-                return to_pil(tensor)
+                pil_image = to_pil(tensor)
+
+                # Clean up tensor immediately
+                del tensor
+                torch.cuda.empty_cache()
+
+                return pil_image
+
+            def add_image_safely(viz_dict, key, tensor, caption):
+                """Safely add image to visualization dictionary"""
+                try:
+                    img = to_cpu_image(tensor)
+                    if img:
+                        viz_dict[key] = wandb.Image(img, caption=caption)
+                        del img
+                except Exception as e:
+                    self.logger.warning(f"Failed to create {key} visualization: {e}")
 
             # Create visualization dictionary
             visualization_dict = {}
 
-            # Original RGB image
-            # Specular component
-            if "specular" in decomposition:
-                spec_img = to_cpu_image(decomposition["specular"])
-                if spec_img:
-                    visualization_dict["images/PRED_Specular"] = wandb.Image(
-                        spec_img, caption="Predicted Specular Component"
-                    )
-
-            # Diffuse component
-            if "diffuse" in decomposition:
-                diff_img = to_cpu_image(decomposition["diffuse"])
-                if diff_img:
-                    visualization_dict["images/PRED_Diffuse"] = wandb.Image(
-                        diff_img, caption="Predicted Diffuse Component"
-                    )
-
-            # Reconstruction
+            # Predicted components - dynamically detect available components
+            # First add known special components
             if "recon" in decomposition:
-                recon_img = to_cpu_image(decomposition["recon"])
-                if recon_img:
-                    visualization_dict["images/PRED_Reconstruction"] = wandb.Image(
-                        recon_img, caption="Reconstruction (Specular + Diffuse)"
+                add_image_safely(
+                    visualization_dict,
+                    "images/PRED_Reconstruction",
+                    decomposition["recon"],
+                    "Reconstruction",
+                )
+
+            # Then add any other model output components
+            for comp_name, comp_tensor in decomposition.items():
+                if (
+                    comp_name != "recon"
+                    and isinstance(comp_tensor, torch.Tensor)
+                    and comp_tensor.dim() == 4
+                ):
+                    # Create nice display name
+                    display_name = comp_name.replace("_", " ").title()
+                    wandb_key = f"images/PRED_{comp_name.capitalize()}"
+                    caption = f"Predicted {display_name} Component"
+                    add_image_safely(
+                        visualization_dict, wandb_key, comp_tensor, caption
                     )
 
-            if "rgb" in batch:
-                rgb_img = to_cpu_image(batch["rgb"])
-                if rgb_img:
-                    visualization_dict["images/GT_RGB"] = wandb.Image(
-                        rgb_img, caption="Input RGB Image"
+            # Input images
+            input_images = [
+                ("images/GT_RGB", "diffuse", "Input RGB Image"),
+                ("images/GT_RGB_Highlighted", "rgb", "Input RGB Highlighted Image"),
+                ("images/GT_Highlight", "highlight", "Input RGB Highlighted Image"),
+                ("images/GT_FSpec", "f_spec", "Specular Fraction"),
+            ]
+
+            for key, tensor_key, caption in input_images:
+                if tensor_key in batch:
+                    add_image_safely(
+                        visualization_dict, key, batch[tensor_key], caption
                     )
 
-            # Ground truth specular/diffuse if available
-            if "f_spec" in batch:
-                fspec_img = to_cpu_image(batch["f_spec"])
-                if fspec_img:
-                    visualization_dict["images/GT_FSpec"] = wandb.Image(
-                        fspec_img, caption="Specular Fraction"
-                    )
-            if "specular" in sample:
-                gt_spec_img = to_cpu_image(sample["specular"])
-                if gt_spec_img:
-                    visualization_dict["images/GT_Specular"] = wandb.Image(
-                        gt_spec_img, caption="Ground Truth Specular"
+            # Ground truth components - dynamically detect available components
+            if sample is not None:
+                # Add ground truth components dynamically
+                for comp_name, comp_tensor in sample.items():
+                    # Skip non-component keys
+                    if comp_name in [
+                        "rgb",
+                        "AoP",
+                        "DoP",
+                        "f_spec",
+                        "rgb_highlighted",
+                        "intrinsics",
+                    ] or not isinstance(comp_tensor, torch.Tensor):
+                        continue
+
+                    # Create nice display name
+                    display_name = comp_name.replace("_", " ").title()
+                    wandb_key = f"images/GT_{comp_name.capitalize()}"
+                    caption = f"Ground Truth {display_name}"
+                    add_image_safely(
+                        visualization_dict, wandb_key, comp_tensor, caption
                     )
 
-            if "diffuse" in sample:
-                gt_diff_img = to_cpu_image(sample["diffuse"])
-                if gt_diff_img:
-                    visualization_dict["images/GT_Diffuse"] = wandb.Image(
-                        gt_diff_img, caption="Ground Truth Diffuse"
-                    )
+            # Final cleanup
+            torch.cuda.empty_cache()
+            gc.collect()
 
             return visualization_dict
 
