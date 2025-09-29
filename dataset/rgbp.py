@@ -37,6 +37,7 @@ class RGBP_Dataset(Dataset):
     Polarization formats supported:
     - "single_file_clock": Single file with 4 polarization images arranged clockwise
     - "separate_files": Four separate files ending with _000, _045, _090, _135
+    - "separate_files_stokes": Three separate .npy files with Stokes parameters _S0, _S1, _S2
 
     Scene filtering:
     - include: str or List[str] - Include scenes that match (substring or exact)
@@ -93,10 +94,11 @@ class RGBP_Dataset(Dataset):
         if self.polarization_format not in [
             "single_file_clock",
             "separate_files",
+            "separate_files_stokes",
             "mosaic",
         ]:
             raise ValueError(
-                f"polarization_format must be one of ['single_file_clock', 'separate_files', 'mosaic'], got {polarization_format}"
+                f"polarization_format must be one of ['single_file_clock', 'separate_files', 'separate_files_stokes', 'mosaic'], got {polarization_format}"
             )
 
         # Image sizing parameters
@@ -408,6 +410,28 @@ class RGBP_Dataset(Dataset):
                             )
                         )
 
+                elif self.polarization_format == "separate_files_stokes":
+                    # New behavior: separate Stokes parameter files (_S0, _S1, _S2)
+                    base_name = rgb_file.replace(self.rgb_ext, "")
+                    stokes_files_needed = [
+                        f"{base_name}_S0.npy",
+                        f"{base_name}_S1.npy",
+                        f"{base_name}_S2.npy",
+                    ]
+
+                    # Check if all 3 Stokes files exist
+                    if all(stokes_file in pol_files for stokes_file in stokes_files_needed):
+                        # Store the base path for separate Stokes files (we'll construct individual paths later)
+                        pol_base_path = os.path.join(pol_dir, base_name)
+                        scene_pairs.append(
+                            (
+                                os.path.join(rgb_dir, rgb_file),
+                                pol_base_path,  # Base path for separate Stokes files
+                                intrinsics_path,
+                                True,  # Has polarization data
+                            )
+                        )
+
         return scene_pairs
 
     def __len__(self) -> int:
@@ -504,11 +528,14 @@ class RGBP_Dataset(Dataset):
         Args:
             pol_path: For single_file_clock format, this is the full file path.
                      For separate_files format, this is the base path without extension.
+                     For separate_files_stokes format, this is the base path without extension.
         """
         if self.polarization_format == "single_file_clock":
             return self._load_single_file_polarization(pol_path)
         elif self.polarization_format == "separate_files":
             return self._load_separate_polarization_files(pol_path)
+        elif self.polarization_format == "separate_files_stokes":
+            return self._load_separate_stokes_files(pol_path)
         else:
             raise ValueError(f"Unknown polarization format: {self.polarization_format}")
 
@@ -580,10 +607,7 @@ class RGBP_Dataset(Dataset):
             "f_spec": f_spec.unsqueeze(0),
         }
 
-        # Resize all polarization data to target size if specified
-        if self.target_size is not None:
-            pol_data = self._resize_polarization_data(pol_data)
-
+        # Return full resolution polarization data - resizing will be done later if needed
         return pol_data
 
     def _load_and_process_polarization(self, pol_path: str) -> Dict[str, torch.Tensor]:
@@ -596,7 +620,7 @@ class RGBP_Dataset(Dataset):
     def _load_rgb_and_separate(
         self, rgb_path: str, f_spec_half: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
-        """Optimized RGB loading and separation"""
+        """Optimized RGB loading and separation at full resolution"""
 
         # Load RGB directly as torch tensor
         rgb_img = Image.open(rgb_path).convert("RGB")
@@ -617,12 +641,7 @@ class RGBP_Dataset(Dataset):
         I_spec = (f_expanded * rgb_chw).clamp(0, 1)
         I_diff = (rgb_chw - I_spec).clamp(0, 1)
 
-        # Resize RGB data to target size if specified
-        if self.target_size is not None:
-            rgb_chw = self._resize_rgb_tensor(rgb_chw)
-            I_spec = self._resize_tensor(I_spec, self.target_size)
-            I_diff = self._resize_tensor(I_diff, self.target_size)
-
+        # Return full resolution data - resizing will be done later if needed
         return {
             "rgb": rgb_chw,
             "specular": I_spec,
@@ -631,13 +650,13 @@ class RGBP_Dataset(Dataset):
 
     def _load_rgb_only(self, rgb_path: str) -> Dict[str, torch.Tensor]:
         """
-        Load RGB data only (when polarization data is not available).
+        Load RGB data only (when polarization data is not available) at full resolution.
 
         Args:
             rgb_path: Path to RGB image file
 
         Returns:
-            Dictionary containing RGB data with dummy specular/diffuse components
+            Dictionary containing RGB data with dummy specular/diffuse components at full resolution
         """
         # Load RGB directly as torch tensor
         rgb_img = Image.open(rgb_path).convert("RGB")
@@ -646,14 +665,11 @@ class RGBP_Dataset(Dataset):
         # Convert to CHW format
         rgb_chw = rgb.permute(2, 0, 1)  # [3, H, W]
 
-        # Resize RGB data to target size if specified
-        if self.target_size is not None:
-            rgb_chw = self._resize_rgb_tensor(rgb_chw)
-
         # Create dummy specular and diffuse components (all zeros for specular, RGB for diffuse)
         I_spec = torch.zeros_like(rgb_chw)  # [3, H, W] - no specular component
         I_diff = rgb_chw.clone()  # [3, H, W] - all RGB is diffuse
 
+        # Return full resolution data - resizing will be done later if needed
         return {
             "rgb": rgb_chw,
             "specular": I_spec,
@@ -870,10 +886,89 @@ class RGBP_Dataset(Dataset):
             "f_spec": f_spec.unsqueeze(0),
         }
 
-        # Resize all polarization data to target size if specified
-        if self.target_size is not None:
-            pol_data = self._resize_polarization_data(pol_data)
+        # Return full resolution polarization data - resizing will be done later if needed
+        return pol_data
 
+    def _load_separate_stokes_files(
+        self, pol_base_path: str
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Load polarization data from separate Stokes parameter files (_S0, _S1, _S2).
+
+        Args:
+            pol_base_path: Base path without extension (e.g., "/path/to/pol/000034")
+
+        Returns:
+            Dictionary containing polarization data tensors
+        """
+        # Construct individual file paths for Stokes parameters
+        stokes_paths = {
+            "S0": f"{pol_base_path}_S0.npy",
+            "S1": f"{pol_base_path}_S1.npy", 
+            "S2": f"{pol_base_path}_S2.npy",
+        }
+
+        # Load individual Stokes parameter files
+        stokes_data = {}
+        for stokes_name, path in stokes_paths.items():
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Stokes file not found: {path}")
+            
+            # Load .npy file directly as torch tensor
+            stokes_array = np.load(path)
+            stokes_data[stokes_name] = torch.from_numpy(stokes_array.astype(np.float32))
+
+        # Extract Stokes parameters
+        S0 = stokes_data["S0"].mean(-1)  # [H, W]
+        S1 = stokes_data["S1"].mean(-1)  # [H, W] 
+        S2 = stokes_data["S2"].mean(-1)  # [H, W]
+
+        # Compute DoLP and AoP from Stokes parameters
+        R = torch.sqrt(S1**2 + S2**2)
+        DoLP = torch.clamp(R / torch.clamp(S0, min=self.eps), 0.0, 1.0)
+        AoP = 0.5 * torch.atan2(S2, S1)
+
+        # Apply DoLP masking
+        valid_mask = (S0 >= self.dolp_min_intensity).float()
+        DoLP = DoLP * valid_mask
+        DoLP = torch.where(DoLP < self.dolp_min_value, torch.zeros_like(DoLP), DoLP)
+
+        # Compute specular fraction
+        f_spec = torch.clamp(DoLP / max(self.rho_s, 1e-6), 0.0, 1.0)
+
+        # Additional parameters (simplified)
+        S3 = torch.zeros_like(S0)
+
+        # Reconstruct original intensity images from Stokes parameters
+        # I0 = (S0 + S1) / 2, I90 = (S0 - S1) / 2
+        # I45 = (S0 + S2) / 2, I135 = (S0 - S2) / 2
+        I0 = (S0 + S1) / 2.0
+        I90 = (S0 - S1) / 2.0
+        I0_rgb = torch.stack([I0, I0, I0], dim=-1)  # [H, W, 3]
+        I90_rgb = torch.stack([I90, I90, I90], dim=-1)  # [H, W, 3]
+        # Create polarization data dictionary
+        print(f_spec.shape)
+        pol_data = {
+            "I0": I0_rgb.permute(2, 0, 1),  # [3, H, W]
+            "I45": torch.zeros_like(I0_rgb).permute(2, 0, 1),  # [3, H, W]
+            "I90": I90_rgb.permute(2, 0, 1),  # [3, H, W]
+            "I135": torch.zeros_like(I0_rgb).permute(2, 0, 1),  # [3, H, W]
+            "S0": S0.unsqueeze(0),  # [1, H, W]
+            "S1": S1.unsqueeze(0),  # [1, H, W]
+            "S2": S2.unsqueeze(0),  # [1, H, W]
+            "S3": S3.unsqueeze(0),  # [1, H, W]
+            "stokes": torch.cat([S0, S1, S2], dim=0).unsqueeze(0),  # [1, 3, H, W]
+            "intensity": S0.unsqueeze(0),  # [1, H, W]
+            "DoLP": DoLP.unsqueeze(0),  # [1, H, W]
+            "AoP": AoP.unsqueeze(0),  # [1, H, W]
+            "AoLP": AoP.unsqueeze(0),  # [1, H, W]
+            "DoP": DoLP.unsqueeze(0),  # [1, H, W]
+            "DoCP": torch.zeros_like(DoLP).unsqueeze(0),  # [1, H, W]
+            "ellipticity_angle": torch.zeros_like(DoLP).unsqueeze(0),  # [1, H, W]
+            "f_spec": f_spec.unsqueeze(0),  # [1, H, W]
+        }
+
+        # Return full resolution polarization data - resizing will be done later if needed
         return pol_data
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
@@ -899,7 +994,7 @@ class RGBP_Dataset(Dataset):
             # Load polarization data
             pol_data = self._load_and_process_polarization(pol_path)
             # Get specular fraction for RGB processing
-            f_spec = pol_data["f_spec"].squeeze(0)
+            f_spec = pol_data["f_spec"].squeeze(0)  # Remove batch dimension [H, W]
             rgb_data = self._load_rgb_and_separate(rgb_path, f_spec)
             # Combine results
             sample = {**pol_data, **rgb_data, "intrinsics": intrinsics}
@@ -908,9 +1003,9 @@ class RGBP_Dataset(Dataset):
             rgb_data = self._load_rgb_only(rgb_path)
             sample = {**rgb_data, "intrinsics": intrinsics}
 
-        # Optional highlight outputs (computed on the resized rgb)
+        # Optional highlight detection and cropping on full resolution
         if self.highlight_enabled and "rgb" in sample:
-            rgb_chw = sample["rgb"]
+            rgb_chw = sample["rgb"]  # Full resolution RGB
             mask = self._compute_highlight_mask(rgb_chw)
 
             if self.highlight_return_mask:
@@ -930,24 +1025,53 @@ class RGBP_Dataset(Dataset):
                         rgb_chw, rect_coords
                     )
 
-                    # If both target_size and rect_size are set, resize the rect to target size
-                    # Keep native rect size when it's used as the main RGB (cropped training)
-                    if (
-                        self.target_size is not None
-                        and self.highlight_rect_size is not None
-                        and not self.highlight_return_rect_as_rgb
-                    ):
-                        rect_rgb = self._resize_rgb_tensor(rect_rgb)
-                        rect_mask = F.interpolate(
-                            rect_mask.unsqueeze(0), size=self.target_size, mode="nearest", align_corners=None
-                        ).squeeze(0)
-
                     sample["rect_crop"] = rect_rgb
                     sample["rect_mask"] = rect_mask
 
                     if self.highlight_return_rect_as_rgb:
                         sample["uncropped_rgb"] = sample["rgb"]
                         sample["rgb"] = rect_rgb
+                        # Also crop specular and diffuse components
+                        if "specular" in sample:
+                            sample["specular"] = sample["specular"][:, rect_coords[0]:rect_coords[2]+1, rect_coords[1]:rect_coords[3]+1]
+                        if "diffuse" in sample:
+                            sample["diffuse"] = sample["diffuse"][:, rect_coords[0]:rect_coords[2]+1, rect_coords[1]:rect_coords[3]+1]
+                        
+                        # Also crop polarization data
+                        pol_keys = ["I0", "I45", "I90", "I135", "S0", "S1", "S2", "S3", "stokes", "intensity", 
+                                   "DoLP", "AoP", "AoLP", "DoP", "DoCP", "ellipticity_angle", "f_spec"]
+                        for key in pol_keys:
+                            if key in sample:
+                                sample[key] = sample[key][:, rect_coords[0]:rect_coords[2]+1, rect_coords[1]:rect_coords[3]+1]
+
+        # Resize all data to target size if specified
+        if self.target_size is not None:
+            # Resize RGB-related data
+            if "rgb" in sample:
+                sample["rgb"] = self._resize_rgb_tensor(sample["rgb"])
+            if "specular" in sample:
+                sample["specular"] = self._resize_tensor(sample["specular"], self.target_size)
+            if "diffuse" in sample:
+                sample["diffuse"] = self._resize_tensor(sample["diffuse"], self.target_size)
+            if "highlight_masks" in sample:
+                sample["highlight_masks"] = F.interpolate(
+                    sample["highlight_masks"].unsqueeze(0), size=self.target_size, mode="nearest", align_corners=None
+                ).squeeze(0)
+            if "rect_crop" in sample and not self.highlight_return_rect_as_rgb:
+                # Only resize rect_crop if it's not being used as the main RGB
+                sample["rect_crop"] = self._resize_rgb_tensor(sample["rect_crop"])
+            if "rect_mask" in sample and not self.highlight_return_rect_as_rgb:
+                # Only resize rect_mask if it's not being used as the main RGB
+                sample["rect_mask"] = F.interpolate(
+                    sample["rect_mask"].unsqueeze(0), size=self.target_size, mode="nearest", align_corners=None
+                ).squeeze(0)
+            
+            # Resize polarization data
+            pol_keys = ["I0", "I45", "I90", "I135", "S0", "S1", "S2", "S3", "stokes", "intensity", 
+                       "DoLP", "AoP", "AoLP", "DoP", "DoCP", "ellipticity_angle", "f_spec"]
+            for key in pol_keys:
+                if key in sample:
+                    sample[key] = self._resize_tensor(sample[key], self.target_size)
 
         if self.transform:
             sample = self.transform(sample)
@@ -1047,7 +1171,29 @@ class SCARED_Dataset(RGBP_Dataset):
         super().__init__(**kwargs)
         # Add any SCARED-specific initialization here
 
+class SYNTHETIC_Dataset(RGBP_Dataset):
+    """
+    SYNTHETIC dataset implementation for polarization-guided RGB processing.
 
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with SYNTHETIC-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+
+    The SYNTHETIC dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize SYNTHETIC dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(**kwargs)
+        # Add any SYNTHETIC-specific initialization here
+        
+        
 def from_config(
     config: Dict, dataset_names: Optional[List[str]] = None
 ) -> Dict[str, Union[Dataset, None]]:
@@ -1094,6 +1240,7 @@ def from_config(
         "HOUSECAT6D": HOUSECAT6D_Dataset,
         "POLARGB": POLARGB_Dataset,
         "SCARED": SCARED_Dataset,
+        "SYNTHETIC": SYNTHETIC_Dataset,
         # Future datasets will be added here by the user
     }
 

@@ -1,10 +1,13 @@
+
 parameters:
-  ### MODEL ARCHITECTURE ###
+
+  ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:
+      MODEL_CLASS: "RGBDistillDecomposer"
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vits16-pretrain-lvd1689m"
-        IMAGE_SIZE: 224
+        IMAGE_SIZE: 448
         RETURN_SELECTED_LAYERS: [3, 6, 9,12]
       POL_ENCODER:
         EMBED_DIM: 384
@@ -16,87 +19,142 @@ parameters:
         N_HEADS: 12
         DROPOUT: 0.1
         BI_DIRECTIONAL: False
-      DECODER:
-        FEATURE_DIM: 384  
-        REASSEMBLE_OUT_CHANNELS: [48, 96, 192, 384] 
-        REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5] 
-        READOUT_TYPE: "ignore"  
-        USE_BN: False
-        OUTPUT_IMAGE_SIZE: [224,224]
-        OUTPUT_CHANNELS: 4
-  ### DATA ###
+      DECODERS:
+        diffuse:
+          FEATURE_DIM: 384
+          REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
+          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+          READOUT_TYPE: "ignore"
+          USE_BN: False
+          OUTPUT_IMAGE_SIZE: [448,448]
+          OUTPUT_CHANNELS: 3
+        # specular:
+        #   FEATURE_DIM: 384
+        #   REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
+        #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+        #   READOUT_TYPE: "ignore"
+        #   USE_BN: False
+        #   OUTPUT_IMAGE_SIZE: [448,448]
+        #   OUTPUT_CHANNELS: 3
+        highlight:
+          FEATURE_DIM: 384
+          REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
+          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+          READOUT_TYPE: "ignore"
+          USE_BN: False
+          OUTPUT_IMAGE_SIZE: [448,448]
+          OUTPUT_CHANNELS: 1
+
+  ### DATA                                                                      
   DATASETS:
     value:
       SCRREAM:
-        ROOT_DIR: "/datasets/SCRREAM/"
-        TRAIN_SCENES: []
-        POLARIZATION_FORMAT: "single_file_clock"
-        VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
-        RHO_S: 0.6
-        EPS: 1.0e-8
-        TARGET_SIZE: [224,224]
-        RESIZE_MODE: "resize"
-        USE_CACHE: True
-        SIMPLIFY_UPSAMPLING: True
-        FEW_IMAGES: False
-      HOUSECAT6D:
-        ROOT_DIR: "/datasets/HouseCat6D/"
-        TRAIN_SCENES: []
-        POLARIZATION_FORMAT: "single_file_clock"
-        VAL_SCENES: "val"
-        RHO_S: 0.6
-        EPS: 1.0e-8
-        TARGET_SIZE: [224,224]
-        RESIZE_MODE: "resize"
-        USE_CACHE: True
-        SIMPLIFY_UPSAMPLING: True
-        FEW_IMAGES: False
-      POLARGB:
-        ROOT_DIR: "/datasets/PolaRGB/"
-        TRAIN_SCENES: "train"
+      #   ROOT_DIR: "$DATASET_DIR/SCRREAM/"
+      #   TRAIN_SCENES: []
+      #   POLARIZATION_FORMAT: "single_file_clock"
+      #   VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
+      #   RHO_S: 0.6
+      #   EPS: 1.0e-8
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "resize"
+      #   USE_CACHE: True
+      #   SIMPLIFY_UPSAMPLING: True
+      #   FEW_IMAGES: False
+        
+      # HOUSECAT6D:
+      #   ROOT_DIR: "$DATASET_DIR/HouseCat6D/"
+      #   TRAIN_SCENES: []
+      #   POLARIZATION_FORMAT: "single_file_clock"
+      #   VAL_SCENES: "val"
+      #   RHO_S: 0.6
+      #   EPS: 1.0e-8
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "resize"
+      #   USE_CACHE: True
+      #   SIMPLIFY_UPSAMPLING: True
+      #   FEW_IMAGES: False
+
+      # POLARGB:
+      #   ROOT_DIR: "$DATASET_DIR/PolaRGB/"
+      #   TRAIN_SCENES: "train"
+      #   POLARIZATION_FORMAT: "separate_files"
+      #   VAL_SCENES: "test"
+      #   RHO_S: 0.6
+      #   EPS: 1.0e-8
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "resize"
+      #   USE_CACHE: True
+      #   SIMPLIFY_UPSAMPLING: True
+      #   FEW_IMAGES: False
+
+      SCARED:
+        ROOT_DIR: "$DATASET_DIR/SCARED/"
+        TRAIN_SCENES: "v"
         POLARIZATION_FORMAT: "separate_files"
-        VAL_SCENES: "test"
+        VAL_SCENES: ["v28","v29","v30","v31","v32","v33","v34"]
         RHO_S: 0.6
         EPS: 1.0e-8
-        TARGET_SIZE: [224,224]
+        TARGET_SIZE: [1024,1280]
         RESIZE_MODE: "resize"
         USE_CACHE: True
         SIMPLIFY_UPSAMPLING: True
         FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: True
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [448, 448]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: True
+        HIGHLIGHT_RETURN_RECT: True
 
   BATCH_SIZE:
-    value: 24
-  WORKERS:
-    value: 4
+    value: 16
+  NUM_WORKERS:
+    value: 6  
   SHUFFLE:
     value: True
   PIN_MEMORY:
     value: true
   PREFETCH_FACTOR:
-    value: 2
+    value: 1
   
-  ### OPTIMIZATION ###
+  ### POLARIZATION / HIGHLIGHTS                                                        
+  SHININESS:
+    value: 4.0
+  KS:
+    value: 1.0
+  SOFT_HIGHLIGHT_THRESHOLD:
+    value: 0.8
+  # Highlight regression stabilization (optional)
+  HLREG_BALANCE_MODE:
+    value: "auto"   # 'none' | 'auto' | 'pos_weight'
+  HLREG_POS_WEIGHT:
+    value: 2.0      # used only if BALANCE_MODE == 'pos_weight'
+  HLREG_FOCAL_GAMMA:
+    value: 0.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
+  ### OPTIMIZATION                                                                      
+
   LEARNING_RATE:
-    values: [1.0e-3, 1.0e-4, 1.0e-5]
+    values: [1.0e-3, 1.0e-4]
   WEIGHT_DECAY:
-    value: 1.0e-6
+    value: 1.0e-8
   EPOCHS:
-    value: 30
+    value: 20
   GRADIENT_ACCUMULATION_STEPS:
-    value: 4
+    value: 3
   WARMUP_STEPS:
-    value: 0
-  
+    value: -1
+  GRADIENT_CLIPPING_MAX_NORM:
+    value: -1
   LR_SCHEDULER: 
     value: 
       ONPLATEAU:
         PATIENCE: 10
         FACTOR: 0.1
-      # COSINE:
-      #   N_PERIODS: 1
-      STEPWISE:
-        N_STEPS: 2
-        GAMMA: 0.5
+      COSINE:
+        N_PERIODS: 60
+      # STEPWISE:
+      #   N_STEPS: 3
+      #   GAMMA: 0.5
       # EXPONENTIAL:
       #   GAMMA: 0.5
 
@@ -106,24 +164,34 @@ parameters:
     value: "Adam"
   OPTIMIZER_REFINING_NAME:
     value: "Adam"
-
-  STEPWISESCHEDULER_NSTEPS:
-    value: 4
-  STEPWISESCHEDULER_GAMMA:
-    value: 0.5
-  
   EARLY_STOPPING_PATIENCE:
     value: 20
   SAVE_INTERVAL:
     value: 1000
   
-  ### LOGGING AND WANDB ###
+  ### LOSS WEIGHTS (relative to the total loss, NOT NORMALIZED LATER)                                                                              
+  SPECULAR_LOSS_WEIGHT:
+    value: 0.0
+  DIFFUSE_LOSS_WEIGHT:
+    value: 1.0
+  HIGHLIGHT_LOSS_WEIGHT:
+    value: 1.0
+  COMPONENT_MATCHING_LOSS_WEIGHT:
+    value: 1.0
+  IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
+    value: 0.5
+  ALPHA_REGULARIZATION_LOSS_WEIGHT:
+    value: 0.1
+  SPATIAL_CONSISTENCY_LOSS_WEIGHT:
+    value: 0.3
+
+  ### LOGGING, RESULTS AND WANDB                                                                 
   LOG_INTERVAL:
     value: 1
   WANDB_LOG_INTERVAL:
     value: 4
   IMAGE_LOG_INTERVAL:
-    value: 20
+    value: 5
   NO_WANDB:
     value: False
   MODEL_WATCHER_FREQ_WANDB:
@@ -134,6 +202,8 @@ parameters:
     value: "UnReflectAnything"
   NOTES:
     value: ""
+  RESULTS_DIR:
+    value: "$RESULTS_DIR/"
 
 ### WANDB SWEEP CONFIG ###
 method: grid

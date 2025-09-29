@@ -736,9 +736,9 @@ class Engine:
 
                 # Create input_data dictionary for the model. Only contains model inputs and GTs
                 # Prefer cropped rect if present; keep its native size
-                rgb_img = sample["rect_crop"].to(self.device, non_blocking=True) if "rect_crop" in sample else sample["rgb"].to(self.device, non_blocking=True)
+                # rgb_img = sample["rect_crop"].to(self.device, non_blocking=True) if "rect_crop" in sample else sample["rgb"].to(self.device, non_blocking=True)
                 input_data = {
-                    "diffuse": rgb_img,#sample["rgb"].to(self.device, non_blocking=True),
+                    "diffuse": sample["rgb"].to(self.device, non_blocking=True),
                     "rgb": rgb_highlighted,
                     "specular": sample["specular"].to(self.device, non_blocking=True),
                     "highlight": highlight_mask,  # .repeat(1, 4, 1, 1),

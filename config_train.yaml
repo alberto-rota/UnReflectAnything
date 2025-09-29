@@ -91,25 +91,43 @@ parameters:
         ROOT_DIR: "$DATASET_DIR/SCARED/"
         TRAIN_SCENES: "v"
         POLARIZATION_FORMAT: "separate_files"
-        VAL_SCENES: ["v28","v29","v30","v31","v32","v33","v34"]
+        VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
         RHO_S: 0.6
         EPS: 1.0e-8
-        TARGET_SIZE: [1024,1280]
+        TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
         USE_CACHE: True
         SIMPLIFY_UPSAMPLING: True
         FEW_IMAGES: False
-        HIGHLIGHT_ENABLE: True
+        HIGHLIGHT_ENABLE: True  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
         HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [448, 448]
+        HIGHLIGHT_RECT_SIZE: [640, 640]
         HIGHLIGHT_RETURN_RECT_AS_RGB: True
         HIGHLIGHT_RETURN_RECT: True
 
+      # SYNTHETIC:
+      #   ROOT_DIR: "$DATASET_DIR/SyntheticMitsuba/"
+      #   TRAIN_SCENES: "scene_0"
+      #   POLARIZATION_FORMAT: "separate_files"
+      #   RHO_S: 0.6
+      #   EPS: 1.0e-8
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "resize"
+      #   USE_CACHE: True
+      #   SIMPLIFY_UPSAMPLING: True
+      #   FEW_IMAGES: False
+      #   HIGHLIGHT_ENABLE: True  
+      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
+      #   HIGHLIGHT_RETURN_MASK: True
+      #   HIGHLIGHT_RECT_SIZE: [640, 640]
+      #   HIGHLIGHT_RETURN_RECT_AS_RGB: True
+      #   HIGHLIGHT_RETURN_RECT: True
+
   BATCH_SIZE:
-    value: 16
+    value: 64
   NUM_WORKERS:
-    value: 6  
+    value: 4
   SHUFFLE:
     value: True
   PIN_MEMORY:
@@ -131,6 +149,7 @@ parameters:
     value: 2.0      # used only if BALANCE_MODE == 'pos_weight'
   HLREG_FOCAL_GAMMA:
     value: 0.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
+
   ### OPTIMIZATION                                                                      
 
   LEARNING_RATE:
@@ -138,7 +157,7 @@ parameters:
   WEIGHT_DECAY:
     value: 1.0e-8
   EPOCHS:
-    value: 200
+    value: 20
   GRADIENT_ACCUMULATION_STEPS:
     value: 3
   WARMUP_STEPS:
