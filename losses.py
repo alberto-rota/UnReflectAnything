@@ -2,10 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-# -------------------------
-#   Low-level loss pieces
-# -------------------------
 class SSIMLoss(nn.Module):
     def __init__(self, window_size=11, sigma=1.5):
         super().__init__()
@@ -21,28 +17,71 @@ class SSIMLoss(nn.Module):
         window = g.unsqueeze(1) @ g.unsqueeze(0)  # [w,w]
         return window.unsqueeze(0).unsqueeze(0)    # [1,1,w,w]
 
-    def forward(self, x, y):
+    def forward(self, x, y, mask=None):
         # x, y: [B, C, H, W]
+        # mask: [B, 1, H, W] or [B, C, H, W] - binary mask (1 = include, 0 = ignore)
+        if mask is None:
+            mask = torch.ones_like(x[:, :1])
         B, C, H, W = x.shape
         window = self.window.to(device=x.device, dtype=x.dtype).expand(C, 1, -1, -1)
+        
+        # Ensure mask has same number of channels as input
+        if mask.shape[1] == 1:
+            mask = mask.expand(-1, C, -1, -1)  # [B, C, H, W]
 
-        mu_x = F.conv2d(x, window, padding=self.window_size // 2, groups=C)
-        mu_y = F.conv2d(y, window, padding=self.window_size // 2, groups=C)
+        # Apply mask to inputs
+        x_masked = x * mask
+        y_masked = y * mask
+
+        # Compute local statistics with masked inputs
+        mu_x = F.conv2d(x_masked, window, padding=self.window_size // 2, groups=C)
+        mu_y = F.conv2d(y_masked, window, padding=self.window_size // 2, groups=C)
+        
+        # Compute mask weights (sum of mask values in each window)
+        mask_weights = F.conv2d(mask.float(), window, padding=self.window_size // 2, groups=C)
+        
+        # Normalize means by mask weights (avoid division by zero)
+        epsilon = 1e-8
+        mu_x = mu_x / (mask_weights + epsilon)
+        mu_y = mu_y / (mask_weights + epsilon)
 
         mu_x_sq = mu_x**2
         mu_y_sq = mu_y**2
         mu_xy = mu_x * mu_y
 
-        sigma_x_sq = F.conv2d(x * x, window, padding=self.window_size // 2, groups=C) - mu_x_sq
-        sigma_y_sq = F.conv2d(y * y, window, padding=self.window_size // 2, groups=C) - mu_y_sq
-        sigma_xy = F.conv2d(x * y, window, padding=self.window_size // 2, groups=C) - mu_xy
+        sigma_x_sq = F.conv2d(x_masked * x_masked, window, padding=self.window_size // 2, groups=C) / (mask_weights + epsilon) - mu_x_sq
+        sigma_y_sq = F.conv2d(y_masked * y_masked, window, padding=self.window_size // 2, groups=C) / (mask_weights + epsilon) - mu_y_sq
+        sigma_xy = F.conv2d(x_masked * y_masked, window, padding=self.window_size // 2, groups=C) / (mask_weights + epsilon) - mu_xy
 
         C1, C2 = 0.01**2, 0.03**2
         ssim_map = ((2 * mu_xy + C1) * (2 * sigma_xy + C2)) / (
             (mu_x_sq + mu_y_sq + C1) * (sigma_x_sq + sigma_y_sq + C2)
-        )
-        return ssim_map.mean()
+        )  # [B, C, H, W]
+        
+        # Apply mask to SSIM map and compute weighted mean
+        ssim_map_masked = ssim_map * (mask_weights > 0).float()  # Zero out regions with no valid mask
+        return ssim_map_masked.sum() / ((mask_weights > 0).float().sum() + epsilon)
 
+class MaskedL1Loss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, y, mask=None):
+        # x, y: [B, C, H, W]
+        # mask: [B, 1, H, W] or [B, C, H, W] - binary mask (1 = include, 0 = ignore)
+        
+        if mask is None:
+            mask = torch.ones_like(x[:, :1])
+        # Ensure mask has same number of channels as input
+        if mask.shape[1] == 1:
+            mask = mask.expand_as(x)  # [B, C, H, W]
+        
+        # Compute L1 loss only on masked regions
+        l1_map = torch.abs(x - y) * mask  # [B, C, H, W]
+        
+        # Compute mean over valid (non-zero mask) pixels
+        epsilon = 1e-8
+        return l1_map.sum() / (mask.sum() + epsilon)
 
 class CharbonnierLoss(nn.Module):
     """Smooth L1:  sqrt((x)^2 + eps^2).mean()  — zero at equality."""
@@ -98,6 +137,339 @@ class TVLoss(nn.Module):
         tv_w = (x[:, :, :, 1:] - x[:, :, :, :-1]).abs().mean()
         return tv_h + tv_w
 
+
+# -------------------------
+#   Compositing utilities
+# -------------------------
+def alpha_composite(components, output_format='rgb'):
+    """
+    Alpha composite multiple components over a diffuse base layer.
+    
+    Handles variable channel counts:
+    - 1 channel: grayscale-alpha (value represents both intensity and opacity)
+    - 3 channels: RGB with implicit full opacity
+    - 4 channels: RGBA
+    
+    Args:
+        components: dict of [B,C,H,W] tensors where C ∈ {1, 3, 4}
+                   Must contain 'diffuse' key as the base layer
+        output_format: 'rgb' or 'rgba' (default: 'rgb')
+    
+    Returns:
+        [B,C_out,H,W] where C_out is 3 for 'rgb' or 4 for 'rgba'
+    """
+    # Start with diffuse as base layer
+    diffuse = components['diffuse']  # [B,C,H,W]
+    B, C, H, W = diffuse.shape
+    
+    # Convert diffuse to RGBA [B,4,H,W]
+    if C == 1:  # Grayscale-alpha: value is both intensity and alpha
+        rgb = diffuse.expand(-1, 3, -1, -1)  # [B,3,H,W]
+        alpha = diffuse  # [B,1,H,W]
+        result_rgba = torch.cat([rgb, alpha], dim=1)  # [B,4,H,W]
+    elif C == 3:  # RGB -> add full opacity
+        alpha = torch.ones_like(diffuse[:, :1])  # [B,1,H,W]
+        result_rgba = torch.cat([diffuse, alpha], dim=1)  # [B,4,H,W]
+    else:  # C == 4, already RGBA
+        result_rgba = diffuse
+    
+    # Composite other layers on top in arbitrary order
+    for key, comp in components.items():
+        if key == 'diffuse':
+            continue
+        
+        C = comp.shape[1]  # [B,C,H,W]
+        
+        # Convert component to RGBA [B,4,H,W]
+        if C == 1:  # Grayscale-alpha
+            rgb = comp.expand(-1, 3, -1, -1)  # [B,3,H,W]
+            alpha = comp  # [B,1,H,W]
+            comp_rgba = torch.cat([rgb, alpha], dim=1)  # [B,4,H,W]
+        elif C == 3:  # RGB -> add full opacity
+            alpha = torch.ones_like(comp[:, :1])  # [B,1,H,W]
+            comp_rgba = torch.cat([comp, alpha], dim=1)  # [B,4,H,W]
+        else:  # C == 4, already RGBA
+            comp_rgba = comp
+        
+        # Alpha composite: foreground over background
+        fg_rgb = comp_rgba[:, :3]  # [B,3,H,W]
+        fg_a = comp_rgba[:, 3:4]  # [B,1,H,W]
+        bg_rgb = result_rgba[:, :3]  # [B,3,H,W]
+        bg_a = result_rgba[:, 3:4]  # [B,1,H,W]
+        
+        # Standard "over" operator
+        out_rgb = fg_a * fg_rgb + (1 - fg_a) * bg_rgb  # [B,3,H,W]
+        out_a = fg_a + (1 - fg_a) * bg_a  # [B,1,H,W]
+        
+        result_rgba = torch.cat([out_rgb, out_a], dim=1)  # [B,4,H,W]
+    
+    # Return in requested format
+    if output_format.lower() == 'rgba':
+        return result_rgba  # [B,4,H,W]
+    else:  # 'rgb'
+        return result_rgba[:, :3]  # [B,3,H,W]
+    
+
+def compose_diffuse_highlight_and_layers(
+    diffuse_rgb, additive_highlights_rgb, layered_rgba, clamp_after_add=True
+):
+    """
+    diffuse_rgb: [B,3,H,W]
+    additive_highlights_rgb: list of [B,3,H,W] tensors to ADD (e.g., alpha * color)
+    layered_rgba: list of [B,4,H,W] layers to alpha-over on top
+    """
+    result = diffuse_rgb
+    for h in additive_highlights_rgb:
+        result = result + h
+    if clamp_after_add:
+        result = torch.clamp(result, 0.0, 1.0)
+    # Alpha-over any actual layers on top (rare for this use-case)
+    for comp in layered_rgba:
+        rgb = comp[:, :3]
+        a = comp[:, 3:4]
+        result = a * rgb + (1 - a) * result
+    return result
+
+
+class UnReflectLoss(nn.Module):
+    """
+    Flexible intrinsic decomposition objective with masked losses.
+    
+    - Components (diffuse, specular): supervised with masked L1 + (1 - SSIM)
+    - Highlight (1-ch): per-pixel regression alpha ∈ [0,1]
+    - Reconstruction: alpha_composite(diffuse + specular) + additive highlight
+    """
+    def __init__(
+        self,
+        component_weights=None,
+        # Individual component loss weights
+        weight_specular_loss=1.0,
+        weight_diffuse_loss=1.0,
+        weight_highlight_loss=1.0,
+
+        # Global loss term weights
+        weight_component_matching=1.0,
+        weight_image_reconstruction=0.5,
+        weight_alpha_regularization=0.0,
+        weight_spatial_consistency=0.0,
+
+        # Highlight regression config
+        hlreg_w_l1=1.0,
+        hlreg_use_charb=True,
+        hlreg_w_dice=0.2,
+        hlreg_w_ssim=0.0,
+        hlreg_w_grad=0.0,
+        hlreg_w_tv=0.0,
+        hlreg_balance_mode: str = "none",
+        hlreg_pos_weight: float = 1.0,
+        hlreg_focal_gamma: float = 0.0,
+
+        # Highlight rendering
+        highlight_color=(1.0, 1.0, 1.0),
+        clamp_reconstruction=True,
+
+        # Alpha regularization behavior
+        alpha_reg_mode="none",  # 'none' | 'variance' | 'match_gt'
+    ):
+        super().__init__()
+
+        # Component weights
+        if component_weights is not None:
+            self.component_weights = dict(component_weights)
+        else:
+            self.component_weights = {
+                "specular": weight_specular_loss,
+                "diffuse": weight_diffuse_loss,
+                "highlight": weight_highlight_loss,
+            }
+        self.default_component_weight = 1.0
+
+        # Global weights
+        self.weight_component_matching = weight_component_matching
+        self.weight_image_reconstruction = weight_image_reconstruction
+        self.weight_alpha_regularization = weight_alpha_regularization
+        self.weight_spatial_consistency = weight_spatial_consistency
+
+        # Highlight rendering
+        self.highlight_color = torch.tensor(highlight_color, dtype=torch.float32)
+        self.clamp_reconstruction = clamp_reconstruction
+
+        # Alpha reg behavior
+        assert alpha_reg_mode in ("none", "variance", "match_gt")
+        self.alpha_reg_mode = alpha_reg_mode
+
+        # Losses
+        self.ssim_loss = SSIMLoss()
+        self.masked_l1_loss = MaskedL1Loss()
+        self.highlight_regression_loss = HighlightRegressionLoss(
+            w_l1=hlreg_w_l1,
+            use_charbonnier=hlreg_use_charb,
+            w_dice=hlreg_w_dice,
+            w_ssim=hlreg_w_ssim,
+            w_grad=hlreg_w_grad,
+            w_tv=hlreg_w_tv,
+            ssim_impl=self.ssim_loss,
+            balance_mode=hlreg_balance_mode,
+            pos_weight=hlreg_pos_weight,
+            focal_gamma=hlreg_focal_gamma,
+        )
+
+    def _single_to_rgb_highlight(self, highlight_single):
+        """Convert [B,1,H,W] highlight alpha to [B,3,H,W] additive RGB."""
+        # highlight_single: [B,1,H,W]
+        color = self.highlight_color.to(highlight_single.device)  # [3]
+        # Broadcast: [B,1,H,W] * [3,1,1] -> [B,3,H,W]
+        return highlight_single * color.view(1, 3, 1, 1)
+
+    def reconstruct_image(self, prediction):
+        """
+        Reconstruct rgb_highlighted from predicted components using alpha_composite.
+        All components (diffuse, specular, highlight) are composited together.
+    
+        Returns: [B,3,H,W]
+        """
+        # Build dict for alpha_composite
+        composite_dict = {}
+    
+        # Always start with diffuse as base
+        if 'diffuse' not in prediction:
+            raise ValueError("Diffuse component is required for reconstruction")
+    
+        composite_dict['diffuse'] = prediction['diffuse']  # [B,C,H,W] where C∈{3,4}
+    
+        # Add specular if present
+        if 'specular' in prediction:
+            composite_dict['specular'] = prediction['specular']  # [B,C,H,W] where C∈{3,4}
+    
+        # Add highlight if present (alpha_composite handles 1-channel as grayscale-alpha)
+        if 'highlight' in prediction:
+            highlight = torch.clamp(prediction['highlight'], 0.0, 1.0)  # [B,1,H,W]
+            composite_dict['highlight'] = highlight
+    
+        # Composite all components using alpha_composite
+        composed_rgb = alpha_composite(composite_dict, output_format='rgb')  # [B,3,H,W]
+    
+        # Optional clamping (alpha_composite should keep values in [0,1], but just in case)
+        if self.clamp_reconstruction:
+            composed_rgb = torch.clamp(composed_rgb, 0.0, 1.0)
+    
+        return composed_rgb
+
+    def forward(self, prediction, ground_truth, mask=None):
+        """
+        Args:
+            prediction: dict with keys like 'diffuse', 'specular', 'highlight'
+                       - diffuse: [B,C,H,W] where C∈{3,4}
+                       - specular: [B,C,H,W] where C∈{3,4}
+                       - highlight: [B,1,H,W]
+            ground_truth: dict with keys matching prediction + 'rgb_highlighted'
+                         - diffuse: [B,3,H,W]
+                         - specular: [B,3,H,W]
+                         - highlight: [B,1,H,W]
+                         - rgb_highlighted: [B,3,H,W]
+            mask: [B,1,H,W] or [B,C,H,W] - binary mask (1=include, 0=ignore)
+                 If None, uses all pixels
+        """
+        losses = {}
+        
+        # Default mask: all ones
+        if mask is None:
+            B, _, H, W = ground_truth['rgb_highlighted'].shape
+            mask = torch.ones(B, 1, H, W, device=ground_truth['rgb_highlighted'].device)
+        
+        # Find available components (exclude 'rgb_highlighted')
+        available_components = [
+            k for k in prediction.keys()
+            if k in ground_truth and k != 'rgb_highlighted'
+        ]
+        
+        if not available_components:
+            raise ValueError("No matching components found between predictions and ground truth")
+
+        # ===== Component Matching Loss =====
+        decomposition_loss = 0.0
+
+        for comp_name in available_components:
+            pred_comp = prediction[comp_name]
+            gt_comp = ground_truth[comp_name]
+            comp_weight = self.component_weights.get(comp_name, self.default_component_weight)
+
+            # ---- Highlight: 1-channel regression ----
+            if comp_name.lower() == "highlight":
+                if pred_comp.shape[1] == 1 and gt_comp.shape[1] == 1:
+                    pred_h = torch.clamp(pred_comp, 0.0, 1.0)
+                    gt_h = torch.clamp(gt_comp, 0.0, 1.0)
+                    
+                    hl_loss = self.highlight_regression_loss(pred_h, gt_h)
+                    losses["HighlightRegression"] = hl_loss
+                    decomposition_loss = decomposition_loss + comp_weight * hl_loss
+                continue
+
+            # ---- Diffuse / Specular: RGB or RGBA ----
+            # Extract RGB channels for comparison
+            pred_rgb = pred_comp[:, :3]  # [B,3,H,W]
+            gt_rgb = gt_comp[:, :3]  # [B,3,H,W]
+            
+            # Masked losses on RGB
+            rgb_l1 = self.masked_l1_loss(pred_rgb, gt_rgb, mask)
+            rgb_ssim = self.ssim_loss(pred_rgb, gt_rgb, mask)
+            
+            comp_loss = rgb_l1 + (1.0 - rgb_ssim)
+            
+            # If both have alpha channel, supervise it too
+            if pred_comp.shape[1] == 4 and gt_comp.shape[1] == 4:
+                alpha_l1 = self.masked_l1_loss(
+                    pred_comp[:, 3:4], gt_comp[:, 3:4], mask
+                )
+                comp_loss = comp_loss + alpha_l1
+            
+            decomposition_loss = decomposition_loss + comp_weight * comp_loss
+            losses[f"{comp_name.capitalize()}"] = comp_loss
+
+        losses["Decomposition"] = decomposition_loss
+
+        # ===== Image Reconstruction Loss =====
+        reconstruction_loss = 0.0
+        if 'rgb_highlighted' in ground_truth:
+            # Reconstruct from ALL available predicted components
+            try:
+                pred_reconstruction = self.reconstruct_image(prediction)  # [B,3,H,W]
+                input_rgb = ground_truth['rgb_highlighted']  # [B,3,H,W]
+        
+                recon_l1 = self.masked_l1_loss(pred_reconstruction, input_rgb)
+                recon_ssim = self.ssim_loss(pred_reconstruction, input_rgb)
+                reconstruction_loss = recon_l1 + (1.0 - recon_ssim)
+            except ValueError:
+                # If diffuse is missing, we can't reconstruct - skip reconstruction loss
+                pass
+
+        losses["Reconstruction"] = reconstruction_loss
+
+        # ===== Alpha Regularization =====
+        alpha_reg_loss = 0.0
+        if self.alpha_reg_mode != "none" and 'highlight' in prediction:
+            pred_h = torch.clamp(prediction['highlight'], 0.0, 1.0)
+            
+            if self.alpha_reg_mode == "variance":
+                # Penalize uniform alphas
+                alpha_var = torch.var(pred_h.view(pred_h.size(0), -1), dim=1).mean()
+                alpha_reg_loss = torch.exp(-alpha_var)
+            elif self.alpha_reg_mode == "match_gt" and 'highlight' in ground_truth:
+                # Encourage matching GT (redundant with HighlightRegression, but kept for API compat)
+                gt_h = torch.clamp(ground_truth['highlight'], 0.0, 1.0)
+                alpha_reg_loss = F.l1_loss(pred_h, gt_h)
+        
+        losses["AlphaRegularization"] = alpha_reg_loss
+
+        # ===== Total Loss =====
+        total_loss = (
+            self.weight_component_matching * losses["Decomposition"]
+            + self.weight_image_reconstruction * losses["Reconstruction"]
+            + self.weight_alpha_regularization * losses["AlphaRegularization"]
+        )
+        
+        losses["total"] = total_loss
+        return losses
 
 # -------------------------------------
 #   Highlight regression (alpha in [0,1])
@@ -191,258 +563,3 @@ class HighlightRegressionLoss(nn.Module):
         if self.w_tv > 0:
             loss = loss + self.w_tv * self.l_tv(pred)
         return loss
-
-
-# -------------------------
-#   Compositing utilities
-# -------------------------
-def alpha_composite(components):
-    """
-    Alpha composite multiple RGBA components, over black.
-    components: list of [B,4,H,W] tensors
-    returns: [B,3,H,W]
-    """
-    result = torch.zeros_like(components[0][:, :3])
-    for comp in components:
-        rgb = comp[:, :3]
-        a = comp[:, 3:4]
-        result = a * rgb + (1 - a) * result
-    return result
-
-
-def compose_diffuse_highlight_and_layers(
-    diffuse_rgb, additive_highlights_rgb, layered_rgba, clamp_after_add=True
-):
-    """
-    diffuse_rgb: [B,3,H,W]
-    additive_highlights_rgb: list of [B,3,H,W] tensors to ADD (e.g., alpha * color)
-    layered_rgba: list of [B,4,H,W] layers to alpha-over on top
-    """
-    result = diffuse_rgb
-    for h in additive_highlights_rgb:
-        result = result + h
-    if clamp_after_add:
-        result = torch.clamp(result, 0.0, 1.0)
-    # Alpha-over any actual layers on top (rare for this use-case)
-    for comp in layered_rgba:
-        rgb = comp[:, :3]
-        a = comp[:, 3:4]
-        result = a * rgb + (1 - a) * result
-    return result
-
-
-# -------------------------
-#   Main Decomposition loss
-# -------------------------
-class DecompositionLoss(nn.Module):
-    """
-    Flexible intrinsic decomposition objective.
-
-    - Diffuse, Specular: supervised with L1 + (1 - SSIM) (+ optional alpha L1 if RGBA).
-    - Highlight (1-ch): treated as per-pixel regression alpha ∈ [0,1].
-    - Reconstruction: ADDITIVE highlight composition:
-        I_recon = diffuse + alpha_highlight * color_highlight  (clamped)
-      so perfect diffuse & highlight -> zero reconstruction loss.
-    - Alpha regularization: configurable (disabled by default to allow 0 total at perfection).
-    """
-    def __init__(
-        self,
-        component_weights=None,
-        # Individual component loss weights
-        weight_specular_loss=1.0,
-        weight_diffuse_loss=1.0,
-        weight_highlight_loss=1.0,
-
-        # Global loss term weights
-        weight_component_matching=1.0,      # How well components match their ground truth
-        weight_image_reconstruction=0.5,    # How well reconstructed image matches input
-        weight_alpha_regularization=0.0,    # Default 0.0 to allow exact-0 totals in debug
-        weight_spatial_consistency=0.0,     # Reserved hook (unused here)
-
-        # highlight regression config
-        hlreg_w_l1=1.0,
-        hlreg_use_charb=True,
-        hlreg_w_dice=0.2,
-        hlreg_w_ssim=0.0,
-        hlreg_w_grad=0.0,
-        hlreg_w_tv=0.0,
-        # New knobs (forwarded to HighlightRegressionLoss)
-        hlreg_balance_mode: str = "none",
-        hlreg_pos_weight: float = 1.0,
-        hlreg_focal_gamma: float = 0.0,
-
-        # highlight rendering
-        highlight_color=(1.0, 1.0, 1.0),  # C_highlight
-        clamp_after_add=True,
-
-        # alpha regularization behavior
-        alpha_reg_mode="none",    # 'none' | 'variance' | 'match_gt'
-    ):
-        super().__init__()
-
-        # component weights
-        if component_weights is not None:
-            self.component_weights = dict(component_weights)
-        else:
-            self.component_weights = {
-                "specular": weight_specular_loss,
-                "diffuse":  weight_diffuse_loss,
-                "highlight": weight_highlight_loss,
-            }
-        self.default_component_weight = 1.0
-
-        # global weights
-        self.weight_component_matching = weight_component_matching
-        self.weight_image_reconstruction = weight_image_reconstruction
-        self.weight_alpha_regularization = weight_alpha_regularization
-        self.weight_spatial_consistency = weight_spatial_consistency
-
-        # highlight rendering
-        self.highlight_color = highlight_color
-        self.clamp_after_add = clamp_after_add
-
-        # alpha reg behavior
-        assert alpha_reg_mode in ("none", "variance", "match_gt")
-        self.alpha_reg_mode = alpha_reg_mode
-
-        # losses
-        self.ssim_loss = SSIMLoss()
-        self.highlight_regression_loss = HighlightRegressionLoss(
-            w_l1=hlreg_w_l1,
-            use_charbonnier=hlreg_use_charb,
-            w_dice=hlreg_w_dice,
-            w_ssim=hlreg_w_ssim,
-            w_grad=hlreg_w_grad,
-            w_tv=hlreg_w_tv,
-            ssim_impl=self.ssim_loss,
-            balance_mode=hlreg_balance_mode,
-            pos_weight=hlreg_pos_weight,
-            focal_gamma=hlreg_focal_gamma,
-        )
-
-    # --- helpers ---
-    def _single_to_rgb_highlight(self, highlight_single):
-        """[B,1,H,W] -> [B,3,H,W] as alpha * color."""
-        r, g, b = self.highlight_color
-        return torch.cat(
-            [
-                highlight_single * r,
-                highlight_single * g,
-                highlight_single * b,
-            ],
-            dim=1,
-        )
-
-    def _single_to_rgba_highlight(self, highlight_single):
-        """If you ever want to alpha-over highlights (not recommended for energy), keep this."""
-        rgb = self._single_to_rgb_highlight(highlight_single)
-        return torch.cat([rgb, highlight_single], dim=1)  # [B,4,H,W]
-
-    # --- main forward ---
-    def forward(self, pred_components, gt_components):
-        """
-        pred_components: dict mapping name -> [B,C,H,W]
-        gt_components:   dict mapping name -> [B,C,H,W], requires key 'rgb'
-        """
-        losses = {}
-        input_rgb = gt_components["rgb"]
-
-        # components present on both sides (except 'rgb')
-        available_components = [k for k in pred_components.keys()
-                                if (k in gt_components and k != "rgb")]
-        if not available_components:
-            raise ValueError("No matching components found between predictions and ground truth")
-
-        decomposition_loss = 0.0
-
-        diffuse_rgb = None
-        additive_highlights = []     # list of [B,3,H,W] added to diffuse
-        layered_rgba = []            # optional layers to alpha-over
-
-        for comp_name in available_components:
-            pred_comp = pred_components[comp_name]
-            gt_comp = gt_components[comp_name]
-            comp_weight = self.component_weights.get(comp_name, self.default_component_weight)
-
-            # ---- Highlight: 1 channel regression ----
-            if comp_name.lower() == "highlight" and pred_comp.shape[1] == 1 and gt_comp.shape[1] == 1:
-                pred_h = torch.clamp(pred_comp, 0.0, 1.0)
-                gt_h   = torch.clamp(gt_comp,   0.0, 1.0)
-
-                hl_loss = self.highlight_regression_loss(pred_h, gt_h)
-                losses["HighlightRegression"] = hl_loss
-                decomposition_loss = decomposition_loss + comp_weight * hl_loss
-
-                # for reconstruction: ADDITIVE energy
-                additive_highlights.append(self._single_to_rgb_highlight(pred_h))
-                continue
-
-            # ---- Diffuse / Specular / others ----
-            if pred_comp.shape[1] >= 3 and gt_comp.shape[1] >= 3:
-                rgb_l1 = F.l1_loss(pred_comp[:, :3], gt_comp[:, :3])
-                rgb_ssim = self.ssim_loss(pred_comp[:, :3], gt_comp[:, :3])
-            else:
-                rgb_l1 = F.l1_loss(pred_comp[:, :1], gt_comp[:, :1])
-                rgb_ssim = 0.0
-
-            alpha_l1 = 0.0
-            if pred_comp.shape[1] == 4 and gt_comp.shape[1] == 4:
-                alpha_l1 = F.l1_loss(pred_comp[:, 3:4], gt_comp[:, 3:4])
-
-            comp_loss = rgb_l1 + (1 - rgb_ssim) + alpha_l1
-            decomposition_loss = decomposition_loss + comp_weight * comp_loss
-            losses[f"{comp_name.capitalize()}"] = comp_loss
-
-            # For reconstruction:
-            if comp_name.lower() == "diffuse":
-                diffuse_rgb = pred_comp[:, :3]
-            else:
-                # If you truly have layered components, push RGBA layers here.
-                # If component is inherently additive (specular), you can add it to additive_highlights instead.
-                if pred_comp.shape[1] == 4:
-                    layered_rgba.append(pred_comp)
-                # elif pred_comp.shape[1] == 3:
-                #     additive_highlights.append(pred_comp)  # uncomment if you want additive behavior
-
-        losses["Decomposition"] = decomposition_loss
-
-        # ---- Reconstruction: additive highlight + optional layered alpha-over ----
-        reconstruction_loss = 0.0
-        if diffuse_rgb is not None:
-            pred_reconstruction = compose_diffuse_highlight_and_layers(
-                diffuse_rgb, additive_highlights, layered_rgba, clamp_after_add=self.clamp_after_add
-            )
-            recon_l1 = F.l1_loss(pred_reconstruction, input_rgb)
-            recon_ssim = self.ssim_loss(pred_reconstruction, input_rgb)
-            reconstruction_loss = recon_l1 + (1 - recon_ssim)
-        losses["Reconstruction"] = reconstruction_loss
-
-        # ---- Alpha regularization (disabled by default; designed to be 0 when 'match_gt') ----
-        alpha_reg_loss = 0.0
-        if self.alpha_reg_mode != "none":
-            # For 'variance', penalize near-constant alphas (old behavior).
-            # For 'match_gt', encourage pred highlight == gt highlight (==0 at equality).
-            if self.alpha_reg_mode == "variance":
-                # variance penalty across any RGBA layer alphas (rarely used here)
-                for comp_name in available_components:
-                    if comp_name.lower() == "highlight":
-                        alpha = torch.clamp(pred_components[comp_name], 0, 1)
-                        alpha_var = torch.var(alpha.view(alpha.size(0), -1), dim=1).mean()
-                        alpha_reg_loss = alpha_reg_loss + torch.exp(-alpha_var)
-            elif self.alpha_reg_mode == "match_gt":
-                if "highlight" in pred_components and "highlight" in gt_components:
-                    pred_h = torch.clamp(pred_components["highlight"], 0, 1)
-                    gt_h   = torch.clamp(gt_components["highlight"], 0, 1)
-                    alpha_reg_loss = F.l1_loss(pred_h, gt_h)
-
-        losses["AlphaReg"] = alpha_reg_loss
-
-        total_loss = (
-            self.weight_component_matching * losses["Decomposition"]
-            + self.weight_image_reconstruction * losses["Reconstruction"]
-            + self.weight_alpha_regularization * losses["AlphaReg"]
-        )
-
-        losses["total"] = total_loss
-        return losses
-

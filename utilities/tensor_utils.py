@@ -3,7 +3,7 @@ from typing import Dict, List
 import numpy as np
 import torch
 import torch.nn.functional as F
-from rich import print as nativeprint
+from rich import print as richprint
 
 
 def closest_multiple(value: float, factor: float, mode: str = "closest") -> int:
@@ -95,7 +95,7 @@ def tprint(args, shape=False, dtype=False, device=False, grad_fn=False, **kwargs
             print(f"{len(arg)} elements:", [x.shape for x in arg])
         else:
             output.append(str(arg))
-    nativeprint(sep.join(output), end=end)
+    richprint(sep.join(output), end=end)
 
 
 def sp(size: tuple) -> tuple:
@@ -646,3 +646,17 @@ def inpaint(
         inpainted_img = final_img
 
     return inpainted_img
+
+def tensor_dict_summarize(tensor_dict):
+    """
+    Print summary of tensors in a dictionary.
+    
+    Args:
+        tensor_dict: Dictionary containing torch tensors
+    """
+    
+    for key, value in tensor_dict.items():
+        if isinstance(value, torch.Tensor):
+            richprint(f"{key}: shape={tuple(value.shape)}, device={value.device}")
+        else:
+            richprint(f"{key}: {type(value).__name__} (not a tensor)")

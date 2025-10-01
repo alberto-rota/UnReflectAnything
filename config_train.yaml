@@ -6,49 +6,51 @@ parameters:
     value:
       MODEL_CLASS: "RGBDistillDecomposer"
       RGB_ENCODER:
-        ENCODER: "facebook/dinov3-vits16-pretrain-lvd1689m"
+        ENCODER: "facebook/dinov3-vitb16-pretrain-lvd1689m"
         IMAGE_SIZE: 448
         RETURN_SELECTED_LAYERS: [3, 6, 9,12]
       POL_ENCODER:
-        EMBED_DIM: 384
+        EMBED_DIM: 768
         DEPTH: 4
         N_HEADS: 12
         PATCH_SIZE: 16
       CROSS_ATTN:
-        EMBED_DIM: 384
+        EMBED_DIM: 768
         N_HEADS: 12
         DROPOUT: 0.1
         BI_DIRECTIONAL: False
       DECODERS:
         diffuse:
-          FEATURE_DIM: 384
-          REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
+          FEATURE_DIM: 768
+          REASSEMBLE_OUT_CHANNELS: [48,192,768,768]
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
           READOUT_TYPE: "ignore"
           USE_BN: False
+          DROPOUT: 0.1
           OUTPUT_IMAGE_SIZE: [448,448]
-          OUTPUT_CHANNELS: 3
+          OUTPUT_CHANNELS: 4
         # specular:
-        #   FEATURE_DIM: 384
-        #   REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
+        #   FEATURE_DIM: 768
+        #   REASSEMBLE_OUT_CHANNELS: [48,192,768,768]
         #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
         #   READOUT_TYPE: "ignore"
         #   USE_BN: False
         #   OUTPUT_IMAGE_SIZE: [448,448]
         #   OUTPUT_CHANNELS: 3
         highlight:
-          FEATURE_DIM: 384
-          REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
+          FEATURE_DIM: 768
+          REASSEMBLE_OUT_CHANNELS: [48,192,768,768]
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
           READOUT_TYPE: "ignore"
           USE_BN: False
+          DROPOUT: 0.1
           OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 1
 
   ### DATA                                                                      
   DATASETS:
     value:
-      SCRREAM:
+      # SCRREAM:
       #   ROOT_DIR: "$DATASET_DIR/SCRREAM/"
       #   TRAIN_SCENES: []
       #   POLARIZATION_FORMAT: "single_file_clock"
@@ -60,6 +62,7 @@ parameters:
       #   USE_CACHE: True
       #   SIMPLIFY_UPSAMPLING: True
       #   FEW_IMAGES: False
+      #   LOAD_RGB_ONLY: True
         
       # HOUSECAT6D:
       #   ROOT_DIR: "$DATASET_DIR/HouseCat6D/"
@@ -73,6 +76,7 @@ parameters:
       #   USE_CACHE: True
       #   SIMPLIFY_UPSAMPLING: True
       #   FEW_IMAGES: False
+      #   LOAD_RGB_ONLY: True
 
       # POLARGB:
       #   ROOT_DIR: "$DATASET_DIR/PolaRGB/"
@@ -86,10 +90,10 @@ parameters:
       #   USE_CACHE: True
       #   SIMPLIFY_UPSAMPLING: True
       #   FEW_IMAGES: False
+      #   LOAD_RGB_ONLY: True
 
       SCARED:
         ROOT_DIR: "$DATASET_DIR/SCARED/"
-        TRAIN_SCENES: "v"
         POLARIZATION_FORMAT: "separate_files"
         VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
         RHO_S: 0.6
@@ -99,6 +103,7 @@ parameters:
         USE_CACHE: True
         SIMPLIFY_UPSAMPLING: True
         FEW_IMAGES: False
+        LOAD_RGB_ONLY: True
         HIGHLIGHT_ENABLE: True  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
         HIGHLIGHT_RETURN_MASK: True
@@ -124,8 +129,8 @@ parameters:
       #   HIGHLIGHT_RETURN_RECT_AS_RGB: True
       #   HIGHLIGHT_RETURN_RECT: True
 
-  BATCH_SIZE:
-    value: 64
+  BATCH_SIZE: # Max batch size with img size 448 is 64
+    value: 32
   NUM_WORKERS:
     value: 4
   SHUFFLE:
@@ -136,10 +141,12 @@ parameters:
     value: 1
   
   ### POLARIZATION / HIGHLIGHTS                                                        
+  MOGE_MODEL:
+    value: "Ruicheng/moge-2-vitl-normal"
   SHININESS:
     value: 4.0
   KS:
-    value: 1.0
+    value: 1.1
   SOFT_HIGHLIGHT_THRESHOLD:
     value: 0.8
   # Highlight regression stabilization (optional)
@@ -148,20 +155,20 @@ parameters:
   HLREG_POS_WEIGHT:
     value: 2.0      # used only if BALANCE_MODE == 'pos_weight'
   HLREG_FOCAL_GAMMA:
-    value: 0.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
+    value: 2.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
 
   ### OPTIMIZATION                                                                      
 
   LEARNING_RATE:
-    value: 1.0e-3
+    value: 5.0e-4
   WEIGHT_DECAY:
     value: 1.0e-8
   EPOCHS:
     value: 20
   GRADIENT_ACCUMULATION_STEPS:
-    value: 3
+    value: 1
   WARMUP_STEPS:
-    value: -1
+    value: 20
   GRADIENT_CLIPPING_MAX_NORM:
     value: -1
   LR_SCHEDULER: 

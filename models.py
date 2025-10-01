@@ -381,6 +381,13 @@ class DPT_Decoder(nn.Module):
     """
     DPT decoder adapted for RGB output from DINOv3 features.
     Implements multi-scale reassembly, progressive fusion, and RGB prediction head.
+
+    Dropout:
+        Controlled by config["dropout"] (float in [0,1]). Applied as 2D dropout
+        after each fusion addition and between stages in the head to regularize
+        training. Shapes are preserved; tensor dims are:
+        - inputs hidden_states: List[4] of [B, N_tokens, C]
+        - output: [B, C_out, H, W]
     """
 
     def __init__(self, config: Optional[Dict] = None):
@@ -393,6 +400,7 @@ class DPT_Decoder(nn.Module):
             "fusion_hidden_size": 256,
             "readout_type": "ignore",  # 'ignore', 'add', or 'project'
             "use_bn": False,
+            "dropout": 0.0,
             "output_image_size": (448, 448),  # If None, maintains input size
             "output_channels": 3,  # Set to 4 for RGBA output
         }
@@ -428,12 +436,17 @@ class DPT_Decoder(nn.Module):
             ]
         )
 
+        # Dropout used after fusion additions and inside head stages
+        p = float(self.config.get("dropout", 0.0))
+        self.drop2d = nn.Dropout2d(p) if p and p > 0.0 else nn.Identity()
+
         # RGB prediction head
         self.rgb_head = nn.Sequential(
             # First stage: 256 -> 128 channels with spatial refinement
             nn.Conv2d(self.config["fusion_hidden_size"], 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128) if self.config["use_bn"] else nn.Identity(),
             nn.ReLU(inplace=True),
+            self.drop2d,
             nn.Upsample(
                 scale_factor=2, mode="bilinear", align_corners=True
             ),  # 192x192 -> 384x384
@@ -441,10 +454,12 @@ class DPT_Decoder(nn.Module):
             nn.Conv2d(128, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64) if self.config["use_bn"] else nn.Identity(),
             nn.ReLU(inplace=True),
+            self.drop2d,
             # Third stage: 64 -> 32 channels
             nn.Conv2d(64, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32) if self.config["use_bn"] else nn.Identity(),
             nn.ReLU(inplace=True),
+            self.drop2d,
             # Final RGB projection
             nn.Conv2d(32, self.config["output_channels"], kernel_size=1),
             nn.Sigmoid(),  # Output in [0, 1] range
@@ -495,6 +510,7 @@ class DPT_Decoder(nn.Module):
         fused = fused + self.fusion_blocks[2](
             reassembled_features[2]
         )  # [B, 256, 24, 24]
+        fused = self.drop2d(fused)
         fused = F.interpolate(
             fused, scale_factor=2, mode="bilinear", align_corners=True
         )  # [B, 256, 48, 48]
@@ -503,6 +519,7 @@ class DPT_Decoder(nn.Module):
         fused = fused + self.fusion_blocks[1](
             reassembled_features[1]
         )  # [B, 256, 48, 48]
+        fused = self.drop2d(fused)
         fused = F.interpolate(
             fused, scale_factor=2, mode="bilinear", align_corners=True
         )  # [B, 256, 96, 96]
@@ -511,6 +528,7 @@ class DPT_Decoder(nn.Module):
         fused = fused + self.fusion_blocks[0](
             reassembled_features[0]
         )  # [B, 256, 96, 96]
+        fused = self.drop2d(fused)
         fused = F.interpolate(
             fused, scale_factor=2, mode="bilinear", align_corners=True
         )  # [B, 256, 192, 192]
@@ -1014,50 +1032,11 @@ class RGBDistillDecomposer(nn.Module):
                 return DPT_Decoder(config)
             raise TypeError("Decoder must be DPT_Decoder instance or dict.")
 
-        # Use flexible decoders if provided, otherwise fall back to legacy format
-        if decoders is not None:
-            self.decoder_names = list(decoders.keys())
-            self.decoders = nn.ModuleDict()
-            for decoder_name, decoder_config in decoders.items():
-                self.decoders[decoder_name] = build_dpt(decoder_config)
-        else:
-            # Legacy support - create decoders from individual parameters
-            legacy_decoders = {}
-            
-            # Specular decoder
-            if spec_decoder is not None:
-                legacy_decoders["specular"] = spec_decoder
-            else:
-                legacy_decoders["specular"] = {
-                    "use_bn": True, 
-                    "readout_type": "project",
-                    "output_channels": 3,
-                }
-            
-            # Diffuse decoder  
-            if diffuse_decoder is not None:
-                legacy_decoders["diffuse"] = diffuse_decoder
-            else:
-                legacy_decoders["diffuse"] = {
-                    "use_bn": True,
-                    "readout_type": "project", 
-                    "output_channels": 3,
-                }
-                
-            # Highlight decoder
-            if highlight_decoder is not None:
-                legacy_decoders["highlight"] = highlight_decoder
-            else:
-                legacy_decoders["highlight"] = {
-                    "use_bn": True,
-                    "readout_type": "project",
-                    "output_channels": 1,
-                }
-            
-            self.decoder_names = list(legacy_decoders.keys())
-            self.decoders = nn.ModuleDict()
-            for decoder_name, decoder_config in legacy_decoders.items():
-                self.decoders[decoder_name] = build_dpt(decoder_config)
+
+        self.decoder_names = list(decoders.keys())
+        self.decoders = nn.ModuleDict()
+        for decoder_name, decoder_config in decoders.items():
+            self.decoders[decoder_name] = build_dpt(decoder_config)
 
     def _rgb_tokens(self, rgb_preproc):
         """Extract DINOv3 tokens and infer (Hp, Wp) if wrapper doesn’t return them."""
@@ -1072,9 +1051,9 @@ class RGBDistillDecomposer(nn.Module):
         Wp = self.image_size // self.patch_size
         return tokens, (Hp, Wp)
 
-    def forward(self, batch):
+    def forward(self, x):
         # 1) RGB → DINO tokens
-        rgb_in = self.dinov3.preprocess_image(batch["rgb"])
+        rgb_in = self.dinov3.preprocess_image(x)
         rgb_tokens = self.dinov3(rgb_in)["selected_hidden_states"]
 
         # 6) Decode with flexible decoder heads

@@ -33,6 +33,7 @@ class RGBP_Dataset(Dataset):
     5. Consistent image sizing for batching
     6. Support for both single file clockwise and separate polarization files
     7. Flexible scene filtering with include/exclude patterns
+    8. RGB-only mode for datasets without polarization data
 
     Polarization formats supported:
     - "single_file_clock": Single file with 4 polarization images arranged clockwise
@@ -42,6 +43,9 @@ class RGBP_Dataset(Dataset):
     Scene filtering:
     - include: str or List[str] - Include scenes that match (substring or exact)
     - exclude: str or List[str] - Exclude scenes that match (substring or exact)
+    
+    RGB-only mode:
+    - load_rgb_only: bool - If True, forces loading only RGB data and ignores polarization data
     """
 
     def __init__(
@@ -73,6 +77,8 @@ class RGBP_Dataset(Dataset):
         # Few images mode for quick testing
         few_images: bool = False,
         overfit_test: bool = False,
+        # RGB-only mode
+        load_rgb_only: bool = False,  # Force loading only RGB data, ignore polarization
         # Deprecated parameters (for backward compatibility)
         # Highlight detection (optional)
         highlight_enable: bool = False,
@@ -88,6 +94,7 @@ class RGBP_Dataset(Dataset):
         self.rgb_ext = rgb_ext
         self.pol_ext = pol_ext
         self.transform = transform
+        self.load_rgb_only = load_rgb_only
 
         # Polarization format validation
         self.polarization_format = polarization_format.lower()
@@ -990,8 +997,8 @@ class RGBP_Dataset(Dataset):
         # Load data (potentially from cache)
         intrinsics = self._load_intrinsics(intrinsics_path)
 
-        if has_pol_data:
-            # Load polarization data
+        if has_pol_data and not self.load_rgb_only:
+            # Load polarization data and use it for RGB separation
             pol_data = self._load_and_process_polarization(pol_path)
             # Get specular fraction for RGB processing
             f_spec = pol_data["f_spec"].squeeze(0)  # Remove batch dimension [H, W]
@@ -999,7 +1006,8 @@ class RGBP_Dataset(Dataset):
             # Combine results
             sample = {**pol_data, **rgb_data, "intrinsics": intrinsics}
         else:
-            # No polarization data available - load RGB only
+            # No polarization data available or load_rgb_only is True - load RGB only
+            # When load_rgb_only=True, polarization data is ignored even if available
             rgb_data = self._load_rgb_only(rgb_path)
             sample = {**rgb_data, "intrinsics": intrinsics}
 
@@ -1076,7 +1084,14 @@ class RGBP_Dataset(Dataset):
         if self.transform:
             sample = self.transform(sample)
 
-        return sample
+        sample_rgbonly = {
+            "rgb": sample["rgb"],
+            "specular": sample["specular"],
+            "diffuse": sample["diffuse"],
+            "intrinsics": sample["intrinsics"],
+        }
+        
+        return sample_rgbonly
 
 
 # Dataset-specific classes inheriting from base RGBP_Dataset class
@@ -1300,6 +1315,7 @@ def from_config(
             "polarization_format": get_config_value(
                 "POLARIZATION_FORMAT", "single_file_clock"
             ),
+            "load_rgb_only": get_config_value("LOAD_RGB_ONLY", False),
             # Highlight options
             "highlight_enable": get_config_value("HIGHLIGHT_ENABLE", False),
             "highlight_brightness_threshold": get_config_value(

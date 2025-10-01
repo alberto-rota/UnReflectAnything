@@ -114,6 +114,7 @@ def create_model_from_config(config: DotMap, device: torch.device):
                 "reassemble_factors": decoder_params.get("REASSEMBLE_FACTORS", [4.0, 2.0, 1.0, 0.5]),
                 "readout_type": decoder_params.get("READOUT_TYPE", "ignore"),
                 "use_bn": decoder_params.get("USE_BN", True),
+                "dropout": decoder_params.get("DROPOUT", 0.0),
                 "output_image_size": decoder_params.get("OUTPUT_IMAGE_SIZE", [min(target_size), min(target_size)]),
                 "output_channels": decoder_params.get("OUTPUT_CHANNELS", 3),
             }
