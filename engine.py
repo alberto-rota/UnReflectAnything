@@ -18,7 +18,6 @@ from logger import get_logger
 from losses import UnReflectLoss
 from polar_highlighter import PolarHighlighter, get_soft_highlight_map
 import torchvision.transforms as transforms
-import wandb
 
 
 class Engine:
@@ -660,10 +659,19 @@ class Engine:
                 # Compute inverse binary mask to mask out real highlights from the loss computation
                 real_highlight_inverse_binary_mask = torch.logical_not(
                     torch.nn.functional.max_pool2d(
-                        real_highlight_soft_mask, kernel_size=5, stride=1, padding=2
+                        real_highlight_soft_mask,
+                        kernel_size=self.config.REAL_HIGHLIGHT_DILATION,
+                        stride=1,
+                        padding=self.config.REAL_HIGHLIGHT_DILATION // 2,
                     )
-                    > 0.5
+                    > 0
                 ).int()
+                
+                # We use the inverse binary mask only at training time
+                if phase == "Training":
+                    lossmask = real_highlight_inverse_binary_mask
+                else:
+                    lossmask = None
                 # Add virtual highlights to real highlights
                 real_and_virtual_highlights = (
                     highlight_result["highlight"] + real_highlight_soft_mask
@@ -707,7 +715,7 @@ class Engine:
                 losses = self.loss(
                     prediction=pred_decomposition,
                     ground_truth=gt_decomposition,
-                    mask=real_highlight_inverse_binary_mask,
+                    mask=lossmask,
                 )
                 loss_value = losses["total"]
 
@@ -715,7 +723,11 @@ class Engine:
                 pred_decomposition["recon"] = self.loss.reconstruct_image(
                     pred_decomposition
                 )
-                ### Backward pass
+                # Adding the loss mask to the gt_decomposition to log it on wandb
+                if phase == "Training":
+                    gt_decomposition["lossmask"] = lossmask
+                    gt_decomposition["masked_diffuse"] = diffuse * lossmask
+                ### Backward pass   
                 backward_output = None
                 if is_training:
                     try:
@@ -936,14 +948,14 @@ class Engine:
             yield
 
     def create_visualization_images(
-        self, batch, pred_decomposition, sample, batch_idx=0
+        self, gt_decomposition, pred_decomposition, sample, batch_idx=0
     ):
         """
         Creates visualization images for polarization-based reflection removal training.
         Optimized for memory efficiency with aggressive cleanup.
 
         Args:
-            batch (dict): Input batch containing rgb, AoP, DoP, f_spec
+            gt_decomposition (dict): Input gt_decomposition containing rgb, AoP, DoP, f_spec
             pred_decomposition (dict): Model output containing specular, diffuse, recon
             sample (dict): Original sample from dataset
             batch_idx (int): Batch index to visualize
@@ -991,12 +1003,14 @@ class Engine:
                 ),
                 ("images/GT_Highlight", "highlight", "Input RGB Highlighted Image"),
                 ("images/GT_FSpec", "f_spec", "Specular Fraction"),
+                ("images/GT_MaskedDiffuse", "masked_diffuse", "Masked Diffuse Image"),
+                ("images/LossMask", "lossmask", "loss mask"),
             ]
 
             for key, tensor_key, caption in input_images:
-                if tensor_key in batch:
+                if tensor_key in gt_decomposition and gt_decomposition[tensor_key] is not None:
                     self._add_image_safely(
-                        visualization_dict, key, batch[tensor_key], caption, batch_idx
+                        visualization_dict, key, gt_decomposition[tensor_key], caption, batch_idx
                     )
 
             # Ground truth components - dynamically detect available components

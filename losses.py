@@ -436,8 +436,8 @@ class UnReflectLoss(nn.Module):
                 pred_reconstruction = self.reconstruct_image(prediction)  # [B,3,H,W]
                 input_rgb = ground_truth['rgb_highlighted']  # [B,3,H,W]
         
-                recon_l1 = self.masked_l1_loss(pred_reconstruction, input_rgb)
-                recon_ssim = self.ssim_loss(pred_reconstruction, input_rgb)
+                recon_l1 = self.masked_l1_loss(pred_reconstruction, input_rgb, mask)
+                recon_ssim = self.ssim_loss(pred_reconstruction, input_rgb, mask)
                 reconstruction_loss = recon_l1 + (1.0 - recon_ssim)
             except ValueError:
                 # If diffuse is missing, we can't reconstruct - skip reconstruction loss

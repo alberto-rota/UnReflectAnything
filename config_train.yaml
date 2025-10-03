@@ -17,7 +17,7 @@ parameters:
       CROSS_ATTN:
         EMBED_DIM: 768
         N_HEADS: 12
-        DROPOUT: 0.1
+        DROPOUT: 0.1  
         BI_DIRECTIONAL: False
       DECODERS:
         diffuse:
@@ -28,7 +28,7 @@ parameters:
           USE_BN: False
           DROPOUT: 0.1
           OUTPUT_IMAGE_SIZE: [448,448]
-          OUTPUT_CHANNELS: 4
+          OUTPUT_CHANNELS: 3
         # specular:
         #   FEATURE_DIM: 768
         #   REASSEMBLE_OUT_CHANNELS: [48,192,768,768]
@@ -66,20 +66,20 @@ parameters:
         
       # HOUSECAT6D:
       #   ROOT_DIR: "$DATASET_DIR/HouseCat6D/"
-      #   TRAIN_SCENES: []
+      #   # TRAIN_SCENES: []
       #   POLARIZATION_FORMAT: "single_file_clock"
       #   VAL_SCENES: "val"
       #   RHO_S: 0.6
       #   EPS: 1.0e-8
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
+      #   TARGET_SIZE: [500,1000]
+      #   RESIZE_MODE: "crop"
       #   USE_CACHE: True
       #   SIMPLIFY_UPSAMPLING: True
       #   FEW_IMAGES: False
-      #   LOAD_RGB_ONLY: True
+      #   LOAD_RGB_ONLY: False
 
       # POLARGB:
-      #   ROOT_DIR: "$DATASET_DIR/PolaRGB/"
+      #   ROOT_DIR: "$DATASET_DIR/PolaRGB/"w
       #   TRAIN_SCENES: "train"
       #   POLARIZATION_FORMAT: "separate_files"
       #   VAL_SCENES: "test"
@@ -99,22 +99,22 @@ parameters:
         RHO_S: 0.6
         EPS: 1.0e-8
         TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
+        RESIZE_MODE: "crop"
         USE_CACHE: True
         SIMPLIFY_UPSAMPLING: True
         FEW_IMAGES: False
         LOAD_RGB_ONLY: True
-        HIGHLIGHT_ENABLE: True  
+        HIGHLIGHT_ENABLE: False  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
         HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [640, 640]
+        HIGHLIGHT_RECT_SIZE: [448, 448]
         HIGHLIGHT_RETURN_RECT_AS_RGB: True
         HIGHLIGHT_RETURN_RECT: True
 
       # SYNTHETIC:
       #   ROOT_DIR: "$DATASET_DIR/SyntheticMitsuba/"
-      #   TRAIN_SCENES: "scene_0"
-      #   POLARIZATION_FORMAT: "separate_files"
+      #   TRAIN_SCENES: "bedroom"
+      #   POLARIZATION_FORMAT: "separate_files_stokes"
       #   RHO_S: 0.6
       #   EPS: 1.0e-8
       #   TARGET_SIZE: [448,448]
@@ -122,12 +122,14 @@ parameters:
       #   USE_CACHE: True
       #   SIMPLIFY_UPSAMPLING: True
       #   FEW_IMAGES: False
-      #   HIGHLIGHT_ENABLE: True  
-      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
-      #   HIGHLIGHT_RETURN_MASK: True
-      #   HIGHLIGHT_RECT_SIZE: [640, 640]
-      #   HIGHLIGHT_RETURN_RECT_AS_RGB: True
-      #   HIGHLIGHT_RETURN_RECT: True
+      #   HIGHLIGHT_ENABLE: False  
+        # HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
+        # HIGHLIGHT_RETURN_MASK: True
+        # HIGHLIGHT_RECT_SIZE: [640, 640]
+        # HIGHLIGHT_RETURN_RECT_AS_RGB: True
+        # HIGHLIGHT_RETURN_RECT: True
+        # LOAD_RGB_ONLY: False
+
 
   BATCH_SIZE: # Max batch size with img size 448 is 64
     value: 32
@@ -142,13 +144,15 @@ parameters:
   
   ### POLARIZATION / HIGHLIGHTS                                                        
   MOGE_MODEL:
-    value: "Ruicheng/moge-2-vitl-normal"
+    value: "Ruicheng/moge-2-vitb-normal"
   SHININESS:
-    value: 4.0
+    value: 16
   KS:
-    value: 1.1
+    value: 1.5
   SOFT_HIGHLIGHT_THRESHOLD:
     value: 0.8
+  REAL_HIGHLIGHT_DILATION:
+    value: 19
   # Highlight regression stabilization (optional)
   HLREG_BALANCE_MODE:
     value: "auto"   # 'none' | 'auto' | 'pos_weight'
@@ -162,13 +166,13 @@ parameters:
   LEARNING_RATE:
     value: 5.0e-4
   WEIGHT_DECAY:
-    value: 1.0e-8
+    value: 0.0
   EPOCHS:
-    value: 20
+    value: 40
   GRADIENT_ACCUMULATION_STEPS:
     value: 1
   WARMUP_STEPS:
-    value: 20
+    value: 200
   GRADIENT_CLIPPING_MAX_NORM:
     value: -1
   LR_SCHEDULER: 
@@ -199,13 +203,13 @@ parameters:
   SPECULAR_LOSS_WEIGHT:
     value: 0.0
   DIFFUSE_LOSS_WEIGHT:
-    value: 1.0
+    value: 1.
   HIGHLIGHT_LOSS_WEIGHT:
     value: 1.0
   COMPONENT_MATCHING_LOSS_WEIGHT:
     value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
-    value: 0.5
+    value: 0.0
   ALPHA_REGULARIZATION_LOSS_WEIGHT:
     value: 0.1
   SPATIAL_CONSISTENCY_LOSS_WEIGHT:

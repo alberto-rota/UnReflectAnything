@@ -54,7 +54,7 @@ class RGBP_Dataset(Dataset):
         rho_s: float = 0.6,
         eps: float = 1e-8,
         rgb_ext: str = ".png",
-        pol_ext: str = ".png",
+        pol_ext: str = ".npy",
         transform=None,
         # Polarization data format
         polarization_format: str = "single_file_clock",  # "single_file_clock", "separate_files" or "mosaic"
@@ -1084,14 +1084,16 @@ class RGBP_Dataset(Dataset):
         if self.transform:
             sample = self.transform(sample)
 
-        sample_rgbonly = {
-            "rgb": sample["rgb"],
-            "specular": sample["specular"],
-            "diffuse": sample["diffuse"],
-            "intrinsics": sample["intrinsics"],
-        }
+        if self.load_rgb_only:
+            sample_rgbonly = {
+                "rgb": sample["rgb"],
+                "specular": sample["specular"],
+                "diffuse": sample["diffuse"],
+                "intrinsics": sample["intrinsics"],
+            }
+            return sample_rgbonly
         
-        return sample_rgbonly
+        return sample
 
 
 # Dataset-specific classes inheriting from base RGBP_Dataset class
@@ -1137,7 +1139,7 @@ class HOUSECAT6D_Dataset(RGBP_Dataset):
         Args:
             **kwargs: All arguments passed to parent RGBP_Dataset class
         """
-        super().__init__(**kwargs)
+        super().__init__(pol_ext=".png", **kwargs)
         # Add any HOUSECAT6D-specific initialization here
 
 

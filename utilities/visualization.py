@@ -1,4 +1,5 @@
 import math
+import os
 import random
 from typing import Any, Optional, Tuple, Union
 
@@ -8,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import rerun as rr
 import torch
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from rerun import RotationAxisAngle
 from scipy.spatial.transform import Rotation
 from sklearn.decomposition import PCA
@@ -30,9 +31,11 @@ def rgb(
     colormap: Optional[str] = "magma",
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
-    border: Optional[
-        Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int]
-    ] = None,
+    border: Optional[Union[
+        dict,
+        Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int],
+    ]] = None,
+    label: Optional[Union[Tuple[str, int, str], Tuple[str, int, int, str]]] = None,
     **kwargs: Any,
 ) -> Union[None, torch.Tensor, Image.Image]:
     """
@@ -54,13 +57,29 @@ def rgb(
         colormap (Optional[str]): Colormap name for single-channel images (e.g., "plasma", "viridis", "jet"). Defaults to None.
         vmin (Optional[float]): Minimum value for colormap normalization. Defaults to tensor min.
         vmax (Optional[float]): Maximum value for colormap normalization. Defaults to tensor max.
-        border (Optional[Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int]]):
-            Border specification as (color, thickness). Color can be:
+        border (Optional[Union[dict, Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int]]]):
+            Border specification. Prefer dict form: {"color": ..., "thickness": int}.
+            Tuple form (color, thickness) is still accepted for backward compatibility.
+            Color can be:
             - RGB list/tuple: [r, g, b] or (r, g, b) with values in [0, 1]
             - torch.Tensor: RGB tensor with values in [0, 1]
             - np.ndarray: RGB array with values in [0, 1]
             - str: Hex color code (e.g., "#FF0000")
             Thickness is the border width in pixels. Defaults to None.
+        label (Optional[Union[dict, Tuple[str, int, str], Tuple[str, int, int, str]]]):
+            Label specification. Prefer dict form:
+              {"position": str, "height": int, "margin": int, "text": str, "style": str, "latex": bool}
+            Tuple forms are still accepted: (position, height, text) or
+            (position, height, padding, text). The padding value is treated as margin.
+            Draws a white rectangular label with black text in Computer Modern font.
+            - position: combinations of top/bottom with optional left/right and inside/outside,
+              e.g. "top", "bottom-right", "top-left-outside". If left/right omitted, centers.
+            - height: rectangle height in pixels; text is scaled to fit height.
+            - margin: pixels used as spacing from edges (and expansion for outside labels).
+              Inner padding around text is auto-scaled from height.
+            - style: one of {"normal", "bold", "italic"}; defaults to "bold".
+            - latex: if True, or if text is wrapped with $...$, render text as LaTeX.
+            - text: the string to render inside the rectangle.
         **kwargs (Any): Additional keyword arguments passed to lt.rgb().
 
     Returns:
@@ -95,7 +114,6 @@ def rgb(
             raise ValueError(f"Unsupported tensor shape: {shape}")
 
     # Convert tensor to standard format
-    t_original = t.clone()
     t = normalize_tensor_shape(t)
 
     # Handle high-dimensional tensors with PCA
@@ -177,7 +195,12 @@ def rgb(
 
     # Apply border if specified
     if border is not None:
-        color, thickness = border
+        # Support dict or tuple
+        if isinstance(border, dict):
+            color = border.get("color", [1.0, 1.0, 1.0])
+            thickness = border.get("thickness", 1)
+        else:
+            color, thickness = border
         thickness = int(thickness) + 1
         # Convert color to RGB tensor with values in [0, 1]
         if isinstance(color, str):
@@ -237,6 +260,202 @@ def rgb(
             )  # Shape: (3, H, thickness)
 
         t = t_with_border
+
+    # Apply label if specified
+    if label is not None:
+        # Accept dict or (pos, height, text) / (pos, height, padding, text)
+        if isinstance(label, dict):
+            pos_str = label.get("position", "top")
+            rect_height = label.get("height", 24)
+            margin = label.get("margin", None)
+            label_text = label.get("text", "")
+        elif isinstance(label, (list, tuple)) and len(label) == 3:
+            pos_str, rect_height, label_text = label  # type: ignore
+            margin = None
+        elif isinstance(label, (list, tuple)) and len(label) == 4:
+            pos_str, rect_height, margin, label_text = label  # type: ignore
+        else:
+            raise ValueError(
+                "label must be a dict {position,height,margin,text} or a tuple (pos,height,text) or (pos,height,padding,text)"
+            )
+
+        rect_height = max(1, int(rect_height))
+        C, H, W = t.shape
+        np_img = (t.permute(1, 2, 0).detach().cpu().numpy() * 255.0).astype(np.uint8)
+        np_img = np.ascontiguousarray(np_img)
+
+        # Default inner padding around text (derived from height). External spacing uses 'margin'.
+        pad = max(2, rect_height // 8)
+
+        # Try to load Computer Modern (respect style: normal/bold/italic)
+        pil_font = None
+        try:
+            import matplotlib as mpl
+
+            ttf_dir = os.path.join(mpl.get_data_path(), "fonts", "ttf")
+            bold_path = os.path.join(ttf_dir, "cmb10.ttf")
+            italic_path = os.path.join(ttf_dir, "cmi10.ttf")
+            regular_path = os.path.join(ttf_dir, "cmr10.ttf")
+            # style variable may be undefined if tuple form used
+            chosen_style = locals().get("style", "bold")
+            chosen_path = regular_path
+            if chosen_style == "bold" and os.path.exists(bold_path):
+                chosen_path = bold_path
+            elif chosen_style in ("italic", "italics") and os.path.exists(italic_path):
+                chosen_path = italic_path
+            elif os.path.exists(regular_path):
+                chosen_path = regular_path
+            elif os.path.exists(bold_path):
+                chosen_path = bold_path
+            elif os.path.exists(italic_path):
+                chosen_path = italic_path
+            else:
+                chosen_path = regular_path
+            # Binary search font size to fit height
+            target_h = max(1, rect_height - 2*pad)
+            lo, hi = 4, 400
+            for _ in range(10):
+                mid = (lo + hi) // 2
+                test_font = ImageFont.truetype(chosen_path, mid)
+                # Measure using bbox
+                bbox = test_font.getbbox(str(label_text))
+                text_h = bbox[3] - bbox[1]
+                if text_h <= target_h:
+                    pil_font = test_font
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            if pil_font is None:
+                pil_font = ImageFont.truetype(chosen_path, max(4, target_h))
+        except Exception:
+            # Fallback to default PIL font
+            pil_font = ImageFont.load_default()
+
+        # Measure text size or LaTeX image size
+        # If LaTeX support is requested, render it first, otherwise use PIL font
+        is_latex = False
+        if isinstance(label_text, str):
+            s_txt = label_text.strip()
+            is_latex = s_txt.startswith("$") and s_txt.endswith("$")
+        if isinstance(label, dict):
+            is_latex = bool(label.get("latex", is_latex))
+
+        latex_img = None
+        if is_latex:
+            try:
+                from matplotlib import rcParams
+                rcParams.setdefault("mathtext.fontset", "cm")
+                from matplotlib.mathtext import MathTextParser
+
+                target_h = max(1, rect_height - 2*pad)
+                parser = MathTextParser("agg")
+                rgba, _ = parser.to_rgba(str(label_text), dpi=200, color='black')
+                latex_pil = Image.fromarray((rgba * 255).astype(np.uint8))
+                if latex_pil.height > 0:
+                    new_w = max(1, int(round(latex_pil.width * (target_h / latex_pil.height))))
+                    latex_pil = latex_pil.resize((new_w, int(target_h)), Image.LANCZOS)
+                latex_img = latex_pil
+                text_w, text_h = latex_img.size
+            except Exception:
+                latex_img = None
+
+        if latex_img is None:
+            dummy_img = Image.new("RGB", (10, 10), (255, 255, 255))
+            dummy_draw = ImageDraw.Draw(dummy_img)
+            bbox = dummy_draw.textbbox((0, 0), str(label_text), font=pil_font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+        rect_w = text_w + 2*pad
+        rect_h = rect_height
+
+        # Parse position string
+        tokens = pos_str.lower().replace("_", "-").split("-") if isinstance(pos_str, str) else ["top"]
+        vpos = None
+        if "top" in tokens:
+            vpos = "top"
+        if "bottom" in tokens:
+            vpos = "bottom"
+        hpos = "center"
+        if "left" in tokens:
+            hpos = "left"
+        elif "right" in tokens:
+            hpos = "right"
+        inside = "outside" not in tokens
+
+        def draw_label_on_pil(pil_img: Image.Image, x0: int, y0: int) -> None:
+            draw = ImageDraw.Draw(pil_img)
+            # Rectangle
+            draw.rectangle([x0, y0, x0 + rect_w, y0 + rect_h], fill=(255, 255, 255))
+            # Text position: left padding, vertically centered
+            text_x = x0 + pad
+            text_y = y0 + (rect_h - text_h) // 2
+            if latex_img is not None:
+                try:
+                    pil_img.paste(latex_img, (int(text_x), int(text_y)), mask=latex_img)
+                except Exception:
+                    pil_img.paste(latex_img, (int(text_x), int(text_y)))
+            else:
+                # Adjust baseline using bbox top
+                dummy_img2 = Image.new("RGB", (10, 10), (255, 255, 255))
+                dummy_draw2 = ImageDraw.Draw(dummy_img2)
+                bb2 = dummy_draw2.textbbox((0, 0), str(label_text), font=pil_font)
+                base_adj = bb2[1]
+                draw.text((int(text_x), int(text_y - base_adj)), str(label_text), font=pil_font, fill=(0, 0, 0))
+
+        if inside:
+            # Vertical placement
+            if vpos is None:
+                y0 = max(0, (H - rect_h) // 2)
+            else:
+                y0 = (0 + margin) if vpos == "top" else max(0, H - rect_h - margin)
+            # Horizontal placement
+            if hpos == "left":
+                x0 = 0 + margin
+            elif hpos == "right":
+                x0 = max(0, W - rect_w - margin)
+            else:
+                x0 = max(0, (W - rect_w) // 2)
+
+            x0 = min(x0, max(0, W - rect_w))
+            y0 = min(y0, max(0, H - rect_h))
+
+            pil_img = Image.fromarray(np_img)
+            draw_label_on_pil(pil_img, int(x0), int(y0))
+            np_img = np.array(pil_img)
+            H, W = np_img.shape[:2]
+        else:
+            # Expand canvas by rectangle size plus margin on the exterior side
+            expand_h = (rect_h + margin) if (vpos in ["top", "bottom"]) else 0
+            expand_w = (rect_w + margin) if (hpos in ["left", "right"]) else 0
+            new_H = H + expand_h
+            new_W = W + expand_w
+            canvas = Image.new("RGB", (new_W, new_H), (255, 255, 255))
+            pil_img = Image.fromarray(np_img)
+
+            # Paste original image
+            offset_y = (rect_h + margin) if vpos == "top" else 0
+            offset_x = (rect_w + margin) if hpos == "left" else 0
+            canvas.paste(pil_img, (offset_x, offset_y))
+
+            # Compute label rectangle position
+            if vpos in ["top", "bottom"]:
+                y0 = 0 if vpos == "top" else new_H - rect_h
+                if hpos == "left":
+                    x0 = 0
+                elif hpos == "right":
+                    x0 = new_W - rect_w
+                else:
+                    x0 = max(0, (new_W - rect_w) // 2)
+            else:
+                y0 = max(0, (new_H - rect_h) // 2)
+                x0 = 0 if hpos == "left" else new_W - rect_w
+
+            draw_label_on_pil(canvas, int(x0), int(y0))
+            np_img = np.array(canvas)
+            H, W = np_img.shape[:2]
+
+        # Convert back to tensor
+        t = torch.from_numpy(np_img).to(device=t.device, dtype=t.dtype).permute(2, 0, 1) / 255.0
 
     # Handle return types
     if as_tensor is True:
