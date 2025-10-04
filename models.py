@@ -948,7 +948,7 @@ class RGBPOLDecomposer(nn.Module):
         Wp = self.image_size // self.patch_size
         return tokens, (Hp, Wp)
 
-    def forward(self, batch, ):
+    def forward(self, batch):
         # 1) RGB → DINO tokens
         rgb_in = self.dinov3.preprocess_image(batch["rgb"])
         rgb_tokens = self.dinov3(rgb_in)["selected_hidden_states"]

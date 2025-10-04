@@ -39,11 +39,12 @@ class RGBP_Dataset(Dataset):
     - "single_file_clock": Single file with 4 polarization images arranged clockwise
     - "separate_files": Four separate files ending with _000, _045, _090, _135
     - "separate_files_stokes": Three separate .npy files with Stokes parameters _S0, _S1, _S2
+    - "single_file_topdown": Single file with 4 polarization images arranged vertically (top to bottom)
 
     Scene filtering:
     - include: str or List[str] - Include scenes that match (substring or exact)
     - exclude: str or List[str] - Exclude scenes that match (substring or exact)
-    
+
     RGB-only mode:
     - load_rgb_only: bool - If True, forces loading only RGB data and ignores polarization data
     """
@@ -55,14 +56,17 @@ class RGBP_Dataset(Dataset):
         eps: float = 1e-8,
         rgb_ext: str = ".png",
         pol_ext: str = ".npy",
-        transform=None,
-        # Polarization data format
         polarization_format: str = "single_file_clock",  # "single_file_clock", "separate_files" or "mosaic"
+        rgb_dir_name: str = "rgb",
+        pol_dir_name: str = "pol",
+        intrinsics_file_name: str = "intrinsics.txt",
+        # Polarization data format
         # Image sizing parameters
+        transform=None,
         target_size: Optional[Tuple[int, int]] = (874, 1132),  # Default size (H, W)
         resize_mode: str = "crop",  # "crop", "resize", or "pad"
         # Performance optimizations
-        use_cache: bool = False,
+        use_cache: bool = True,
         cache_size: int = 100,
         simplify_upsampling: bool = True,  # Use simple bicubic instead of edge-aware
         precompute_stokes: bool = False,  # Precompute Stokes parameters
@@ -95,6 +99,9 @@ class RGBP_Dataset(Dataset):
         self.pol_ext = pol_ext
         self.transform = transform
         self.load_rgb_only = load_rgb_only
+        self.rgb_dir_name = rgb_dir_name
+        self.pol_dir_name = pol_dir_name
+        self.intrinsics_file_name = intrinsics_file_name
 
         # Polarization format validation
         self.polarization_format = polarization_format.lower()
@@ -102,10 +109,11 @@ class RGBP_Dataset(Dataset):
             "single_file_clock",
             "separate_files",
             "separate_files_stokes",
+            "single_file_topdown",
             "mosaic",
         ]:
             raise ValueError(
-                f"polarization_format must be one of ['single_file_clock', 'separate_files', 'separate_files_stokes', 'mosaic'], got {polarization_format}"
+                f"polarization_format must be one of ['single_file_clock', 'separate_files', 'separate_files_stokes', 'single_file_topdown', 'mosaic'], got {polarization_format}"
             )
 
         # Image sizing parameters
@@ -348,9 +356,9 @@ class RGBP_Dataset(Dataset):
             if not os.path.isdir(scene_path):
                 continue
 
-            rgb_dir = os.path.join(scene_path, "rgb")
-            pol_dir = os.path.join(scene_path, "pol")
-            intrinsics_path = os.path.join(scene_path, "intrinsics.txt")
+            rgb_dir = os.path.join(scene_path, self.rgb_dir_name)
+            pol_dir = os.path.join(scene_path, self.pol_dir_name)
+            intrinsics_path = os.path.join(scene_path, self.intrinsics_file_name)
 
             # Check if RGB directory exists (required)
             if not os.path.exists(rgb_dir):
@@ -427,13 +435,28 @@ class RGBP_Dataset(Dataset):
                     ]
 
                     # Check if all 3 Stokes files exist
-                    if all(stokes_file in pol_files for stokes_file in stokes_files_needed):
+                    if all(
+                        stokes_file in pol_files for stokes_file in stokes_files_needed
+                    ):
                         # Store the base path for separate Stokes files (we'll construct individual paths later)
                         pol_base_path = os.path.join(pol_dir, base_name)
                         scene_pairs.append(
                             (
                                 os.path.join(rgb_dir, rgb_file),
                                 pol_base_path,  # Base path for separate Stokes files
+                                intrinsics_path,
+                                True,  # Has polarization data
+                            )
+                        )
+
+                elif self.polarization_format == "single_file_topdown":
+                    # New behavior: single file with 4 polarization images arranged vertically
+                    pol_file = rgb_file.replace(self.rgb_ext, self.pol_ext)
+                    if pol_file in pol_files:
+                        scene_pairs.append(
+                            (
+                                os.path.join(rgb_dir, rgb_file),
+                                os.path.join(pol_dir, pol_file),
                                 intrinsics_path,
                                 True,  # Has polarization data
                             )
@@ -543,6 +566,8 @@ class RGBP_Dataset(Dataset):
             return self._load_separate_polarization_files(pol_path)
         elif self.polarization_format == "separate_files_stokes":
             return self._load_separate_stokes_files(pol_path)
+        elif self.polarization_format == "single_file_topdown":
+            return self.single_arat_files_topdown(pol_path)
         else:
             raise ValueError(f"Unknown polarization format: {self.polarization_format}")
 
@@ -911,7 +936,7 @@ class RGBP_Dataset(Dataset):
         # Construct individual file paths for Stokes parameters
         stokes_paths = {
             "S0": f"{pol_base_path}_S0.npy",
-            "S1": f"{pol_base_path}_S1.npy", 
+            "S1": f"{pol_base_path}_S1.npy",
             "S2": f"{pol_base_path}_S2.npy",
         }
 
@@ -920,14 +945,14 @@ class RGBP_Dataset(Dataset):
         for stokes_name, path in stokes_paths.items():
             if not os.path.exists(path):
                 raise FileNotFoundError(f"Stokes file not found: {path}")
-            
+
             # Load .npy file directly as torch tensor
             stokes_array = np.load(path)
             stokes_data[stokes_name] = torch.from_numpy(stokes_array.astype(np.float32))
 
         # Extract Stokes parameters
         S0 = stokes_data["S0"].mean(-1)  # [H, W]
-        S1 = stokes_data["S1"].mean(-1)  # [H, W] 
+        S1 = stokes_data["S1"].mean(-1)  # [H, W]
         S2 = stokes_data["S2"].mean(-1)  # [H, W]
 
         # Compute DoLP and AoP from Stokes parameters
@@ -954,12 +979,90 @@ class RGBP_Dataset(Dataset):
         I0_rgb = torch.stack([I0, I0, I0], dim=-1)  # [H, W, 3]
         I90_rgb = torch.stack([I90, I90, I90], dim=-1)  # [H, W, 3]
         # Create polarization data dictionary
-        print(f_spec.shape)
         pol_data = {
             "I0": I0_rgb.permute(2, 0, 1),  # [3, H, W]
             "I45": torch.zeros_like(I0_rgb).permute(2, 0, 1),  # [3, H, W]
             "I90": I90_rgb.permute(2, 0, 1),  # [3, H, W]
             "I135": torch.zeros_like(I0_rgb).permute(2, 0, 1),  # [3, H, W]
+            "S0": S0.unsqueeze(0),  # [1, H, W]
+            "S1": S1.unsqueeze(0),  # [1, H, W]
+            "S2": S2.unsqueeze(0),  # [1, H, W]
+            "S3": S3.unsqueeze(0),  # [1, H, W]
+            "stokes": torch.cat([S0, S1, S2], dim=0).unsqueeze(0),  # [1, 3, H, W]
+            "intensity": S0.unsqueeze(0),  # [1, H, W]
+            "DoLP": DoLP.unsqueeze(0),  # [1, H, W]
+            "AoP": AoP.unsqueeze(0),  # [1, H, W]
+            "AoLP": AoP.unsqueeze(0),  # [1, H, W]
+            "DoP": DoLP.unsqueeze(0),  # [1, H, W]
+            "DoCP": torch.zeros_like(DoLP).unsqueeze(0),  # [1, H, W]
+            "ellipticity_angle": torch.zeros_like(DoLP).unsqueeze(0),  # [1, H, W]
+            "f_spec": f_spec.unsqueeze(0),  # [1, H, W]
+        }
+
+        # Return full resolution polarization data - resizing will be done later if needed
+        return pol_data
+
+    def single_arat_files_topdown(self, pol_path: str) -> Dict[str, torch.Tensor]:
+        """
+        Load polarization data from single file with vertical arrangement (top to bottom).
+
+        Args:
+            pol_path: Path to the single polarization file
+
+        Returns:
+            Dictionary containing polarization data tensors
+        """
+        # Load image directly as torch tensor
+        pol_img = Image.open(pol_path).convert("RGB")
+        pol_rgb = torch.from_numpy(np.asarray(pol_img, dtype=np.float32)) / 255.0
+
+        # Get dimensions: [H, W, C]
+        H, W, C = pol_rgb.shape
+        nw = H // 4  # Each polarization image takes 1/4 of the height
+
+        # Split vertically (top to bottom arrangement)
+        # pol_0 = polarized_input[0 * nw:1 * nw, :]
+        # pol_45 = polarized_input[1 * nw:2 * nw, :] 
+        # pol_90 = polarized_input[2 * nw:3 * nw, :]
+        # pol_135 = polarized_input[3 * nw:4 * nw, :]
+        I0_rgb = pol_rgb[0 * nw:1 * nw, :, :]      # 0 degrees (top)
+        I45_rgb = pol_rgb[1 * nw:2 * nw, :, :]     # 45 degrees
+        I90_rgb = pol_rgb[2 * nw:3 * nw, :, :]     # 90 degrees  
+        I135_rgb = pol_rgb[3 * nw:4 * nw, :, :]    # 135 degrees (bottom)
+
+        # Convert to luminance (staying in torch)
+        I0 = self._to_luminance_torch(I0_rgb)
+        I45 = self._to_luminance_torch(I45_rgb)
+        I90 = self._to_luminance_torch(I90_rgb)
+        I135 = self._to_luminance_torch(I135_rgb)
+
+        # Compute Stokes parameters
+        S0 = I0 + I90
+        S1 = I0 - I90
+        S2 = I45 - I135
+
+        # Compute DoLP and AoP
+        R = torch.sqrt(S1**2 + S2**2)
+        DoLP = torch.clamp(R / torch.clamp(S0, min=self.eps), 0.0, 1.0)
+        AoP = 0.5 * torch.atan2(S2, S1)
+
+        # Apply DoLP masking
+        valid_mask = (S0 >= self.dolp_min_intensity).float()
+        DoLP = DoLP * valid_mask
+        DoLP = torch.where(DoLP < self.dolp_min_value, torch.zeros_like(DoLP), DoLP)
+
+        # Compute specular fraction
+        f_spec = torch.clamp(DoLP / max(self.rho_s, 1e-6), 0.0, 1.0)
+
+        # Additional parameters (simplified)
+        S3 = torch.zeros_like(S0)
+
+        # Create polarization data dictionary
+        pol_data = {
+            "I0": I0_rgb.permute(2, 0, 1),  # [3, H, W]
+            "I45": I45_rgb.permute(2, 0, 1),  # [3, H, W]
+            "I90": I90_rgb.permute(2, 0, 1),  # [3, H, W]
+            "I135": I135_rgb.permute(2, 0, 1),  # [3, H, W]
             "S0": S0.unsqueeze(0),  # [1, H, W]
             "S1": S1.unsqueeze(0),  # [1, H, W]
             "S2": S2.unsqueeze(0),  # [1, H, W]
@@ -1041,16 +1144,45 @@ class RGBP_Dataset(Dataset):
                         sample["rgb"] = rect_rgb
                         # Also crop specular and diffuse components
                         if "specular" in sample:
-                            sample["specular"] = sample["specular"][:, rect_coords[0]:rect_coords[2]+1, rect_coords[1]:rect_coords[3]+1]
+                            sample["specular"] = sample["specular"][
+                                :,
+                                rect_coords[0] : rect_coords[2] + 1,
+                                rect_coords[1] : rect_coords[3] + 1,
+                            ]
                         if "diffuse" in sample:
-                            sample["diffuse"] = sample["diffuse"][:, rect_coords[0]:rect_coords[2]+1, rect_coords[1]:rect_coords[3]+1]
-                        
+                            sample["diffuse"] = sample["diffuse"][
+                                :,
+                                rect_coords[0] : rect_coords[2] + 1,
+                                rect_coords[1] : rect_coords[3] + 1,
+                            ]
+
                         # Also crop polarization data
-                        pol_keys = ["I0", "I45", "I90", "I135", "S0", "S1", "S2", "S3", "stokes", "intensity", 
-                                   "DoLP", "AoP", "AoLP", "DoP", "DoCP", "ellipticity_angle", "f_spec"]
+                        pol_keys = [
+                            "I0",
+                            "I45",
+                            "I90",
+                            "I135",
+                            "S0",
+                            "S1",
+                            "S2",
+                            "S3",
+                            "stokes",
+                            "intensity",
+                            "DoLP",
+                            "AoP",
+                            "AoLP",
+                            "DoP",
+                            "DoCP",
+                            "ellipticity_angle",
+                            "f_spec",
+                        ]
                         for key in pol_keys:
                             if key in sample:
-                                sample[key] = sample[key][:, rect_coords[0]:rect_coords[2]+1, rect_coords[1]:rect_coords[3]+1]
+                                sample[key] = sample[key][
+                                    :,
+                                    rect_coords[0] : rect_coords[2] + 1,
+                                    rect_coords[1] : rect_coords[3] + 1,
+                                ]
 
         # Resize all data to target size if specified
         if self.target_size is not None:
@@ -1058,12 +1190,19 @@ class RGBP_Dataset(Dataset):
             if "rgb" in sample:
                 sample["rgb"] = self._resize_rgb_tensor(sample["rgb"])
             if "specular" in sample:
-                sample["specular"] = self._resize_tensor(sample["specular"], self.target_size)
+                sample["specular"] = self._resize_tensor(
+                    sample["specular"], self.target_size
+                )
             if "diffuse" in sample:
-                sample["diffuse"] = self._resize_tensor(sample["diffuse"], self.target_size)
+                sample["diffuse"] = self._resize_tensor(
+                    sample["diffuse"], self.target_size
+                )
             if "highlight_masks" in sample:
                 sample["highlight_masks"] = F.interpolate(
-                    sample["highlight_masks"].unsqueeze(0), size=self.target_size, mode="nearest", align_corners=None
+                    sample["highlight_masks"].unsqueeze(0),
+                    size=self.target_size,
+                    mode="nearest",
+                    align_corners=None,
                 ).squeeze(0)
             if "rect_crop" in sample and not self.highlight_return_rect_as_rgb:
                 # Only resize rect_crop if it's not being used as the main RGB
@@ -1071,12 +1210,32 @@ class RGBP_Dataset(Dataset):
             if "rect_mask" in sample and not self.highlight_return_rect_as_rgb:
                 # Only resize rect_mask if it's not being used as the main RGB
                 sample["rect_mask"] = F.interpolate(
-                    sample["rect_mask"].unsqueeze(0), size=self.target_size, mode="nearest", align_corners=None
+                    sample["rect_mask"].unsqueeze(0),
+                    size=self.target_size,
+                    mode="nearest",
+                    align_corners=None,
                 ).squeeze(0)
-            
+
             # Resize polarization data
-            pol_keys = ["I0", "I45", "I90", "I135", "S0", "S1", "S2", "S3", "stokes", "intensity", 
-                       "DoLP", "AoP", "AoLP", "DoP", "DoCP", "ellipticity_angle", "f_spec"]
+            pol_keys = [
+                "I0",
+                "I45",
+                "I90",
+                "I135",
+                "S0",
+                "S1",
+                "S2",
+                "S3",
+                "stokes",
+                "intensity",
+                "DoLP",
+                "AoP",
+                "AoLP",
+                "DoP",
+                "DoCP",
+                "ellipticity_angle",
+                "f_spec",
+            ]
             for key in pol_keys:
                 if key in sample:
                     sample[key] = self._resize_tensor(sample[key], self.target_size)
@@ -1092,125 +1251,9 @@ class RGBP_Dataset(Dataset):
                 "intrinsics": sample["intrinsics"],
             }
             return sample_rgbonly
-        
+
         return sample
 
-
-# Dataset-specific classes inheriting from base RGBP_Dataset class
-class SCRREAM_Dataset(RGBP_Dataset):
-    """
-    SCRREAM dataset implementation for polarization-based reflection removal.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with SCRREAM-specific preprocessing,
-    data augmentation, or validation logic as needed.
-
-    The SCRREAM dataset contains RGB images with corresponding polarization
-    data for training reflection removal models.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize SCRREAM dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(**kwargs)
-        # Add any SCRREAM-specific initialization here
-
-
-class HOUSECAT6D_Dataset(RGBP_Dataset):
-    """
-    HOUSECAT6D dataset implementation for 6D pose estimation with polarization.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with HOUSECAT6D-specific preprocessing,
-    pose annotation loading, or 6D pose-specific data augmentation.
-
-    The HOUSECAT6D dataset provides RGB and polarization data along with
-    6D object pose annotations for training pose estimation models.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize HOUSECAT6D dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(pol_ext=".png", **kwargs)
-        # Add any HOUSECAT6D-specific initialization here
-
-
-class POLARGB_Dataset(RGBP_Dataset):
-    """
-    PolaRGB dataset implementation for polarization-guided RGB processing.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with PolaRGB-specific preprocessing,
-    polarization analysis, or RGB enhancement techniques.
-
-    The PolaRGB dataset combines RGB imagery with polarization measurements
-    for improved scene understanding and image enhancement tasks.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize PolaRGB dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(**kwargs)
-        # Add any PolaRGB-specific initialization here
-
-
-class SCARED_Dataset(RGBP_Dataset):
-    """
-    SCARED dataset implementation for polarization-guided RGB processing.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with SCARED-specific preprocessing,
-    polarization analysis, or RGB enhancement techniques.
-
-    The SCARED dataset combines RGB imagery with polarization measurements
-    for improved scene understanding and image enhancement tasks.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize SCARED dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(**kwargs)
-        # Add any SCARED-specific initialization here
-
-class SYNTHETIC_Dataset(RGBP_Dataset):
-    """
-    SYNTHETIC dataset implementation for polarization-guided RGB processing.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with SYNTHETIC-specific preprocessing,
-    polarization analysis, or RGB enhancement techniques.
-
-    The SYNTHETIC dataset combines RGB imagery with polarization measurements
-    for improved scene understanding and image enhancement tasks.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize SYNTHETIC dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(**kwargs)
-        # Add any SYNTHETIC-specific initialization here
-        
-        
 def from_config(
     config: Dict, dataset_names: Optional[List[str]] = None
 ) -> Dict[str, Union[Dataset, None]]:
@@ -1257,6 +1300,7 @@ def from_config(
         "HOUSECAT6D": HOUSECAT6D_Dataset,
         "POLARGB": POLARGB_Dataset,
         "SCARED": SCARED_Dataset,
+        "CROMO": CROMO_Dataset,
         "SYNTHETIC": SYNTHETIC_Dataset,
         # Future datasets will be added here by the user
     }
@@ -1287,12 +1331,6 @@ def from_config(
             raise ValueError("DATASETS['value'] is None in config")
         dataset_config = datasets_value[dataset_name]
         # Get root directory
-        root_dir = os.path.expandvars(dataset_config.ROOT_DIR)
-        if not os.path.exists(root_dir):
-            logger.warning(
-                f"Warning: Root directory '{root_dir}' for dataset '{dataset_name}' not found. Skipping."
-            )
-            continue
 
         # Extract configuration parameters with fallbacks to global config
         def get_config_value(param_name, default_value):
@@ -1305,8 +1343,15 @@ def from_config(
                 return global_param["value"]
             return default_value
 
+        # root_dir = get_config_value("ROOT_", 0.6)
+        # os.path.expandvars(dataset_config.ROOT_DIR)
+        # if not os.path.exists(root_dir):
+        #     logger.warning(
+        #         f"Warning: Root directory '{root_dir}' for dataset '{dataset_name}' not found. Skipping."
+        #     )
+        #     continue
         dataset_params = {
-            "root_dir": root_dir,
+            # "root_dir": get_config_value("ROOT", 0.6),
             "rho_s": get_config_value("RHO_S", 0.6),
             "eps": get_config_value("EPS", 1e-8),
             "target_size": tuple(get_config_value("TARGET_SIZE", [224, 224])),
@@ -1314,9 +1359,9 @@ def from_config(
             "use_cache": get_config_value("USE_CACHE", True),
             "simplify_upsampling": get_config_value("SIMPLIFY_UPSAMPLING", True),
             "few_images": get_config_value("FEW_IMAGES", False),
-            "polarization_format": get_config_value(
-                "POLARIZATION_FORMAT", "single_file_clock"
-            ),
+            # "polarization_format": get_config_value(
+            #     "POLARIZATION_FORMAT", "single_file_clock"
+            # ),
             "load_rgb_only": get_config_value("LOAD_RGB_ONLY", False),
             # Highlight options
             "highlight_enable": get_config_value("HIGHLIGHT_ENABLE", False),
@@ -1325,7 +1370,9 @@ def from_config(
             ),
             "highlight_return_mask": get_config_value("HIGHLIGHT_RETURN_MASK", False),
             "highlight_return_rect": get_config_value("HIGHLIGHT_RETURN_RECT", False),
-            "highlight_return_rect_as_rgb": get_config_value("HIGHLIGHT_RETURN_RECT_AS_RGB", False),
+            "highlight_return_rect_as_rgb": get_config_value(
+                "HIGHLIGHT_RETURN_RECT_AS_RGB", False
+            ),
         }
 
         # Handle optional tuple conversion for rect size if provided
@@ -1367,7 +1414,7 @@ def from_config(
         # Create training dataset
         if train_scenes is not None and len(train_scenes) > 0:
             dataset_params.update({"highlight_enable": True})
-            
+
             # Use specific training scenes
             train_dataset = dataset_class(
                 include=train_scenes,
@@ -1457,3 +1504,176 @@ def from_config(
     #             logger.info(f"  {dataset_name} - Train: {len(train_datasets[i])}, Val: {len(val_datasets[i]) if i < len(val_datasets) else 0}")
 
     return result
+
+# Dataset-specific classes inheriting from base RGBP_Dataset class
+class SCRREAM_Dataset(RGBP_Dataset):
+    """
+    SCRREAM dataset implementation for polarization-based reflection removal.
+
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with SCRREAM-specific preprocessing,
+    data augmentation, or validation logic as needed.
+
+    The SCRREAM dataset contains RGB images with corresponding polarization
+    data for training reflection removal models.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize SCRREAM dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(
+            root_dir="$DATASET_DIR/SCRREAM/",
+            rgb_ext=".png",
+            pol_ext=".png",
+            polarization_format="single_file_clock",  # "single_file_clock", "separate_files" or "mosaic"
+            **kwargs,
+        )
+        # Add any SCRREAM-specific initialization here
+
+
+class HOUSECAT6D_Dataset(RGBP_Dataset):
+    """
+    HOUSECAT6D dataset implementation for 6D pose estimation with polarization.
+
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with HOUSECAT6D-specific preprocessing,
+    pose annotation loading, or 6D pose-specific data augmentation.
+
+    The HOUSECAT6D dataset provides RGB and polarization data along with
+    6D object pose annotations for training pose estimation models.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize HOUSECAT6D dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(
+            root_dir="$DATASET_DIR/HouseCat6D/",
+            rgb_ext=".png",
+            pol_ext=".png",
+            polarization_format="single_file_clock",  # "single_file_clock", "separate_files" or "mosaic"
+            **kwargs,
+        )
+        # Add any HOUSECAT6D-specific initialization here
+
+
+class POLARGB_Dataset(RGBP_Dataset):
+    """
+    PolaRGB dataset implementation for polarization-guided RGB processing.
+
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with PolaRGB-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+
+    The PolaRGB dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize PolaRGB dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(
+            root_dir="$DATASET_DIR/PolaRGB/",
+            rgb_ext=".png",
+            pol_ext=".png",
+            polarization_format="separate_files",  # "single_file_clock", "separate_files" or "mosaic"
+            **kwargs,
+        )
+        # Add any PolaRGB-specific initialization here
+
+class CROMO_Dataset(RGBP_Dataset):
+    """
+    CROMO dataset implementation for polarization-guided RGB processing.
+
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with CROMO-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+
+    The CROMO dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize CROMO dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(
+            root_dir="$DATASET_DIR/CroMo/",
+            rgb_dir_name="rgb/left/data",
+            pol_dir_name="polarized/left/data/",
+            rgb_ext=".png",
+            pol_ext=".png",
+            polarization_format="single_file_topdown", 
+            **kwargs,
+        )
+        # Add any SCARED-specific initialization here
+        
+class SCARED_Dataset(RGBP_Dataset):
+    """
+    SCARED dataset implementation for polarization-guided RGB processing.
+
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with SCARED-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+
+    The SCARED dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize SCARED dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(
+            root_dir="$DATASET_DIR/SCARED/",
+            rgb_ext=".png",
+            pol_ext=".png",
+            **kwargs,
+        )
+        # Add any SCARED-specific initialization here
+
+
+class SYNTHETIC_Dataset(RGBP_Dataset):
+    """
+    SYNTHETIC dataset implementation for polarization-guided RGB processing.
+
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with SYNTHETIC-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+
+    The SYNTHETIC dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize SYNTHETIC dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(
+            root_dir="$DATASET_DIR/SyntheticMitsuba/",
+            rgb_ext=".png",
+            pol_ext=".npy",
+            polarization_format="separate_files_stokes", 
+            **kwargs,
+        )
+        # Add any SYNTHETIC-specific initialization here

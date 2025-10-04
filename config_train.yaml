@@ -51,84 +51,54 @@ parameters:
   DATASETS:
     value:
       # SCRREAM:
-      #   ROOT_DIR: "$DATASET_DIR/SCRREAM/"
-      #   TRAIN_SCENES: []
-      #   POLARIZATION_FORMAT: "single_file_clock"
       #   VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
-      #   RHO_S: 0.6
-      #   EPS: 1.0e-8
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "resize"
-      #   USE_CACHE: True
-      #   SIMPLIFY_UPSAMPLING: True
-      #   FEW_IMAGES: False
-      #   LOAD_RGB_ONLY: True
+      #   LOAD_RGB_ONLY: False
         
       # HOUSECAT6D:
-      #   ROOT_DIR: "$DATASET_DIR/HouseCat6D/"
-      #   # TRAIN_SCENES: []
-      #   POLARIZATION_FORMAT: "single_file_clock"
       #   VAL_SCENES: "val"
-      #   RHO_S: 0.6
-      #   EPS: 1.0e-8
-      #   TARGET_SIZE: [500,1000]
+      #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "crop"
-      #   USE_CACHE: True
-      #   SIMPLIFY_UPSAMPLING: True
-      #   FEW_IMAGES: False
       #   LOAD_RGB_ONLY: False
 
       # POLARGB:
-      #   ROOT_DIR: "$DATASET_DIR/PolaRGB/"w
       #   TRAIN_SCENES: "train"
-      #   POLARIZATION_FORMAT: "separate_files"
       #   VAL_SCENES: "test"
-      #   RHO_S: 0.6
-      #   EPS: 1.0e-8
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "resize"
-      #   USE_CACHE: True
-      #   SIMPLIFY_UPSAMPLING: True
-      #   FEW_IMAGES: False
-      #   LOAD_RGB_ONLY: True
+      #   LOAD_RGB_ONLY: False
 
-      SCARED:
-        ROOT_DIR: "$DATASET_DIR/SCARED/"
-        POLARIZATION_FORMAT: "separate_files"
-        VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
-        RHO_S: 0.6
-        EPS: 1.0e-8
+      CROMO:
+        TRAIN_SCENES: "kitchen"
+        # VAL_SCENES: "test"
         TARGET_SIZE: [448,448]
-        RESIZE_MODE: "crop"
-        USE_CACHE: True
-        SIMPLIFY_UPSAMPLING: True
-        FEW_IMAGES: False
-        LOAD_RGB_ONLY: True
-        HIGHLIGHT_ENABLE: False  
-        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
-        HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [448, 448]
-        HIGHLIGHT_RETURN_RECT_AS_RGB: True
-        HIGHLIGHT_RETURN_RECT: True
+        RESIZE_MODE: "resize"
+        LOAD_RGB_ONLY: False
+
+      # SCARED:
+      #   VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "resize"
+      #   LOAD_RGB_ONLY: True
+      #   HIGHLIGHT_ENABLE: False  
+      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
+      #   HIGHLIGHT_RETURN_MASK: True
+      #   HIGHLIGHT_RECT_SIZE: [672, 672]
+      #   HIGHLIGHT_RETURN_RECT_AS_RGB: True
+      #   HIGHLIGHT_RETURN_RECT: True
 
       # SYNTHETIC:
-      #   ROOT_DIR: "$DATASET_DIR/SyntheticMitsuba/"
       #   TRAIN_SCENES: "bedroom"
-      #   POLARIZATION_FORMAT: "separate_files_stokes"
-      #   RHO_S: 0.6
-      #   EPS: 1.0e-8
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "resize"
-      #   USE_CACHE: True
-      #   SIMPLIFY_UPSAMPLING: True
-      #   FEW_IMAGES: False
       #   HIGHLIGHT_ENABLE: False  
-        # HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
-        # HIGHLIGHT_RETURN_MASK: True
-        # HIGHLIGHT_RECT_SIZE: [640, 640]
-        # HIGHLIGHT_RETURN_RECT_AS_RGB: True
-        # HIGHLIGHT_RETURN_RECT: True
-        # LOAD_RGB_ONLY: False
+      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
+      #   HIGHLIGHT_RETURN_MASK: True
+      #   HIGHLIGHT_RECT_SIZE: [640, 640]
+      #   HIGHLIGHT_RETURN_RECT_AS_RGB: True
+      #   HIGHLIGHT_RETURN_RECT: True
+      #   LOAD_RGB_ONLY: False
 
 
   BATCH_SIZE: # Max batch size with img size 448 is 64
@@ -146,13 +116,13 @@ parameters:
   MOGE_MODEL:
     value: "Ruicheng/moge-2-vitb-normal"
   SHININESS:
-    value: 16
+    value: 10
   KS:
-    value: 1.5
+    value: 2.0
   SOFT_HIGHLIGHT_THRESHOLD:
-    value: 0.8
+    value: 0.9
   REAL_HIGHLIGHT_DILATION:
-    value: 19
+    value: 15
   # Highlight regression stabilization (optional)
   HLREG_BALANCE_MODE:
     value: "auto"   # 'none' | 'auto' | 'pos_weight'
@@ -203,13 +173,13 @@ parameters:
   SPECULAR_LOSS_WEIGHT:
     value: 0.0
   DIFFUSE_LOSS_WEIGHT:
-    value: 1.
+    value: 1.0
   HIGHLIGHT_LOSS_WEIGHT:
     value: 1.0
   COMPONENT_MATCHING_LOSS_WEIGHT:
     value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
-    value: 0.0
+    value: 0.5
   ALPHA_REGULARIZATION_LOSS_WEIGHT:
     value: 0.1
   SPATIAL_CONSISTENCY_LOSS_WEIGHT:
