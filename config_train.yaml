@@ -4,7 +4,7 @@ parameters:
   ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:
-      MODEL_CLASS: "RGBDistillDecomposer"
+      MODEL_CLASS: "RGBPOLDecomposer"
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vitb16-pretrain-lvd1689m"
         IMAGE_SIZE: 448
@@ -22,24 +22,24 @@ parameters:
       DECODERS:
         diffuse:
           FEATURE_DIM: 768
-          REASSEMBLE_OUT_CHANNELS: [48,192,768,768]
+          REASSEMBLE_OUT_CHANNELS: [48,194,384,768]
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
           READOUT_TYPE: "ignore"
           USE_BN: False
           DROPOUT: 0.1
           OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 3
-        # specular:
-        #   FEATURE_DIM: 768
-        #   REASSEMBLE_OUT_CHANNELS: [48,192,768,768]
-        #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-        #   READOUT_TYPE: "ignore"
-        #   USE_BN: False
-        #   OUTPUT_IMAGE_SIZE: [448,448]
-        #   OUTPUT_CHANNELS: 3
+        specular:
+          FEATURE_DIM: 768
+          REASSEMBLE_OUT_CHANNELS: [48,194,384,768]
+          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+          READOUT_TYPE: "ignore"
+          USE_BN: False
+          OUTPUT_IMAGE_SIZE: [448,448]
+          OUTPUT_CHANNELS: 4
         highlight:
           FEATURE_DIM: 768
-          REASSEMBLE_OUT_CHANNELS: [48,192,768,768]
+          REASSEMBLE_OUT_CHANNELS: [48,194,384,768]
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
           READOUT_TYPE: "ignore"
           USE_BN: False
@@ -50,24 +50,24 @@ parameters:
   ### DATA                                                                      
   DATASETS:
     value:
-      # SCRREAM:
-      #   VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: False
+      SCRREAM:
+        VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        LOAD_RGB_ONLY: False
         
-      # HOUSECAT6D:
-      #   VAL_SCENES: "val"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "crop"
-      #   LOAD_RGB_ONLY: False
+      HOUSECAT6D:
+        VAL_SCENES: "val"
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "crop"
+        LOAD_RGB_ONLY: False
 
-      # POLARGB:
-      #   TRAIN_SCENES: "train"
-      #   VAL_SCENES: "test"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: False
+      POLARGB:
+        TRAIN_SCENES: "train"
+        VAL_SCENES: "test"
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        LOAD_RGB_ONLY: False
 
       CROMO:
         TRAIN_SCENES: "kitchen"
@@ -102,9 +102,9 @@ parameters:
 
 
   BATCH_SIZE: # Max batch size with img size 448 is 64
-    value: 32
+    value: 16
   NUM_WORKERS:
-    value: 4
+    value: 6
   SHUFFLE:
     value: True
   PIN_MEMORY:
@@ -114,7 +114,7 @@ parameters:
   
   ### POLARIZATION / HIGHLIGHTS                                                        
   MOGE_MODEL:
-    value: "Ruicheng/moge-2-vitb-normal"
+    value: "Ruicheng/moge-2-vits-normal"
   SHININESS:
     value: 10
   KS:
@@ -127,7 +127,7 @@ parameters:
   HLREG_BALANCE_MODE:
     value: "auto"   # 'none' | 'auto' | 'pos_weight'
   HLREG_POS_WEIGHT:
-    value: 2.0      # used only if BALANCE_MODE == 'pos_weight'
+    value: 1.0      # used only if BALANCE_MODE == 'pos_weight'
   HLREG_FOCAL_GAMMA:
     value: 2.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
 
@@ -138,9 +138,9 @@ parameters:
   WEIGHT_DECAY:
     value: 0.0
   EPOCHS:
-    value: 40
+    value: 50
   GRADIENT_ACCUMULATION_STEPS:
-    value: 1
+    value: 2
   WARMUP_STEPS:
     value: 200
   GRADIENT_CLIPPING_MAX_NORM:
@@ -171,7 +171,7 @@ parameters:
   
   ### LOSS WEIGHTS (relative to the total loss, NOT NORMALIZED LATER)                                                                              
   SPECULAR_LOSS_WEIGHT:
-    value: 0.0
+    value: 1.0
   DIFFUSE_LOSS_WEIGHT:
     value: 1.0
   HIGHLIGHT_LOSS_WEIGHT:
@@ -201,7 +201,7 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: ""
+    value: "With CroMo and NO Weight Decay and Accumulation Steps 2 (fake BS=64)"
   RESULTS_DIR:
     value: "$RESULTS_DIR/"
 

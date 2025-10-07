@@ -1051,9 +1051,10 @@ class RGBDistillDecomposer(nn.Module):
         Wp = self.image_size // self.patch_size
         return tokens, (Hp, Wp)
 
-    def forward(self, x):
+    def forward(self, model_input_dict):
         # 1) RGB → DINO tokens
-        rgb_in = self.dinov3.preprocess_image(x)
+        
+        rgb_in = self.dinov3.preprocess_image(model_input_dict["rgb"])
         rgb_tokens = self.dinov3(rgb_in)["selected_hidden_states"]
 
         # 6) Decode with flexible decoder heads

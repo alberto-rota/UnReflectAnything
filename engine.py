@@ -644,13 +644,12 @@ class Engine:
                 ### Add polarization highlights
                 highlight_result = self.add_polar_highlights(
                     rgb=sample["rgb"].to(self.device, non_blocking=True),
-                    pol=sample["stokes"].to(self.device, non_blocking=True)
-                    if "stokes" in sample
-                    else None,
-                    intrinsic=sample["intrinsics"].to(self.device, non_blocking=True),
+                    pol=None,
+                    intrinsic="compute",  # sample["intrinsics"].to(self.device, non_blocking=True),
                     shininess=self.config.SHININESS,
                     ks=self.config.KS,
                 )
+
                 # Compute soft highlight map
                 real_highlight_soft_mask = get_soft_highlight_map(
                     sample["rgb"].to(self.device, non_blocking=True),
@@ -666,7 +665,7 @@ class Engine:
                     )
                     > 0
                 ).int()
-                
+
                 # We use the inverse binary mask only at training time
                 if phase == "Training":
                     lossmask = real_highlight_inverse_binary_mask
@@ -701,8 +700,12 @@ class Engine:
                         self.device, non_blocking=True
                     )
                 del sample  # Clean up. All necessary data is already on GPU.
-                # The model inputs the highligted RGB image. It will decompse it into diffuse, specular, and highlight.
-                model_input = gt_decomposition["rgb_highlighted"]
+
+                # Constructing model input dict
+                model_input = {"rgb": gt_decomposition["rgb_highlighted"]}
+                if self.config.MODEL.MODEL_CLASS == "RGBPOLDecomposer":
+                    model_input["AoP"] = gt_decomposition["AoP"]
+                    model_input["DoP"] = gt_decomposition["DoP"]
 
                 # Log memory usage before forward pass if monitoring
                 if self.memory_monitoring and batch_idx % 10 == 0:
@@ -727,7 +730,7 @@ class Engine:
                 if phase == "Training":
                     gt_decomposition["lossmask"] = lossmask
                     gt_decomposition["masked_diffuse"] = diffuse * lossmask
-                ### Backward pass   
+                ### Backward pass
                 backward_output = None
                 if is_training:
                     try:
@@ -924,6 +927,8 @@ class Engine:
         checkpoint = {
             "epoch": epoch,
             "model_state_dict": self.model.state_dict(),
+            "model_class_name": self.model.__class__.__name__,
+            "model_class_module": self.model.__class__.__module__,
             "optimizer_state_dict": self.optimizer.state_dict(),
             # 'scheduler_state_dict': self.scheduler.state_dict(),
             "config": self.config,
@@ -1008,9 +1013,16 @@ class Engine:
             ]
 
             for key, tensor_key, caption in input_images:
-                if tensor_key in gt_decomposition and gt_decomposition[tensor_key] is not None:
+                if (
+                    tensor_key in gt_decomposition
+                    and gt_decomposition[tensor_key] is not None
+                ):
                     self._add_image_safely(
-                        visualization_dict, key, gt_decomposition[tensor_key], caption, batch_idx
+                        visualization_dict,
+                        key,
+                        gt_decomposition[tensor_key],
+                        caption,
+                        batch_idx,
                     )
 
             # Ground truth components - dynamically detect available components
@@ -1079,6 +1091,63 @@ class Engine:
             )
         except Exception as e:
             self.logger.error(f"Error loading checkpoint: {e}", context="SAVE")
+
+    @staticmethod
+    def create_model_from_checkpoint(checkpoint_path, device=None):
+        """
+        Create a model instance from checkpoint information.
+
+        Args:
+            checkpoint_path (str): Path to the checkpoint file
+            device (torch.device, optional): Device to load the model on
+
+        Returns:
+            tuple: (model, optimizer, scheduler, epoch, config) or None if loading fails
+        """
+        if not os.path.exists(checkpoint_path):
+            print(f"Checkpoint not found at {checkpoint_path}")
+            return None
+
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+
+            # Extract model class information
+            model_class_name = checkpoint.get("model_class_name")
+            model_class_module = checkpoint.get("model_class_module")
+
+            if model_class_name and model_class_module:
+                # Dynamically import the model class
+                import importlib
+
+                module = importlib.import_module(model_class_module)
+                model_class = getattr(module, model_class_name)
+
+                # Create model instance (you may need to pass config or other parameters)
+                # This is a basic implementation - you might need to adapt based on your model's __init__
+                model = model_class()
+
+                # Load state dict
+                model.load_state_dict(checkpoint["model_state_dict"])
+
+                if device:
+                    model = model.to(device)
+
+                return {
+                    "model": model,
+                    "optimizer_state_dict": checkpoint.get("optimizer_state_dict"),
+                    "scheduler_state_dict": checkpoint.get("scheduler_state_dict"),
+                    "epoch": checkpoint.get("epoch"),
+                    "config": checkpoint.get("config"),
+                    "model_class_name": model_class_name,
+                    "model_class_module": model_class_module,
+                }
+            else:
+                print("Warning: Model class information not found in checkpoint")
+                return None
+
+        except Exception as e:
+            print(f"Error loading checkpoint: {e}")
+            return None
 
     def _log_memory_usage(self, context: str = ""):
         """Log current GPU memory usage for monitoring"""

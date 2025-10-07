@@ -158,7 +158,9 @@ class PolarHighlighter(nn.Module):
         """
         B, _, H, W = depth.shape
         grid = self.make_pixel_grid(B, H, W, depth.device)  # [B,3,H,W]
-        Kinv = torch.inverse(K)  # [B,3,3]
+        # Sanitize intrinsics and use pseudo-inverse for numerical stability
+        K = torch.nan_to_num(K, nan=0.0, posinf=1e6, neginf=-1e6)
+        Kinv = torch.linalg.pinv(K)  # [B,3,3]
         rays = (Kinv @ grid.flatten(2)).view(B, 3, H, W)  # [B,3,H,W]
         # Camera looks along +Z; 3D point = ray * depth
         P = rays * depth  # [B,3,H,W]
@@ -187,6 +189,11 @@ class PolarHighlighter(nn.Module):
         # Extract depth [B,H,W] and normals [B,H,W,3]
         depth = mogeout["depth"]  # [B,H,W]
         normals = mogeout["normal"]  # [B,H,W,3]
+        intrinsics = mogeout["intrinsics"]  # [B,3,3]
+        # Sanitize potential NaN/Inf from the geometry model
+        depth = torch.nan_to_num(depth, nan=0.0, posinf=1e6, neginf=-1e6)
+        normals = torch.nan_to_num(normals, nan=0.0, posinf=0.0, neginf=0.0)
+        intrinsics = torch.nan_to_num(intrinsics, nan=0.0, posinf=1e6, neginf=-1e6)
     
         # Resize to target dimensions if needed
         if depth.shape[-2:] != (self.height, self.width):
@@ -194,14 +201,17 @@ class PolarHighlighter(nn.Module):
             # Resize normals - reshape for resize then back
             normals = normals.permute(0, 3, 1, 2)  # [B,3,H,W]
             normals = self.resizer(normals)  # [B,3,H,W]
+            normals = torch.nan_to_num(normals, nan=0.0, posinf=0.0, neginf=0.0)
             normals = F.normalize(normals, p=2, dim=1, eps=1e-6)  # Re-normalize after resize
         else:
             normals = normals.permute(0, 3, 1, 2)  # [B,3,H,W]
+            normals = torch.nan_to_num(normals, nan=0.0, posinf=0.0, neginf=0.0)
+            normals = F.normalize(normals, p=2, dim=1, eps=1e-6)
     
         # Add channel dimension to depth
         depth = depth.unsqueeze(1)  # [B,1,H,W]
     
-        return depth, -normals
+        return depth, -normals, intrinsics
 
     def sample_light_source(
         self, dist_to_camera, azimuth, elevation, batch_size=1, device="cuda"
@@ -554,12 +564,14 @@ class PolarHighlighter(nn.Module):
         rgb = rgb.to(device)
         if pol is not None:
             pol = pol.to(device)
-        if intrinsic is not None:
+
+        depth, normals,moge_intrinsics = self.compute_geometry(rgb)  # [B,1,H,W], [B,3,H,W]
+
+        if intrinsic == "compute":
+            intrinsic = moge_intrinsics.to(device)
+        else:
             intrinsic = intrinsic.to(device)
-
-        depth, normals = self.compute_geometry(rgb)  # [B,1,H,W], [B,3,H,W]
-
-
+            
         # 3) Synthesize highlights and update Stokes parameters
         # Use dummy pol if not provided for the synthesis function
         pol_input = pol if pol is not None else torch.zeros_like(rgb)
