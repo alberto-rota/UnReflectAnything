@@ -18,6 +18,7 @@ from logger import get_logger
 from losses import UnReflectLoss
 from polar_highlighter import PolarHighlighter, get_soft_highlight_map
 import torchvision.transforms as transforms
+from utilities.visualization import panelize, rgb
 
 
 class Engine:
@@ -28,6 +29,7 @@ class Engine:
         config: dict,
         notes: str = "",
         no_wandb: bool = False,
+        resume_run_id: str = None,
         **kwargs,
     ):
         """
@@ -75,16 +77,25 @@ class Engine:
         init(initialize.optimizers, self.model, config)
         init(initialize.schedulers, self.optimizer, config, self.training_dl)
         init(initialize.transforms, self.height, self.width)
-        init(initialize.wandb, config, self.model, notes, no_wandb)
+        # Check if we need to resume wandb run
+        resume_wandb_run_id = resume_run_id
+        init(initialize.wandb, config, self.model, notes, no_wandb, resume_wandb_run_id)
         init(initialize.tracking_metrics)
-        init(initialize.setup_run_directories, self.RUNS_DIR, self.wandb, False)
-        init(
-            initialize.earlystopping,
-            self.earlystopping_patience,
-            self.MODELS_DIR,
-            self.runname,
-        )
-        self.config["name"] = self.runname
+        
+        # Skip directory setup during initialization if we're going to resume
+        # The directories will be set up during resume_from_run()
+        if not hasattr(self, '_will_resume'):
+            init(initialize.setup_run_directories, self.RUNS_DIR, self.wandb, False)
+            init(
+                initialize.earlystopping,
+                self.earlystopping_patience,
+                self.MODELS_DIR,
+                self.runname,
+            )
+            self.config["name"] = self.runname
+        else:
+            # For resume mode, set a temporary name that will be updated later
+            self.config["name"] = "resuming"
         self.add_polar_highlights = PolarHighlighter(
             height=self.height, width=self.width
         ).to(self.device)
@@ -179,7 +190,10 @@ class Engine:
         The main training loop that runs through all epochs, trains the model,
         validates it, and handles early stopping and saving of the model.
         """
-        for e in range(self.epochs):
+        # Determine starting epoch (for resume functionality)
+        start_epoch = getattr(self, 'start_epoch', 0)
+        
+        for e in range(start_epoch, self.epochs):
             ### TRAINING + VALIDATION FOR EACH EPOCH
             self.train()  # Train the model for one epoch
             is_overfitting = self.validate()  # Train the model for one epoch
@@ -239,6 +253,9 @@ class Engine:
                 float(result),
                 self.model,
                 self.step["epoch"] - 1,
+                self.optimizer,
+                self.config,
+                self.wandb,
             )
             if self.earlystopping.early_stop:
                 self.logger.info(
@@ -723,7 +740,7 @@ class Engine:
                 loss_value = losses["total"]
 
                 # Compositing the reconstructed image - for visualization purposes
-                pred_decomposition["recon"] = self.loss.reconstruct_image(
+                pred_decomposition["rgb_highlighted"] = self.loss.reconstruct_image(
                     pred_decomposition
                 )
                 # Adding the loss mask to the gt_decomposition to log it on wandb
@@ -816,7 +833,7 @@ class Engine:
 
                 # Image logging to wandb - with aggressive cleanup after
                 if log_images_this_batch and self.wandb:
-                    try:
+                    # try:
                         # Create a copy of sample for visualization (since we deleted it earlier)
                         gt_data = {
                             "rgb": gt_decomposition["rgb_highlighted"].cpu(),
@@ -847,11 +864,11 @@ class Engine:
                         # Clean up sample copy immediately
                         del gt_data
 
-                    except Exception as e:
-                        self.logger.warning(
-                            f"Failed to create visualization images: {e}",
-                            context=phase.upper(),
-                        )
+                    # except Exception as e:
+                    #     self.logger.warning(
+                    #         f"Failed to create visualization images: {e}",
+                    #         context=phase.upper(),
+                    #     )
 
                 # Console logging
                 if batch_idx % self.config.get("LOG_INTERVAL", 10) == 0:
@@ -923,16 +940,38 @@ class Engine:
         return avg_loss
 
     def _save_checkpoint(self, epoch, is_best=False):
-        """Save model checkpoint"""
+        """Save model checkpoint with enhanced state information"""
         checkpoint = {
             "epoch": epoch,
             "model_state_dict": self.model.state_dict(),
             "model_class_name": self.model.__class__.__name__,
             "model_class_module": self.model.__class__.__module__,
             "optimizer_state_dict": self.optimizer.state_dict(),
-            # 'scheduler_state_dict': self.scheduler.state_dict(),
             "config": self.config,
+            "runname": getattr(self, 'runname', None),
+            "wandb_run_id": getattr(self.wandb, 'id', None) if self.wandb else None,
         }
+        
+        # Add scheduler state if available
+        if hasattr(self, 'scheduler') and self.scheduler is not None:
+            try:
+                checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
+            except Exception as e:
+                self.logger.warning(f"Could not save scheduler state: {e}")
+        
+        # Add early stopping state if available
+        if hasattr(self, 'earlystopping') and self.earlystopping is not None:
+            checkpoint["earlystopping_state"] = {
+                "val_loss_min": getattr(self.earlystopping, 'val_loss_min', float('inf')),
+                "counter": getattr(self.earlystopping, 'counter', 0),
+                "patience": getattr(self.earlystopping, 'patience', 0),
+            }
+        
+        # Add training metrics history if available
+        if hasattr(self, 'training_metrics') and self.training_metrics:
+            checkpoint["training_metrics_history"] = self.training_metrics
+        if hasattr(self, 'validation_metrics') and self.validation_metrics:
+            checkpoint["validation_metrics_history"] = self.validation_metrics
 
         # Save regular checkpoint
         checkpoint_path = os.path.join(
@@ -953,7 +992,12 @@ class Engine:
             yield
 
     def create_visualization_images(
-        self, gt_decomposition, pred_decomposition, sample, batch_idx=0
+        self,
+        gt_decomposition,
+        pred_decomposition,
+        sample,
+        as_single_panel=True,
+        batch_idx=0,
     ):
         """
         Creates visualization images for polarization-based reflection removal training.
@@ -963,12 +1007,78 @@ class Engine:
             gt_decomposition (dict): Input gt_decomposition containing rgb, AoP, DoP, f_spec
             pred_decomposition (dict): Model output containing specular, diffuse, recon
             sample (dict): Original sample from dataset
+            as_single_panel (bool): Whether to create a single panel image
             batch_idx (int): Batch index to visualize
 
         Returns:
             dict: Dictionary of wandb.Image objects for visualization
         """
-        try:
+        if as_single_panel:
+            visualization_dict = {}
+
+            # Collect all unique keys from both dicts
+            all_keys = list(sorted(set(pred_decomposition.keys()) | set(gt_decomposition.keys())))
+
+            def make_black_image(size=(448, 448)):
+                # Returns a black RGB image tensor [3, H, W]
+                return torch.zeros(3, size[0], size[1])
+
+            # Build prediction row, using black image if key missing
+            prediction_row = panelize(
+                *[
+                    rgb(
+                        pred_decomposition[comp_name][0][:3].detach() if comp_name in pred_decomposition else make_black_image(),
+                        as_tensor=True,
+                        resize=(448, 448),
+                        colormap="gray",
+                        # border={"color": "#ffffff   ", "thickness": 1 if comp_name not in pred_decomposition else 0} ,
+                        label={
+                            "position": "top-left",
+                            "height": 40,
+                            "margin": 1 if comp_name not in pred_decomposition else 0,
+                            "text": f"PRED {comp_name.capitalize()}" if comp_name in pred_decomposition else "NA",
+                        },
+                    )
+                    for comp_name in all_keys
+                ],
+                mode="horizontal",
+            )
+
+            # Build GT row, using black image if key missing
+            gt_row = panelize(
+                *[
+                    rgb(
+                        gt_decomposition[comp_name][0][:3].detach() if comp_name in gt_decomposition else make_black_image(),
+                        as_tensor=True,
+                        resize=(448, 448),
+                        colormap="gray",
+                        # border={"color": "#ffffff   ", "thickness": 1 if comp_name not in gt_decomposition else 0} ,
+                        label={
+                            "position": "top-left",
+                            "height": 40,
+                            "margin": 1 if comp_name not in gt_decomposition else 0,
+                            "text": f"GT {comp_name.capitalize()}" if comp_name in gt_decomposition else "NA",
+                        },
+                    )
+                    for comp_name in all_keys
+                ],
+                mode="horizontal",
+            )
+
+            prediction_panel_loggable = panelize(
+                prediction_row, gt_row, mode="vertical", resize_to_match=False
+            )
+            visualization_dict["images/Comparison_panel"] = prediction_panel_loggable
+            self._add_image_safely(
+                visualization_dict,
+                "images/Comparison_panel",
+                prediction_panel_loggable,
+                caption="Comparison Panel",
+                batch_idx=batch_idx,
+            )
+            
+        else:
+        
             # Create visualization dictionary
             visualization_dict = {}
 
@@ -995,7 +1105,11 @@ class Engine:
                     wandb_key = f"images/PRED_{comp_name.capitalize()}"
                     caption = f"Predicted {display_name} Component"
                     self._add_image_safely(
-                        visualization_dict, wandb_key, comp_tensor, caption, batch_idx
+                        visualization_dict,
+                        wandb_key,
+                        comp_tensor,
+                        caption,
+                        batch_idx,
                     )
 
             # Input images
@@ -1008,7 +1122,11 @@ class Engine:
                 ),
                 ("images/GT_Highlight", "highlight", "Input RGB Highlighted Image"),
                 ("images/GT_FSpec", "f_spec", "Specular Fraction"),
-                ("images/GT_MaskedDiffuse", "masked_diffuse", "Masked Diffuse Image"),
+                (
+                    "images/GT_MaskedDiffuse",
+                    "masked_diffuse",
+                    "Masked Diffuse Image",
+                ),
                 ("images/LossMask", "lossmask", "loss mask"),
             ]
 
@@ -1045,7 +1163,11 @@ class Engine:
                     wandb_key = f"images/GT_{comp_name.capitalize()}"
                     caption = f"Ground Truth {display_name}"
                     self._add_image_safely(
-                        visualization_dict, wandb_key, comp_tensor, caption, batch_idx
+                        visualization_dict,
+                        wandb_key,
+                        comp_tensor,
+                        caption,
+                        batch_idx,
                     )
 
             # Final cleanup
@@ -1053,18 +1175,6 @@ class Engine:
             gc.collect()
 
             return visualization_dict
-
-        except ImportError:
-            self.logger.warning(
-                "wandb or PIL not available for image visualization",
-                context="VISUALIZATION",
-            )
-            return {}
-        except Exception as e:
-            self.logger.warning(
-                f"Error creating visualization images: {e}", context="VISUALIZATION"
-            )
-            return {}
 
     def reinstantiate_model_from_checkpoint(self, checkpoint_path=None):
         """
@@ -1081,7 +1191,7 @@ class Engine:
             return
 
         try:
-            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
             self.model.load_state_dict(checkpoint["model_state_dict"])
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
@@ -1109,7 +1219,7 @@ class Engine:
             return None
 
         try:
-            checkpoint = torch.load(checkpoint_path, map_location=device)
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
             # Extract model class information
             model_class_name = checkpoint.get("model_class_name")
@@ -1148,6 +1258,147 @@ class Engine:
         except Exception as e:
             print(f"Error loading checkpoint: {e}")
             return None
+
+    def resume_from_run(self, run_identifier: str) -> bool:
+        """
+        Resume training from an existing run.
+        
+        Args:
+            run_identifier (str): Run name or run ID to resume from
+            
+        Returns:
+            bool: True if resume was successful, False otherwise
+        """
+        from utilities.run_resume import get_resume_info, load_checkpoint_for_resume
+        
+        # Get resume information
+        resume_info = get_resume_info(run_identifier, self.RUNS_DIR)
+        if resume_info is None:
+            self.logger.error(f"Failed to get resume info for run: {run_identifier}")
+            return False
+        
+        # Set up directories using the existing run information
+        self._setup_resume_directories(resume_info)
+        
+        # Load the latest checkpoint
+        checkpoint_data = load_checkpoint_for_resume(
+            resume_info['latest_checkpoint'], self.device
+        )
+        if checkpoint_data is None:
+            self.logger.error("Failed to load checkpoint data")
+            return False
+        
+        # Load model state
+        try:
+            self.model.load_state_dict(checkpoint_data['model_state_dict'])
+            self.logger.info("Loaded model state from checkpoint", context="RESUME")
+        except Exception as e:
+            self.logger.error(f"Failed to load model state: {e}")
+            return False
+        
+        # Load optimizer state
+        try:
+            self.optimizer.load_state_dict(checkpoint_data['optimizer_state_dict'])
+            self.logger.info("Loaded optimizer state from checkpoint", context="RESUME")
+        except Exception as e:
+            self.logger.error(f"Failed to load optimizer state: {e}")
+            return False
+        
+        # Load scheduler state if available
+        if 'scheduler_state_dict' in checkpoint_data and hasattr(self, 'scheduler') and self.scheduler is not None:
+            try:
+                self.scheduler.load_state_dict(checkpoint_data['scheduler_state_dict'])
+                self.logger.info("Loaded scheduler state from checkpoint", context="RESUME")
+            except Exception as e:
+                self.logger.warning(f"Failed to load scheduler state: {e}")
+        
+        # Restore early stopping state if available
+        if 'earlystopping_state' in checkpoint_data and hasattr(self, 'earlystopping') and self.earlystopping is not None:
+            try:
+                es_state = checkpoint_data['earlystopping_state']
+                self.earlystopping.val_loss_min = es_state.get('val_loss_min', float('inf'))
+                self.earlystopping.counter = es_state.get('counter', 0)
+                self.earlystopping.patience = es_state.get('patience', 0)
+                self.logger.info("Restored early stopping state", context="RESUME")
+            except Exception as e:
+                self.logger.warning(f"Failed to restore early stopping state: {e}")
+        
+        # Restore metrics history if available
+        if 'training_metrics_history' in checkpoint_data:
+            self.training_metrics = checkpoint_data['training_metrics_history']
+            self.logger.info("Restored training metrics history", context="RESUME")
+        
+        if 'validation_metrics_history' in checkpoint_data:
+            self.validation_metrics = checkpoint_data['validation_metrics_history']
+            self.logger.info("Restored validation metrics history", context="RESUME")
+        
+        # Set the starting epoch
+        self.start_epoch = checkpoint_data['epoch'] + 1
+        self.logger.info(f"Resuming training from epoch {self.start_epoch}", context="RESUME")
+        
+        # Update wandb run ID if available and re-initialize wandb
+        if 'wandb_run_id' in checkpoint_data and checkpoint_data['wandb_run_id']:
+            self.resume_wandb_run_id = checkpoint_data['wandb_run_id']
+            self.logger.info(f"Will resume wandb run: {self.resume_wandb_run_id}", context="RESUME")
+            
+            # Re-initialize wandb with the correct run ID
+            self._reinitialize_wandb()
+        
+        return True
+
+    def _setup_resume_directories(self, resume_info):
+        """Set up directories using existing run information"""
+        # Extract run name from the run directory path
+        run_dir = resume_info['run_dir']
+        runname = os.path.basename(run_dir)
+        
+        # Set up directory structure using existing run
+        self.runname = runname
+        self.RUN_DIR = run_dir
+        self.MODELS_DIR = resume_info['models_dir']
+        self.TEST_DIR = os.path.join(run_dir, "tests")
+        self.paths_file = os.path.join(run_dir, "loadeddata.csv")
+        
+        # Create test directory if it doesn't exist
+        os.makedirs(self.TEST_DIR, exist_ok=True)
+        
+        # Initialize early stopping with the existing run name
+        from utilities import engine_initializers as initialize
+        earlystopping_result = initialize.earlystopping(
+            self.earlystopping_patience,
+            self.MODELS_DIR,
+            self.runname,
+        )
+        
+        # Set early stopping attributes
+        for key, value in earlystopping_result.items():
+            setattr(self, key, value)
+        
+        # Update config with the run name
+        self.config["name"] = self.runname
+        
+        self.logger.info(f"Set up resume directories for run: {self.runname}", context="RESUME")
+        self.logger.info(f"Run directory: {self.RUN_DIR}", context="RESUME")
+
+    def _reinitialize_wandb(self):
+        """Re-initialize wandb with the correct run ID for resuming"""
+        if self.wandb is not None:
+            # Finish the current wandb run
+            self.wandb.finish()
+        
+        # Re-initialize wandb with the resume run ID
+        from utilities import engine_initializers as initialize
+        wandb_result = initialize.wandb(
+            self.config, 
+            self.model, 
+            self.config.get("NOTES", ""), 
+            False,  # no_wandb
+            self.resume_wandb_run_id
+        )
+        
+        # Update the wandb reference
+        self.wandb = wandb_result.get("wandb")
+        self.logger.info(f"Re-initialized wandb with run ID: {self.resume_wandb_run_id}", context="RESUME")
 
     def _log_memory_usage(self, context: str = ""):
         """Log current GPU memory usage for monitoring"""
@@ -1249,8 +1500,6 @@ class Engine:
             tensor = tensor.clone()
         elif tensor.dim() == 2:  # [H, W] - single channel
             tensor = tensor.unsqueeze(0).clone()
-        else:
-            return None
 
         # Convert to CPU and detach immediately
         tensor = tensor.cpu().detach().clamp(0, 1)
@@ -1267,10 +1516,9 @@ class Engine:
 
     def _add_image_safely(self, viz_dict, key, tensor, caption, batch_idx=0):
         """Safely add image to visualization dictionary"""
-        try:
-            img = self._to_cpu_image(tensor, batch_idx)
-            if img:
-                viz_dict[key] = wandb.Image(img, caption=caption)
-                del img
-        except Exception as e:
-            self.logger.warning(f"Failed to create {key} visualization: {e}")
+
+        viz_dict[key] = wandb.Image(self._to_cpu_image(tensor))
+        wandb.log({key: viz_dict[key]})
+
+    # except Exception as e:
+    #     self.logger.warning(f"Failed to create {key} visualization: {e}")

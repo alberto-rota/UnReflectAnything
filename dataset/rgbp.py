@@ -6,21 +6,13 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
-import yaml
 from PIL import Image
-from torch.utils.data import ConcatDataset, DataLoader, Dataset
+from torch.utils.data import ConcatDataset, Dataset
 
 from logger import get_logger
+from .polarization import PolarizationProcessor
 
 logger = get_logger(__name__).set_context("DATASET")
-
-try:
-    import polanalyser as pa
-
-    POLANALYSER_AVAILABLE = True
-except ImportError:
-    POLANALYSER_AVAILABLE = False
-    logger.warning("Warning: polanalyser not available. Using manual implementation.")
 
 
 class RGBP_Dataset(Dataset):
@@ -174,6 +166,14 @@ class RGBP_Dataset(Dataset):
         self.highlight_rect_size = highlight_rect_size
         self.highlight_return_rect = highlight_return_rect
         self.highlight_return_rect_as_rgb = highlight_return_rect_as_rgb
+
+        # Polarization processor (delegates polarization loading logic)
+        self._pol_processor = PolarizationProcessor(
+            rho_s=self.rho_s,
+            eps=self.eps,
+            dolp_min_intensity=self.dolp_min_intensity,
+            dolp_min_value=self.dolp_min_value,
+        )
 
     def _resize_tensor(
         self, tensor: torch.Tensor, target_size: Tuple[int, int]
@@ -476,7 +476,7 @@ class RGBP_Dataset(Dataset):
         """
         """Get list of scene names that are actually loaded in the dataset."""
         loaded_scenes = set()
-        for rgb_path, _, _ in self.scene_pairs:
+        for rgb_path, _, _, _ in self.scene_pairs:
             scene_name = os.path.basename(os.path.dirname(os.path.dirname(rgb_path)))
             loaded_scenes.add(scene_name)
         return sorted(list(loaded_scenes))
@@ -553,94 +553,18 @@ class RGBP_Dataset(Dataset):
         self, pol_path: str
     ) -> Dict[str, torch.Tensor]:
         """
-        Load and process polarization data based on format.
-
-        Args:
-            pol_path: For single_file_clock format, this is the full file path.
-                     For separate_files format, this is the base path without extension.
-                     For separate_files_stokes format, this is the base path without extension.
+        Delegates polarization loading to PolarizationProcessor. Kept as a
+        method for backward compatibility and caching behavior.
         """
-        if self.polarization_format == "single_file_clock":
-            return self._load_single_file_polarization(pol_path)
-        elif self.polarization_format == "separate_files":
-            return self._load_separate_polarization_files(pol_path)
-        elif self.polarization_format == "separate_files_stokes":
-            return self._load_separate_stokes_files(pol_path)
-        elif self.polarization_format == "single_file_topdown":
-            return self.single_arat_files_topdown(pol_path)
-        else:
-            raise ValueError(f"Unknown polarization format: {self.polarization_format}")
+        return self._pol_processor.load(
+            pol_path=pol_path,
+            polarization_format=self.polarization_format,
+            pol_ext=self.pol_ext,
+        )
 
     def _load_single_file_polarization(self, pol_path: str) -> Dict[str, torch.Tensor]:
-        """Load polarization data from single file with clockwise arrangement"""
-
-        # Load image directly as torch tensor
-        pol_img = Image.open(pol_path).convert("RGB")
-        pol_rgb = torch.from_numpy(np.asarray(pol_img, dtype=np.float32)) / 255.0
-
-        H, W, _ = pol_rgb.shape
-        hh, hw = H // 2, W // 2
-
-        # Split quadrants (clockwise arrangement)
-        I0_rgb = pol_rgb[:hh, :hw, :]
-        I45_rgb = pol_rgb[:hh, hw:, :]
-        I90_rgb = pol_rgb[hh:, hw:, :]
-        I135_rgb = pol_rgb[hh:, :hw, :]
-
-        # Convert to luminance (staying in torch)
-        I0 = self._to_luminance_torch(I0_rgb)
-        I45 = self._to_luminance_torch(I45_rgb)
-        I90 = self._to_luminance_torch(I90_rgb)
-        I135 = self._to_luminance_torch(I135_rgb)
-
-        # Compute Stokes parameters
-        S0 = I0 + I90
-        S1 = I0 - I90
-        S2 = I45 - I135
-
-        # Compute DoLP and AoP
-        DoLP = torch.clamp(
-            torch.sqrt(S1**2 + S2**2) / torch.clamp(S0, min=self.eps), 0.0, 1.0
-        )
-        AoP = 0.5 * torch.atan2(S2, S1)
-
-        # Apply DoLP masking
-        valid_mask = (S0 >= self.dolp_min_intensity).float()
-        DoLP = DoLP * valid_mask
-        DoLP = torch.where(DoLP < self.dolp_min_value, torch.zeros_like(DoLP), DoLP)
-
-        # Compute specular fraction
-        f_spec = DoLP * S0
-        # Normalize to be max 1
-        f_spec = torch.clamp(f_spec / torch.max(f_spec), 0.0, 1.0)
-        # f_spec = torch.clamp(DoLP / max(self.rho_s, 1e-6), 0.0, 1.0)
-
-        # Additional parameters (simplified)
-        S3 = torch.zeros_like(S0)
-
-        # Create polarization data dictionary
-        pol_data = {
-            "I0": I0_rgb.permute(2, 0, 1),
-            "I45": I45_rgb.permute(2, 0, 1),
-            "I90": I90_rgb.permute(2, 0, 1),
-            "I135": I135_rgb.permute(2, 0, 1),
-            "S0": S0.unsqueeze(0),
-            "S1": S1.unsqueeze(0),
-            "S2": S2.unsqueeze(0),
-            "S3": S3.unsqueeze(0),
-            "stokes": torch.cat([S0, S1, S2], dim=0).unsqueeze(0),
-            "intensity": S0.unsqueeze(0),
-            "DoLP": DoLP.unsqueeze(0),
-            "AoP": AoP.unsqueeze(0),
-            "AoLP": AoP.unsqueeze(0),
-            "DoP": DoLP.unsqueeze(0),
-            "DoCP": torch.zeros_like(DoLP).unsqueeze(0),
-            "ellipticity_angle": torch.zeros_like(DoLP).unsqueeze(0),
-            "f_spec": f_spec.unsqueeze(0),
-        }
-
-        # Return full resolution polarization data - resizing will be done later if needed
-        return pol_data
+        """Backward-compatible wrapper to single-file loader."""
+        return self._pol_processor.load_single_file_clock(pol_path)
 
     def _load_and_process_polarization(self, pol_path: str) -> Dict[str, torch.Tensor]:
         """Load polarization with optional caching"""
@@ -839,247 +763,18 @@ class RGBP_Dataset(Dataset):
     def _load_separate_polarization_files(
         self, pol_base_path: str
     ) -> Dict[str, torch.Tensor]:
-        """
-        Load polarization data from separate files (_000, _045, _090, _135).
-
-        Args:
-            pol_base_path: Base path without extension (e.g., "/path/to/pol/000034")
-
-        Returns:
-            Dictionary containing polarization data tensors
-        """
-        # Construct individual file paths
-        pol_paths = {
-            "000": f"{pol_base_path}_000{self.pol_ext}",
-            "045": f"{pol_base_path}_045{self.pol_ext}",
-            "090": f"{pol_base_path}_090{self.pol_ext}",
-            "135": f"{pol_base_path}_135{self.pol_ext}",
-        }
-
-        # Load individual polarization images
-        pol_images = {}
-        for angle, path in pol_paths.items():
-            img = Image.open(path).convert("RGB")
-            pol_images[angle] = (
-                torch.from_numpy(np.asarray(img, dtype=np.float32)) / 255.0
-            )
-
-        # Extract RGB data for each polarization angle
-        I0_rgb = pol_images["000"]  # 0 degrees
-        I45_rgb = pol_images["045"]  # 45 degrees
-        I90_rgb = pol_images["090"]  # 90 degrees
-        I135_rgb = pol_images["135"]  # 135 degrees
-
-        # Convert to luminance (staying in torch)
-        I0 = self._to_luminance_torch(I0_rgb)
-        I45 = self._to_luminance_torch(I45_rgb)
-        I90 = self._to_luminance_torch(I90_rgb)
-        I135 = self._to_luminance_torch(I135_rgb)
-
-        # Compute Stokes parameters
-        S0 = I0 + I90
-        S1 = I0 - I90
-        S2 = I45 - I135
-
-        # Compute DoLP and AoP
-        R = torch.sqrt(S1**2 + S2**2)
-        DoLP = torch.clamp(R / torch.clamp(S0, min=self.eps), 0.0, 1.0)
-        AoP = 0.5 * torch.atan2(S2, S1)
-
-        # Apply DoLP masking
-        valid_mask = (S0 >= self.dolp_min_intensity).float()
-        DoLP = DoLP * valid_mask
-        DoLP = torch.where(DoLP < self.dolp_min_value, torch.zeros_like(DoLP), DoLP)
-
-        # Compute specular fraction
-        f_spec = torch.clamp(DoLP / max(self.rho_s, 1e-6), 0.0, 1.0)
-
-        # Additional parameters (simplified)
-        S3 = torch.zeros_like(S0)
-
-        # Create polarization data dictionary
-        pol_data = {
-            "I0": I0_rgb.permute(2, 0, 1),
-            "I45": I45_rgb.permute(2, 0, 1),
-            "I90": I90_rgb.permute(2, 0, 1),
-            "I135": I135_rgb.permute(2, 0, 1),
-            "S0": S0.unsqueeze(0),
-            "S1": S1.unsqueeze(0),
-            "S2": S2.unsqueeze(0),
-            "S3": S3.unsqueeze(0),
-            "stokes": torch.cat([S0, S1, S2], dim=0).unsqueeze(0),
-            "intensity": S0.unsqueeze(0),
-            "DoLP": DoLP.unsqueeze(0),
-            "AoP": AoP.unsqueeze(0),
-            "AoLP": AoP.unsqueeze(0),
-            "DoP": DoLP.unsqueeze(0),
-            "DoCP": torch.zeros_like(DoLP).unsqueeze(0),
-            "ellipticity_angle": torch.zeros_like(DoLP).unsqueeze(0),
-            "f_spec": f_spec.unsqueeze(0),
-        }
-
-        # Return full resolution polarization data - resizing will be done later if needed
-        return pol_data
+        """Backward-compatible wrapper to separate-files loader."""
+        return self._pol_processor.load_separate_files(pol_base_path, self.pol_ext)
 
     def _load_separate_stokes_files(
         self, pol_base_path: str
     ) -> Dict[str, torch.Tensor]:
-        """
-        Load polarization data from separate Stokes parameter files (_S0, _S1, _S2).
-
-        Args:
-            pol_base_path: Base path without extension (e.g., "/path/to/pol/000034")
-
-        Returns:
-            Dictionary containing polarization data tensors
-        """
-        # Construct individual file paths for Stokes parameters
-        stokes_paths = {
-            "S0": f"{pol_base_path}_S0.npy",
-            "S1": f"{pol_base_path}_S1.npy",
-            "S2": f"{pol_base_path}_S2.npy",
-        }
-
-        # Load individual Stokes parameter files
-        stokes_data = {}
-        for stokes_name, path in stokes_paths.items():
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"Stokes file not found: {path}")
-
-            # Load .npy file directly as torch tensor
-            stokes_array = np.load(path)
-            stokes_data[stokes_name] = torch.from_numpy(stokes_array.astype(np.float32))
-
-        # Extract Stokes parameters
-        S0 = stokes_data["S0"].mean(-1)  # [H, W]
-        S1 = stokes_data["S1"].mean(-1)  # [H, W]
-        S2 = stokes_data["S2"].mean(-1)  # [H, W]
-
-        # Compute DoLP and AoP from Stokes parameters
-        R = torch.sqrt(S1**2 + S2**2)
-        DoLP = torch.clamp(R / torch.clamp(S0, min=self.eps), 0.0, 1.0)
-        AoP = 0.5 * torch.atan2(S2, S1)
-
-        # Apply DoLP masking
-        valid_mask = (S0 >= self.dolp_min_intensity).float()
-        DoLP = DoLP * valid_mask
-        DoLP = torch.where(DoLP < self.dolp_min_value, torch.zeros_like(DoLP), DoLP)
-
-        # Compute specular fraction
-        f_spec = torch.clamp(DoLP / max(self.rho_s, 1e-6), 0.0, 1.0)
-
-        # Additional parameters (simplified)
-        S3 = torch.zeros_like(S0)
-
-        # Reconstruct original intensity images from Stokes parameters
-        # I0 = (S0 + S1) / 2, I90 = (S0 - S1) / 2
-        # I45 = (S0 + S2) / 2, I135 = (S0 - S2) / 2
-        I0 = (S0 + S1) / 2.0
-        I90 = (S0 - S1) / 2.0
-        I0_rgb = torch.stack([I0, I0, I0], dim=-1)  # [H, W, 3]
-        I90_rgb = torch.stack([I90, I90, I90], dim=-1)  # [H, W, 3]
-        # Create polarization data dictionary
-        pol_data = {
-            "I0": I0_rgb.permute(2, 0, 1),  # [3, H, W]
-            "I45": torch.zeros_like(I0_rgb).permute(2, 0, 1),  # [3, H, W]
-            "I90": I90_rgb.permute(2, 0, 1),  # [3, H, W]
-            "I135": torch.zeros_like(I0_rgb).permute(2, 0, 1),  # [3, H, W]
-            "S0": S0.unsqueeze(0),  # [1, H, W]
-            "S1": S1.unsqueeze(0),  # [1, H, W]
-            "S2": S2.unsqueeze(0),  # [1, H, W]
-            "S3": S3.unsqueeze(0),  # [1, H, W]
-            "stokes": torch.cat([S0, S1, S2], dim=0).unsqueeze(0),  # [1, 3, H, W]
-            "intensity": S0.unsqueeze(0),  # [1, H, W]
-            "DoLP": DoLP.unsqueeze(0),  # [1, H, W]
-            "AoP": AoP.unsqueeze(0),  # [1, H, W]
-            "AoLP": AoP.unsqueeze(0),  # [1, H, W]
-            "DoP": DoLP.unsqueeze(0),  # [1, H, W]
-            "DoCP": torch.zeros_like(DoLP).unsqueeze(0),  # [1, H, W]
-            "ellipticity_angle": torch.zeros_like(DoLP).unsqueeze(0),  # [1, H, W]
-            "f_spec": f_spec.unsqueeze(0),  # [1, H, W]
-        }
-
-        # Return full resolution polarization data - resizing will be done later if needed
-        return pol_data
+        """Backward-compatible wrapper to separate Stokes loader."""
+        return self._pol_processor.load_separate_stokes(pol_base_path)
 
     def single_arat_files_topdown(self, pol_path: str) -> Dict[str, torch.Tensor]:
-        """
-        Load polarization data from single file with vertical arrangement (top to bottom).
-
-        Args:
-            pol_path: Path to the single polarization file
-
-        Returns:
-            Dictionary containing polarization data tensors
-        """
-        # Load image directly as torch tensor
-        pol_img = Image.open(pol_path).convert("RGB")
-        pol_rgb = torch.from_numpy(np.asarray(pol_img, dtype=np.float32)) / 255.0
-
-        # Get dimensions: [H, W, C]
-        H, W, C = pol_rgb.shape
-        nw = H // 4  # Each polarization image takes 1/4 of the height
-
-        # Split vertically (top to bottom arrangement)
-        # pol_0 = polarized_input[0 * nw:1 * nw, :]
-        # pol_45 = polarized_input[1 * nw:2 * nw, :] 
-        # pol_90 = polarized_input[2 * nw:3 * nw, :]
-        # pol_135 = polarized_input[3 * nw:4 * nw, :]
-        I0_rgb = pol_rgb[0 * nw:1 * nw, :, :]      # 0 degrees (top)
-        I45_rgb = pol_rgb[1 * nw:2 * nw, :, :]     # 45 degrees
-        I90_rgb = pol_rgb[2 * nw:3 * nw, :, :]     # 90 degrees  
-        I135_rgb = pol_rgb[3 * nw:4 * nw, :, :]    # 135 degrees (bottom)
-
-        # Convert to luminance (staying in torch)
-        I0 = self._to_luminance_torch(I0_rgb)
-        I45 = self._to_luminance_torch(I45_rgb)
-        I90 = self._to_luminance_torch(I90_rgb)
-        I135 = self._to_luminance_torch(I135_rgb)
-
-        # Compute Stokes parameters
-        S0 = I0 + I90
-        S1 = I0 - I90
-        S2 = I45 - I135
-
-        # Compute DoLP and AoP
-        R = torch.sqrt(S1**2 + S2**2)
-        DoLP = torch.clamp(R / torch.clamp(S0, min=self.eps), 0.0, 1.0)
-        AoP = 0.5 * torch.atan2(S2, S1)
-
-        # Apply DoLP masking
-        valid_mask = (S0 >= self.dolp_min_intensity).float()
-        DoLP = DoLP * valid_mask
-        DoLP = torch.where(DoLP < self.dolp_min_value, torch.zeros_like(DoLP), DoLP)
-
-        # Compute specular fraction
-        f_spec = torch.clamp(DoLP / max(self.rho_s, 1e-6), 0.0, 1.0)
-
-        # Additional parameters (simplified)
-        S3 = torch.zeros_like(S0)
-
-        # Create polarization data dictionary
-        pol_data = {
-            "I0": I0_rgb.permute(2, 0, 1),  # [3, H, W]
-            "I45": I45_rgb.permute(2, 0, 1),  # [3, H, W]
-            "I90": I90_rgb.permute(2, 0, 1),  # [3, H, W]
-            "I135": I135_rgb.permute(2, 0, 1),  # [3, H, W]
-            "S0": S0.unsqueeze(0),  # [1, H, W]
-            "S1": S1.unsqueeze(0),  # [1, H, W]
-            "S2": S2.unsqueeze(0),  # [1, H, W]
-            "S3": S3.unsqueeze(0),  # [1, H, W]
-            "stokes": torch.cat([S0, S1, S2], dim=0).unsqueeze(0),  # [1, 3, H, W]
-            "intensity": S0.unsqueeze(0),  # [1, H, W]
-            "DoLP": DoLP.unsqueeze(0),  # [1, H, W]
-            "AoP": AoP.unsqueeze(0),  # [1, H, W]
-            "AoLP": AoP.unsqueeze(0),  # [1, H, W]
-            "DoP": DoLP.unsqueeze(0),  # [1, H, W]
-            "DoCP": torch.zeros_like(DoLP).unsqueeze(0),  # [1, H, W]
-            "ellipticity_angle": torch.zeros_like(DoLP).unsqueeze(0),  # [1, H, W]
-            "f_spec": f_spec.unsqueeze(0),  # [1, H, W]
-        }
-
-        # Return full resolution polarization data - resizing will be done later if needed
-        return pol_data
+        """Backward-compatible wrapper to top-down single-file loader."""
+        return self._pol_processor.load_single_file_topdown(pol_path)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """

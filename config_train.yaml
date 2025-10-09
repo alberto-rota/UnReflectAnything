@@ -4,7 +4,7 @@ parameters:
   ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:
-      MODEL_CLASS: "RGBPOLDecomposer"
+      MODEL_CLASS: "RGBDistillDecomposer"
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vitb16-pretrain-lvd1689m"
         IMAGE_SIZE: 448
@@ -50,43 +50,46 @@ parameters:
   ### DATA                                                                      
   DATASETS:
     value:
-      SCRREAM:
-        VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
-        LOAD_RGB_ONLY: False
-        
-      HOUSECAT6D:
-        VAL_SCENES: "val"
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "crop"
-        LOAD_RGB_ONLY: False
-
-      POLARGB:
-        TRAIN_SCENES: "train"
-        VAL_SCENES: "test"
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
-        LOAD_RGB_ONLY: False
-
-      CROMO:
-        TRAIN_SCENES: "kitchen"
-        # VAL_SCENES: "test"
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
-        LOAD_RGB_ONLY: False
-
-      # SCARED:
-      #   VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
+      # SCRREAM:
+      #   VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: True
-      #   HIGHLIGHT_ENABLE: False  
-      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
-      #   HIGHLIGHT_RETURN_MASK: True
-      #   HIGHLIGHT_RECT_SIZE: [672, 672]
-      #   HIGHLIGHT_RETURN_RECT_AS_RGB: True
-      #   HIGHLIGHT_RETURN_RECT: True
+      #   FEW_IMAGES: True
+      #   LOAD_RGB_ONLY: False
+        
+      # HOUSECAT6D:
+      #   VAL_SCENES: "val"
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "crop"
+      #   FEW_IMAGES: False
+      #   LOAD_RGB_ONLY: False
+
+      # POLARGB:
+      #   TRAIN_SCENES: "train"
+      #   VAL_SCENES: "test"
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "resize"
+      #   LOAD_RGB_ONLY: False
+
+      # CROMO:
+      #   TRAIN_SCENES: "kitchen"
+      #   VAL_SCENES: "test"
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "resize"
+      #   LOAD_RGB_ONLY: False
+
+      SCARED:
+        VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        LOAD_RGB_ONLY: True
+        FEW_IMAGES: True
+        HIGHLIGHT_ENABLE: True  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [1024, 1024]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: True
+        HIGHLIGHT_RETURN_RECT: True
 
       # SYNTHETIC:
       #   TRAIN_SCENES: "bedroom"
@@ -104,7 +107,7 @@ parameters:
   BATCH_SIZE: # Max batch size with img size 448 is 64
     value: 16
   NUM_WORKERS:
-    value: 6
+    value: 6  
   SHUFFLE:
     value: True
   PIN_MEMORY:
@@ -138,9 +141,9 @@ parameters:
   WEIGHT_DECAY:
     value: 0.0
   EPOCHS:
-    value: 50
+    value: 10
   GRADIENT_ACCUMULATION_STEPS:
-    value: 2
+    value: 1
   WARMUP_STEPS:
     value: 200
   GRADIENT_CLIPPING_MAX_NORM:
@@ -151,7 +154,7 @@ parameters:
         PATIENCE: 10
         FACTOR: 0.1
       COSINE:
-        N_PERIODS: 60
+        N_PERIODS: 20
       # STEPWISE:
       #   N_STEPS: 3
       #   GAMMA: 0.5

@@ -267,13 +267,13 @@ class EarlyStopping:
         # Create checkpoint directory if it doesn't exist
         os.makedirs(checkpointpath, exist_ok=True)
 
-    def __call__(self, val_loss, model, epoch):
+    def __call__(self, val_loss, model, epoch, optimizer=None, config=None, wandb=None):
         if self.patience > 0:
             score = -val_loss
             logger.set_context("OPTIMIZATION")
             if self.best_score is None:
                 self.best_score = score
-                self.save_checkpoint(val_loss, model, epoch)
+                self.save_checkpoint(val_loss, model, epoch, optimizer, config, wandb)
             elif score < self.best_score + self.delta:
                 self.counter += 1
                 logger.info(
@@ -283,10 +283,10 @@ class EarlyStopping:
                     self.early_stop = True
             else:
                 self.best_score = score
-                self.save_checkpoint(val_loss, model, epoch)
+                self.save_checkpoint(val_loss, model, epoch, optimizer, config, wandb)
                 self.counter = 0
 
-    def save_checkpoint(self, val_loss, model, epoch):
+    def save_checkpoint(self, val_loss, model, epoch, optimizer=None, config=None, wandb=None):
         """Saves model when validation loss decrease."""
         if self.verbose:
             if epoch != 0:
@@ -298,11 +298,20 @@ class EarlyStopping:
         self.val_loss_min = val_loss
 
         try:
-            # Save state dict locally first
+            # Save complete checkpoint locally first
             checkpoint_path = os.path.join(self.checkpointpath, "weights_best.pt")
             model._forward_hooks.clear()
 
-            torch.save(model.state_dict(), checkpoint_path, pickle_module=dill)
+            # Create complete checkpoint with all required keys
+            checkpoint = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
+                "config": config if config is not None else {},
+                "wandb_run_id": getattr(wandb, 'id', None) if wandb is not None else None,
+            }
+
+            torch.save(checkpoint, checkpoint_path, pickle_module=dill)
 
             # Get run name for artifact path
             saveto_statedict = f"ARTIFACTS/{self.runname}.pt"

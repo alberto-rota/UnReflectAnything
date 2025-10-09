@@ -242,7 +242,7 @@ def transforms(height, width):
     }
 
 
-def wandb(config, model=None, notes="", no_wandb=False):
+def wandb(config, model=None, notes="", no_wandb=False, resume_wandb_run_id=None):
     """Initialize Weights & Biases tracking"""
     if no_wandb:
         return {"wandb": None, "testtable": None}
@@ -251,7 +251,29 @@ def wandb(config, model=None, notes="", no_wandb=False):
     logger.set_context("WANDB")
 
     run_id = None
-    if "RUN" in config:
+    resume_run = None
+    
+    # Check for resume wandb run ID first (from resume functionality)
+    if resume_wandb_run_id:
+        run_id = resume_wandb_run_id
+        logger.info(f"Attempting to resume wandb run with ID: {run_id}")
+        
+        # Verify that the run exists before trying to resume
+        try:
+            api = weightsandbiases.Api()
+            existing_run = api.run(f"{config.get('WANDB_ENTITY', 'unreflectanything')}/{config.get('WANDB_PROJECT', 'UnReflectAnything')}/{run_id}")
+            if existing_run:
+                logger.info(f"Found existing wandb run to resume: {run_id}")
+                resume_run = True
+            else:
+                logger.warning(f"Wandb run {run_id} not found, will create new run")
+                resume_run = None
+                run_id = None
+        except Exception as e:
+            logger.warning(f"Could not verify wandb run {run_id}: {e}. Will create new run")
+            resume_run = None
+            run_id = None
+    elif "RUN" in config:
         try:
             resume_run = weightsandbiases.Api().runs(
                 path=f"{weightsandbiases.api.default_entity}/{config.get('PROJECT', 'UnReflectAnything')}",
@@ -381,16 +403,25 @@ def earlystopping(patience, models_dir, runname=None):
 def save_hyperparameters_json(run_dir, config):
     """Save hyperparameters to disk"""
     hyperparams_path = os.path.join(run_dir, "hyperparams.json")
+    config_path = os.path.join(run_dir, "config.json")
 
-    # Ensure the file exists
+    # Ensure the files exist
     if not os.path.exists(hyperparams_path):
         with open(hyperparams_path, "x"):
             pass
+    
+    if not os.path.exists(config_path):
+        with open(config_path, "x"):
+            pass
 
-    # Write the config
+    # Write the config to both files for compatibility
     with open(hyperparams_path, "w") as f:
         all_hyperparams = {"training": config}
         json.dump(all_hyperparams, f, indent=4, skipkeys=True, default=str)
+    
+    # Also save the config directly for resume functionality
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=4, skipkeys=True, default=str)
 
 
 def tracking_metrics():

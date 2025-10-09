@@ -230,6 +230,97 @@ def compose_diffuse_highlight_and_layers(
         result = a * rgb + (1 - a) * result
     return result
 
+# -------------------------------------
+#   Highlight regression (alpha in [0,1])
+# -------------------------------------
+class HighlightRegressionLoss(nn.Module):
+    """
+    Per-pixel regression loss for soft highlight fraction alpha ∈ [0,1].
+    All selected terms are 0 when pred == gt.
+    """
+    def __init__(
+        self,
+        w_l1=1.0,              # Charbonnier/L1 main term
+        use_charbonnier=True,
+        w_dice=0.0,            # squared soft-Dice
+        w_ssim=0.0,            # SSIM on alpha
+        w_grad=0.0,            # gradient consistency
+        w_tv=0.0,              # TV on pred (regularizer)
+        ssim_impl=None,        # pass SSIMLoss() if using SSIM
+        dice_smooth=1e-6,
+        charbonnier_eps=1e-6,
+        clamp_to_unit=True,
+        # New: class-imbalance and stabilization options (backward compatible)
+        balance_mode: str = "none",   # 'none' | 'auto' | 'pos_weight'
+        pos_weight: float = 1.0,       # used when balance_mode == 'pos_weight'
+        focal_gamma: float = 0.0,      # >0 to focus large errors, 0 keeps old behavior
+    ):
+        super().__init__()
+        self.w_l1 = w_l1
+        self.w_dice = w_dice
+        self.w_ssim = w_ssim
+        self.w_grad = w_grad
+        self.w_tv = w_tv
+        self.clamp_to_unit = clamp_to_unit
+
+        self.l_main = CharbonnierLoss(eps=charbonnier_eps) if use_charbonnier else nn.L1Loss()
+        self.l_dice = SquaredSoftDiceLoss(smooth=dice_smooth)
+        self.l_grad = GradientLoss()
+        self.l_tv = TVLoss()
+        self.ssim = ssim_impl
+        self.balance_mode = balance_mode
+        self.pos_weight = pos_weight
+        self.focal_gamma = focal_gamma
+
+    def forward(self, pred, target):
+        if self.clamp_to_unit:
+            pred = torch.clamp(pred, 0.0, 1.0)
+            target = torch.clamp(target, 0.0, 1.0)
+
+        loss = 0.0
+        if self.w_l1 > 0:
+            # Optional focal modulation on the per-pixel residual (keeps grads for small errors too)
+            if self.focal_gamma > 0.0:
+                # detach target to avoid second-order effects; keep pred in graph
+                resid = (pred - target).abs()
+                focal_w = torch.pow(resid.clamp_min(1e-6), self.focal_gamma)
+            else:
+                focal_w = 1.0
+
+            if self.balance_mode == "none":
+                main_term = self.l_main(pred * focal_w, target * focal_w)
+            else:
+                # Compute per-pixel weights
+                if self.balance_mode == "auto":
+                    # Balance positives/negatives to contribute equally
+                    # target assumed in [0,1]; threshold at 0.5 for positives
+                    pos_frac = (target >= 0.5).float().mean().clamp_min(1e-6)
+                    w_pos = 0.5 / pos_frac
+                    w_neg = 0.5 / (1.0 - pos_frac)
+                    pixel_w = torch.where(target >= 0.5, w_pos, w_neg)
+                elif self.balance_mode == "pos_weight":
+                    pixel_w = torch.where(target >= 0.5, self.pos_weight, 1.0)
+                else:
+                    pixel_w = 1.0
+
+                if isinstance(self.l_main, CharbonnierLoss):
+                    # Inline charbonnier to support per-pixel weights
+                    eps = self.l_main.eps
+                    main_term = torch.sqrt((pred - target) ** 2 + eps**2)
+                    main_term = (main_term * pixel_w * focal_w).mean()
+                else:
+                    main_term = ((pred - target).abs() * pixel_w * focal_w).mean()
+
+            loss = loss + self.w_l1 * main_term
+        if self.w_dice > 0:
+            loss = loss + self.w_dice * self.l_dice(pred, target)
+        if self.w_ssim > 0 and self.ssim is not None:
+            loss = loss + self.w_ssim * (1.0 - self.ssim(pred, target))
+        if self.w_grad > 0:
+            loss = loss + self.w_grad * self.l_grad(pred, target)
+        if self.w_tv > 0:
+            loss = loss + self.w_tv * self.l_tv(pred)
+        return loss
 
 class UnReflectLoss(nn.Module):
     """
@@ -238,6 +329,7 @@ class UnReflectLoss(nn.Module):
     - Components (diffuse, specular): supervised with masked L1 + (1 - SSIM)
     - Highlight (1-ch): per-pixel regression alpha ∈ [0,1]
     - Reconstruction: alpha_composite(diffuse + specular) + additive highlight
+    
     """
     def __init__(
         self,
@@ -471,95 +563,3 @@ class UnReflectLoss(nn.Module):
         losses["total"] = total_loss
         return losses
 
-# -------------------------------------
-#   Highlight regression (alpha in [0,1])
-# -------------------------------------
-class HighlightRegressionLoss(nn.Module):
-    """
-    Per-pixel regression loss for soft highlight fraction alpha ∈ [0,1].
-    All selected terms are 0 when pred == gt.
-    """
-    def __init__(
-        self,
-        w_l1=1.0,              # Charbonnier/L1 main term
-        use_charbonnier=True,
-        w_dice=0.0,            # squared soft-Dice
-        w_ssim=0.0,            # SSIM on alpha
-        w_grad=0.0,            # gradient consistency
-        w_tv=0.0,              # TV on pred (regularizer)
-        ssim_impl=None,        # pass SSIMLoss() if using SSIM
-        dice_smooth=1e-6,
-        charbonnier_eps=1e-6,
-        clamp_to_unit=True,
-        # New: class-imbalance and stabilization options (backward compatible)
-        balance_mode: str = "none",   # 'none' | 'auto' | 'pos_weight'
-        pos_weight: float = 1.0,       # used when balance_mode == 'pos_weight'
-        focal_gamma: float = 0.0,      # >0 to focus large errors, 0 keeps old behavior
-    ):
-        super().__init__()
-        self.w_l1 = w_l1
-        self.w_dice = w_dice
-        self.w_ssim = w_ssim
-        self.w_grad = w_grad
-        self.w_tv = w_tv
-        self.clamp_to_unit = clamp_to_unit
-
-        self.l_main = CharbonnierLoss(eps=charbonnier_eps) if use_charbonnier else nn.L1Loss()
-        self.l_dice = SquaredSoftDiceLoss(smooth=dice_smooth)
-        self.l_grad = GradientLoss()
-        self.l_tv = TVLoss()
-        self.ssim = ssim_impl
-        self.balance_mode = balance_mode
-        self.pos_weight = pos_weight
-        self.focal_gamma = focal_gamma
-
-    def forward(self, pred, target):
-        if self.clamp_to_unit:
-            pred = torch.clamp(pred, 0.0, 1.0)
-            target = torch.clamp(target, 0.0, 1.0)
-
-        loss = 0.0
-        if self.w_l1 > 0:
-            # Optional focal modulation on the per-pixel residual (keeps grads for small errors too)
-            if self.focal_gamma > 0.0:
-                # detach target to avoid second-order effects; keep pred in graph
-                resid = (pred - target).abs()
-                focal_w = torch.pow(resid.clamp_min(1e-6), self.focal_gamma)
-            else:
-                focal_w = 1.0
-
-            if self.balance_mode == "none":
-                main_term = self.l_main(pred * focal_w, target * focal_w)
-            else:
-                # Compute per-pixel weights
-                if self.balance_mode == "auto":
-                    # Balance positives/negatives to contribute equally
-                    # target assumed in [0,1]; threshold at 0.5 for positives
-                    with torch.no_grad():
-                        pos_frac = (target >= 0.5).float().mean().clamp_min(1e-6)
-                        w_pos = 0.5 / pos_frac
-                        w_neg = 0.5 / (1.0 - pos_frac)
-                        pixel_w = torch.where(target >= 0.5, w_pos, w_neg)
-                elif self.balance_mode == "pos_weight":
-                    pixel_w = torch.where(target >= 0.5, self.pos_weight, 1.0)
-                else:
-                    pixel_w = 1.0
-
-                if isinstance(self.l_main, CharbonnierLoss):
-                    # Inline charbonnier to support per-pixel weights
-                    eps = self.l_main.eps
-                    main_term = torch.sqrt((pred - target) ** 2 + eps**2)
-                    main_term = (main_term * pixel_w * focal_w).mean()
-                else:
-                    main_term = ((pred - target).abs() * pixel_w * focal_w).mean()
-
-            loss = loss + self.w_l1 * main_term
-        if self.w_dice > 0:
-            loss = loss + self.w_dice * self.l_dice(pred, target)
-        if self.w_ssim > 0 and self.ssim is not None:
-            loss = loss + self.w_ssim * (1.0 - self.ssim(pred, target))
-        if self.w_grad > 0:
-            loss = loss + self.w_grad * self.l_grad(pred, target)
-        if self.w_tv > 0:
-            loss = loss + self.w_tv * self.l_tv(pred)
-        return loss

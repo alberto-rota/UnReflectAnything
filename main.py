@@ -428,6 +428,11 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
         default=f"config_{mode}.yaml",
         help="Path to the config file",
     )
+    parser.add_argument(
+        "--resume-run",
+        type=str,
+        help="Resume training from an existing run. Provide the run name or run ID.",
+    )
 
     # Parse known and unknown arguments
     args, unknown = parser.parse_known_args()
@@ -543,27 +548,63 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
     # Run the appropriate function based on mode
     try:
         if mode == "train":
-            # Create model
-            model = create_model_from_config(config, DEVICE)
+            # Check if we need to resume from an existing run
+            if hasattr(args, 'resume_run') and args.resume_run:
+                logger.info(f"Resuming training from run: {args.resume_run}", context="RESUME")
+                
+                # Create model
+                model = create_model_from_config(config, DEVICE)
 
-            # Create datasets for training
-            dataset = create_datasets_from_config(config)
+                # Create datasets for training
+                dataset = create_datasets_from_config(config)
 
-            # Initialize engine
-            engine = Engine(
-                model=model,  # Pass the created model
-                dataset=dataset,
-                config=config,
-                no_wandb=config.get("NO_WANDB", False),
-                notes=config.get("NOTES", ""),
-            )
+                # Initialize engine
+                engine = Engine(
+                    model=model,  # Pass the created model
+                    dataset=dataset,
+                    config=config,
+                    no_wandb=config.get("NO_WANDB", False),
+                    notes=config.get("NOTES", ""),
+                )
+                
+                # Mark that we will resume to skip directory setup during init
+                engine._will_resume = True
+                
+                # Resume from the specified run
+                if not engine.resume_from_run(args.resume_run):
+                    logger.error("Failed to resume training. Exiting.", context="RESUME")
+                    return
+                
+                # Train the model (will start from the correct epoch)
+                engine.trainloop()
 
-            # Train the model
-            engine.trainloop()
+                # Load best model and test
+                engine.reinstantiate_model_from_checkpoint()
+                engine.test()
+            else:
+                # Normal training (new run)
+                # Create model
+                model = create_model_from_config(config, DEVICE)
 
-            # Load best model and test
-            engine.reinstantiate_model_from_checkpoint()
-            engine.test()
+                # Create datasets for training
+                dataset = create_datasets_from_config(config)
+
+                # Initialize engine
+                engine = Engine(
+                    model=model,  # Pass the created model
+                    dataset=dataset,
+                    config=config,
+                    no_wandb=config.get("NO_WANDB", False),
+                    resume_run_id=args.resume_run,
+                    notes=config.get("NOTES", ""),
+                )
+
+                # Train the model
+                engine.trainloop()
+
+                # Load best model and test
+                engine.reinstantiate_model_from_checkpoint()
+                engine.test()
 
         elif mode == "test":
             # Create model
