@@ -57,12 +57,12 @@ parameters:
       #   FEW_IMAGES: True
       #   LOAD_RGB_ONLY: False
         
-      # HOUSECAT6D:
-      #   VAL_SCENES: "val"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "crop"
-      #   FEW_IMAGES: False
-      #   LOAD_RGB_ONLY: False
+      HOUSECAT6D:
+        VAL_SCENES: "val"
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "crop"
+        FEW_IMAGES: False
+        LOAD_RGB_ONLY: False
 
       # POLARGB:
       #   TRAIN_SCENES: "train"
@@ -215,5 +215,3 @@ parameters:
     value: "UnReflectAnything"
   NOTES:
     value: ""
-  RESULTS_DIR:
-    value: "$RESULTS_DIR/"
