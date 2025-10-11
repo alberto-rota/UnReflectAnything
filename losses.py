@@ -413,35 +413,60 @@ class UnReflectLoss(nn.Module):
         # Broadcast: [B,1,H,W] * [3,1,1] -> [B,3,H,W]
         return highlight_single * color.view(1, 3, 1, 1)
 
-    def reconstruct_image(self, prediction):
+    def reconstruct_image(self, prediction, mask=None):
         """
         Reconstruct rgb_highlighted from predicted components using alpha_composite.
-        All components (diffuse, specular, highlight) are composited together.
+    
+        Args:
+            mask: [B,1,H,W] - if provided, components are masked before compositing
     
         Returns: [B,3,H,W]
-        """
-        # Build dict for alpha_composite
+        """ 
         composite_dict = {}
+
+        # Apply mask to components BEFORE compositing
+        if mask is not None:
+            mask_3ch = mask.expand(-1, 3, -1, -1)  # [B,3,H,W]
     
-        # Always start with diffuse as base
+        # Diffuse (always required)
         if 'diffuse' not in prediction:
             raise ValueError("Diffuse component is required for reconstruction")
     
-        composite_dict['diffuse'] = prediction['diffuse']  # [B,C,H,W] where C∈{3,4}
-    
-        # Add specular if present
+        diffuse = prediction['diffuse']
+        if mask is not None:
+            # Mask RGB channels
+            if diffuse.shape[1] == 3:
+                diffuse = diffuse * mask_3ch
+            elif diffuse.shape[1] == 4:
+                diffuse = torch.cat([
+                    diffuse[:, :3] * mask_3ch,
+                    diffuse[:, 3:4] * mask  # Mask alpha too
+                ], dim=1)
+        composite_dict['diffuse'] = diffuse
+
+        # Specular (if present)
         if 'specular' in prediction:
-            composite_dict['specular'] = prediction['specular']  # [B,C,H,W] where C∈{3,4}
-    
-        # Add highlight if present (alpha_composite handles 1-channel as grayscale-alpha)
+            specular = prediction['specular']
+            if mask is not None:
+                if specular.shape[1] == 3:
+                    specular = specular * mask_3ch
+                elif specular.shape[1] == 4:
+                    specular = torch.cat([
+                        specular[:, :3] * mask_3ch,
+                        specular[:, 3:4] * mask
+                    ], dim=1)
+            composite_dict['specular'] = specular
+
+        # Highlight (if present)
         if 'highlight' in prediction:
-            highlight = torch.clamp(prediction['highlight'], 0.0, 1.0)  # [B,1,H,W]
+            highlight = torch.clamp(prediction['highlight'], 0.0, 1.0)
+            if mask is not None:
+                highlight = highlight * mask  # [B,1,H,W]
             composite_dict['highlight'] = highlight
+
+        # Composite (now only unmasked pixels contribute)
+        composed_rgb = alpha_composite(composite_dict, output_format='rgb')
     
-        # Composite all components using alpha_composite
-        composed_rgb = alpha_composite(composite_dict, output_format='rgb')  # [B,3,H,W]
-    
-        # Optional clamping (alpha_composite should keep values in [0,1], but just in case)
         if self.clamp_reconstruction:
             composed_rgb = torch.clamp(composed_rgb, 0.0, 1.0)
     
@@ -559,6 +584,153 @@ class UnReflectLoss(nn.Module):
             + self.weight_image_reconstruction * losses["Reconstruction"]
             + self.weight_alpha_regularization * losses["AlphaRegularization"]
         )
+        
+        losses["total"] = total_loss
+        return losses
+
+
+class DistillationLoss(nn.Module):
+    """
+    Knowledge Distillation Loss combining student and teacher outputs.
+    
+    This loss function implements the standard knowledge distillation approach
+    where the student model learns from both the ground truth labels and the
+    soft predictions of a teacher model.
+    """
+    
+    def __init__(self, alpha=0.7, temperature=4.0, reduction='mean'):
+        """
+        Args:
+            alpha (float): Weight for distillation loss vs hard target loss
+            temperature (float): Temperature for softmax scaling
+            reduction (str): Reduction method for loss computation
+        """
+        super().__init__()
+        self.alpha = alpha
+        self.temperature = temperature
+        self.reduction = reduction
+        
+        # Standard cross-entropy loss for hard targets
+        self.ce_loss = nn.CrossEntropyLoss(reduction=reduction)
+        
+        # KL divergence loss for distillation
+        self.kl_loss = nn.KLDivLoss(reduction='batchmean')
+    
+    def forward(self, student_logits, teacher_logits, targets=None):
+        """
+        Compute distillation loss.
+        
+        Args:
+            student_logits: Student model predictions [B, C, ...]
+            teacher_logits: Teacher model predictions [B, C, ...]
+            targets: Ground truth targets (optional) [B, ...]
+            
+        Returns:
+            dict: Dictionary containing individual loss components
+        """
+        losses = {}
+        
+        # Compute distillation loss (KL divergence between soft predictions)
+        student_soft = F.log_softmax(student_logits / self.temperature, dim=1)
+        teacher_soft = F.softmax(teacher_logits / self.temperature, dim=1)
+        
+        distillation_loss = self.kl_loss(student_soft, teacher_soft) * (self.temperature ** 2)
+        losses["distillation"] = distillation_loss
+        
+        # Compute hard target loss if targets are provided
+        if targets is not None:
+            hard_loss = self.ce_loss(student_logits, targets)
+            losses["hard_target"] = hard_loss
+            
+            # Combined loss
+            total_loss = self.alpha * distillation_loss + (1 - self.alpha) * hard_loss
+        else:
+            # Only distillation loss
+            total_loss = distillation_loss
+        
+        losses["total"] = total_loss
+        return losses
+
+
+class FeatureDistillationLoss(nn.Module):
+    """
+    Feature-level Knowledge Distillation Loss.
+    
+    This loss function distills knowledge at the feature level rather than
+    just the final predictions, which can be more effective for complex models.
+    """
+    
+    def __init__(self, alpha=0.7, temperature=4.0, feature_weights=None):
+        """
+        Args:
+            alpha (float): Weight for distillation loss vs hard target loss
+            temperature (float): Temperature for softmax scaling
+            feature_weights (list): Weights for different feature layers
+        """
+        super().__init__()
+        self.alpha = alpha
+        self.temperature = temperature
+        self.feature_weights = feature_weights or [1.0]
+        
+        # Standard cross-entropy loss for hard targets
+        self.ce_loss = nn.CrossEntropyLoss()
+        
+        # MSE loss for feature distillation
+        self.mse_loss = nn.MSELoss()
+    
+    def forward(self, student_outputs, teacher_outputs, targets=None):
+        """
+        Compute feature distillation loss.
+        
+        Args:
+            student_outputs: Dict with student model outputs including features
+            teacher_outputs: Dict with teacher model outputs including features
+            targets: Ground truth targets (optional)
+            
+        Returns:
+            dict: Dictionary containing individual loss components
+        """
+        losses = {}
+        
+        # Feature distillation loss
+        feature_loss = 0.0
+        if "features" in student_outputs and "features" in teacher_outputs:
+            student_features = student_outputs["features"]
+            teacher_features = teacher_outputs["features"]
+            
+            # Handle multiple feature layers
+            if isinstance(student_features, (list, tuple)):
+                for i, (s_feat, t_feat) in enumerate(zip(student_features, teacher_features)):
+                    weight = self.feature_weights[i] if i < len(self.feature_weights) else 1.0
+                    feature_loss += weight * self.mse_loss(s_feat, t_feat)
+            else:
+                feature_loss = self.mse_loss(student_features, teacher_features)
+        
+        losses["feature_distillation"] = feature_loss
+        
+        # Prediction distillation loss
+        if "logits" in student_outputs and "logits" in teacher_outputs:
+            student_logits = student_outputs["logits"]
+            teacher_logits = teacher_outputs["logits"]
+            
+            student_soft = F.log_softmax(student_logits / self.temperature, dim=1)
+            teacher_soft = F.softmax(teacher_logits / self.temperature, dim=1)
+            
+            pred_loss = F.kl_div(student_soft, teacher_soft, reduction='batchmean') * (self.temperature ** 2)
+            losses["prediction_distillation"] = pred_loss
+        else:
+            pred_loss = 0.0
+        
+        # Hard target loss if targets are provided
+        if targets is not None and "logits" in student_outputs:
+            hard_loss = self.ce_loss(student_outputs["logits"], targets)
+            losses["hard_target"] = hard_loss
+            
+            # Combined loss
+            total_loss = self.alpha * (feature_loss + pred_loss) + (1 - self.alpha) * hard_loss
+        else:
+            # Only distillation losses
+            total_loss = feature_loss + pred_loss
         
         losses["total"] = total_loss
         return losses

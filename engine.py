@@ -659,9 +659,17 @@ class Engine:
                         param_group["lr"] = current_lr
 
                 ### Add polarization highlights
+                random_light_pos = self.add_polar_highlights.sample_light_source(
+                    dist_to_camera=self.config.LIGHT_DISTANCE_RANGE,
+                    left_right_angle=self.config.LIGHT_LEFT_RIGHT_ANGLE,
+                    above_below_angle=self.config.LIGHT_ABOVE_BELOW_ANGLE,
+                    batch_size=self.batch_size,
+                    device=self.device,
+                )
                 highlight_result = self.add_polar_highlights(
                     rgb=sample["rgb"].to(self.device, non_blocking=True),
                     pol=None,
+                    light_pos=random_light_pos,
                     intrinsic="compute",  # sample["intrinsics"].to(self.device, non_blocking=True),
                     shininess=self.config.SHININESS,
                     ks=self.config.KS,
@@ -690,7 +698,7 @@ class Engine:
                     lossmask = None
                 # Add virtual highlights to real highlights
                 real_and_virtual_highlights = (
-                    highlight_result["highlight"] + real_highlight_soft_mask
+                    highlight_result["highlight"] #+ real_highlight_soft_mask
                 ).clamp(0, 1)
 
                 ### Constructing ground truth dict
@@ -731,12 +739,29 @@ class Engine:
                 ### Forward pass
                 pred_decomposition = self.model(model_input)
 
+                ### Distillation forward pass (if teacher model is available)
+                if hasattr(self, 'teacher_model') and self.teacher_model is not None:
+                    with torch.no_grad():  # Teacher model doesn't need gradients
+                        teacher_pred_decomposition = self.teacher_model(model_input)
+                else:
+                    teacher_pred_decomposition = None
+
                 ### Loss Computation
-                losses = self.loss(
-                    prediction=pred_decomposition,
-                    ground_truth=gt_decomposition,
-                    mask=lossmask,
-                )
+                if hasattr(self, 'teacher_model') and self.teacher_model is not None:
+                    # Use distillation loss
+                    losses = self._compute_distillation_loss(
+                        student_pred=pred_decomposition,
+                        teacher_pred=teacher_pred_decomposition,
+                        ground_truth=gt_decomposition,
+                        mask=lossmask,
+                    )
+                else:
+                    # Use standard loss
+                    losses = self.loss(
+                        prediction=pred_decomposition,
+                        ground_truth=gt_decomposition,
+                        mask=lossmask,
+                    )
                 loss_value = losses["total"]
 
                 # Compositing the reconstructed image - for visualization purposes
@@ -1076,7 +1101,7 @@ class Engine:
                 caption="Comparison Panel",
                 batch_idx=batch_idx,
             )
-            
+            return visualization_dict
         else:
         
             # Create visualization dictionary
@@ -1345,6 +1370,169 @@ class Engine:
             self._reinitialize_wandb()
         
         return True
+
+    def setup_distillation(self, teacher_run_identifier: str) -> bool:
+        """
+        Set up knowledge distillation with a teacher model from an existing run.
+        
+        Args:
+            teacher_run_identifier (str): Run name or run ID of the teacher model
+            
+        Returns:
+            bool: True if distillation setup was successful, False otherwise
+        """
+        from utilities.run_resume import get_resume_info, load_checkpoint_for_resume
+        
+        # Get teacher run information
+        teacher_info = get_resume_info(teacher_run_identifier, self.RUNS_DIR)
+        if teacher_info is None:
+            self.logger.error(f"Failed to get teacher run info for: {teacher_run_identifier}")
+            return False
+        
+        # Load teacher model checkpoint
+        teacher_checkpoint = load_checkpoint_for_resume(
+            teacher_info['latest_checkpoint'], self.device
+        )
+        if teacher_checkpoint is None:
+            self.logger.error("Failed to load teacher checkpoint data")
+            return False
+        
+        # Create teacher model with same architecture as student
+        teacher_model = self._create_teacher_model(teacher_checkpoint)
+        if teacher_model is None:
+            self.logger.error("Failed to create teacher model")
+            return False
+        
+        # Load teacher model weights
+        try:
+            teacher_model.load_state_dict(teacher_checkpoint['model_state_dict'])
+            teacher_model.eval()  # Set to evaluation mode
+            self.logger.info("Loaded teacher model weights", context="DISTILLATION")
+        except Exception as e:
+            self.logger.error(f"Failed to load teacher model weights: {e}")
+            return False
+        
+        # Store teacher model and distillation parameters
+        self.teacher_model = teacher_model
+        self.distillation_alpha = self.config.get("DISTILLATION_ALPHA", 0.7)  # Weight for distillation loss
+        self.distillation_temperature = self.config.get("DISTILLATION_TEMPERATURE", 4.0)  # Temperature for softmax
+        
+        self.logger.info(f"Set up distillation with teacher from run: {teacher_run_identifier}", context="DISTILLATION")
+        self.logger.info(f"Distillation alpha: {self.distillation_alpha}, Temperature: {self.distillation_temperature}", context="DISTILLATION")
+        
+        return True
+
+    def _create_teacher_model(self, teacher_checkpoint):
+        """Create teacher model with the same architecture as student"""
+        try:
+            # Get model class information from checkpoint
+            model_class_name = teacher_checkpoint.get("model_class_name")
+            model_class_module = teacher_checkpoint.get("model_class_module")
+            
+            if model_class_name and model_class_module:
+                # Dynamically import the model class
+                import importlib
+                module = importlib.import_module(model_class_module)
+                model_class = getattr(module, model_class_name)
+                
+                # Create teacher model instance
+                teacher_model = model_class()
+                teacher_model.to(self.device)
+                
+                return teacher_model
+            else:
+                # Fallback: create model using current config (assumes same architecture)
+                from main import create_model_from_config
+                teacher_model = create_model_from_config(self.config, self.device)
+                return teacher_model
+                
+        except Exception as e:
+            self.logger.error(f"Error creating teacher model: {e}")
+            return None
+
+    def _compute_distillation_loss(self, student_pred, teacher_pred, ground_truth, mask):
+        """
+        Compute combined loss for knowledge distillation.
+        
+        Args:
+            student_pred: Student model predictions
+            teacher_pred: Teacher model predictions  
+            ground_truth: Ground truth targets
+            mask: Loss mask
+            
+        Returns:
+            dict: Dictionary containing loss components
+        """
+        # Compute standard loss for ground truth supervision
+        standard_losses = self.loss(
+            prediction=student_pred,
+            ground_truth=ground_truth,
+            mask=mask,
+        )
+        
+        # Compute distillation loss between student and teacher predictions
+        distillation_losses = self._compute_prediction_distillation_loss(
+            student_pred, teacher_pred
+        )
+        
+        # Combine losses
+        combined_losses = {}
+        
+        # Add standard loss components
+        for key, value in standard_losses.items():
+            combined_losses[f"student_{key}"] = value
+        
+        # Add distillation loss components
+        for key, value in distillation_losses.items():
+            combined_losses[f"distill_{key}"] = value
+        
+        # Compute total loss with alpha weighting
+        total_loss = (
+            (1 - self.distillation_alpha) * standard_losses["total"] +
+            self.distillation_alpha * distillation_losses["total"]
+        )
+        
+        combined_losses["total"] = total_loss
+        return combined_losses
+
+    def _compute_prediction_distillation_loss(self, student_pred, teacher_pred):
+        """
+        Compute distillation loss between student and teacher predictions.
+        
+        Args:
+            student_pred: Student model predictions
+            teacher_pred: Teacher model predictions
+            
+        Returns:
+            dict: Dictionary containing distillation loss components
+        """
+        from losses import DistillationLoss
+        
+        # Initialize distillation loss if not already done
+        if not hasattr(self, 'distillation_loss_fn'):
+            self.distillation_loss_fn = DistillationLoss(
+                alpha=1.0,  # Pure distillation loss (no hard targets)
+                temperature=self.distillation_temperature
+            )
+        
+        losses = {}
+        total_distill_loss = 0.0
+        
+        # Distill each component of the decomposition
+        for component in ["diffuse", "specular", "highlight"]:
+            if component in student_pred and component in teacher_pred:
+                # Compute distillation loss for this component
+                distill_loss = self.distillation_loss_fn(
+                    student_pred[component], 
+                    teacher_pred[component]
+                )
+                losses[f"{component}_distill"] = distill_loss["total"]
+                total_distill_loss += distill_loss["total"]
+        
+        # Add total distillation loss
+        losses["total"] = total_distill_loss
+        
+        return losses
 
     def _setup_resume_directories(self, resume_info):
         """Set up directories using existing run information"""

@@ -29,14 +29,14 @@ parameters:
           DROPOUT: 0.1
           OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 3
-        specular:
-          FEATURE_DIM: 768
-          REASSEMBLE_OUT_CHANNELS: [48,194,384,768]
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-          READOUT_TYPE: "ignore"
-          USE_BN: False
-          OUTPUT_IMAGE_SIZE: [448,448]
-          OUTPUT_CHANNELS: 4
+        # specular:
+        #   FEATURE_DIM: 768
+        #   REASSEMBLE_OUT_CHANNELS: [48,194,384,768]
+        #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+        #   READOUT_TYPE: "ignore"
+        #   USE_BN: False
+        #   OUTPUT_IMAGE_SIZE: [448,448]
+        #   OUTPUT_CHANNELS: 4
         highlight:
           FEATURE_DIM: 768
           REASSEMBLE_OUT_CHANNELS: [48,194,384,768]
@@ -83,7 +83,7 @@ parameters:
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
         LOAD_RGB_ONLY: True
-        FEW_IMAGES: True
+        FEW_IMAGES: False
         HIGHLIGHT_ENABLE: True  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
         HIGHLIGHT_RETURN_MASK: True
@@ -103,7 +103,6 @@ parameters:
       #   HIGHLIGHT_RETURN_RECT: True
       #   LOAD_RGB_ONLY: False
 
-
   BATCH_SIZE: # Max batch size with img size 448 is 64
     value: 16
   NUM_WORKERS:
@@ -114,6 +113,12 @@ parameters:
     value: true
   PREFETCH_FACTOR:
     value: 1
+
+  ### Knowledge Distillation                                                          
+  DISTILLATION_ALPHA:
+    value: 0.7
+  DISTILLATION_TEMPERATURE:
+    value: 4.0
   
   ### POLARIZATION / HIGHLIGHTS                                                        
   MOGE_MODEL:
@@ -122,6 +127,12 @@ parameters:
     value: 10
   KS:
     value: 2.0
+  LIGHT_DISTANCE_RANGE:
+    value: [0.04, 0.2]
+  LIGHT_LEFT_RIGHT_ANGLE:
+    value: [0, 360]
+  LIGHT_ABOVE_BELOW_ANGLE:
+    value: [0, 360]
   SOFT_HIGHLIGHT_THRESHOLD:
     value: 0.9
   REAL_HIGHLIGHT_DILATION:
@@ -135,7 +146,6 @@ parameters:
     value: 2.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
 
   ### OPTIMIZATION                                                                      
-
   LEARNING_RATE:
     value: 5.0e-4
   WEIGHT_DECAY:
@@ -182,7 +192,7 @@ parameters:
   COMPONENT_MATCHING_LOSS_WEIGHT:
     value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
-    value: 0.5
+    value: 0.0
   ALPHA_REGULARIZATION_LOSS_WEIGHT:
     value: 0.1
   SPATIAL_CONSISTENCY_LOSS_WEIGHT:
@@ -204,7 +214,6 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "With CroMo and NO Weight Decay and Accumulation Steps 2 (fake BS=64)"
+    value: ""
   RESULTS_DIR:
     value: "$RESULTS_DIR/"
-

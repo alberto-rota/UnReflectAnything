@@ -189,7 +189,8 @@ class PolarHighlighter(nn.Module):
         # Extract depth [B,H,W] and normals [B,H,W,3]
         depth = mogeout["depth"]  # [B,H,W]
         normals = mogeout["normal"]  # [B,H,W,3]
-        intrinsics = mogeout["intrinsics"]  # [B,3,3]
+        intrinsics = mogeout["intrinsics"].clone()
+        intrinsics[:,:2] = mogeout["intrinsics"][:,:2]*1000
         # Sanitize potential NaN/Inf from the geometry model
         depth = torch.nan_to_num(depth, nan=0.0, posinf=1e6, neginf=-1e6)
         normals = torch.nan_to_num(normals, nan=0.0, posinf=0.0, neginf=0.0)
@@ -214,49 +215,65 @@ class PolarHighlighter(nn.Module):
         return depth, -normals, intrinsics
 
     def sample_light_source(
-        self, dist_to_camera, azimuth, elevation, batch_size=1, device="cuda"
+        self, dist_to_camera, left_right_angle=None, above_below_angle=None, batch_size=1, device="cuda"
     ):
         """
-        Sample random light source positions in 3D space using spherical coordinates.
+        Sample random light source positions in 3D space using spherical coordinates with intuitive angle controls.
         Camera coordinate system: Z points forward, Y points down, X points right.
+        
+        Spherical coordinates: (r, θ, φ) where:
+        - r = distance from camera
+        - θ = azimuth angle (left-right rotation around Y axis)
+        - φ = elevation angle (above-below rotation from horizontal plane)
 
         Args:
-            dist_to_camera: tuple (min_dist, max_dist) - range of signed distances from camera in meters
-            azimuth: tuple (min_az, max_az) - horizontal angle range in degrees
-            elevation: tuple (min_elev, max_elev) - vertical angle range in degrees
+            dist_to_camera: tuple (min_dist, max_dist) - range of distances from camera in meters
+            left_right_angle: tuple (min_left, max_right) - horizontal angle range in degrees
+                             Negative values = left of camera, positive = right of camera
+                             If None, defaults to (-180, 180) degrees (full horizontal range)
+            above_below_angle: tuple (min_above, max_below) - vertical angle range in degrees
+                              Negative values = above camera, positive = below camera
+                              If None, defaults to (-90, 90) degrees (full vertical range)
             batch_size: number of light positions to generate
             device: torch device for the output tensor
 
         Returns:
             positions: Light source positions in camera space [batch_size,3]
         """
+        # Set default angle ranges if not provided
+        if left_right_angle is None:
+            left_right_angle = (-180, 180)  # Full horizontal range
+        if above_below_angle is None:
+            above_below_angle = (-90, 90)   # Full vertical range
+
         # Unpack ranges
         min_dist, max_dist = dist_to_camera
-        min_az, max_az = azimuth
-        min_elev, max_elev = elevation
+        min_left, max_right = left_right_angle
+        min_above, max_below = above_below_angle
 
         # Sample random values within ranges
-        # Distance: uniform sampling (can be negative for behind camera)
+        # Distance: uniform sampling
         dist = (
             torch.rand(batch_size, device=device) * (max_dist - min_dist) + min_dist
         )  # [B]
 
-        # Azimuth: uniform sampling in degrees, then convert to radians
+        # Azimuth (left-right): uniform sampling in degrees, then convert to radians
         az_deg = (
-            torch.rand(batch_size, device=device) * (max_az - min_az) + min_az
+            torch.rand(batch_size, device=device) * (max_right - min_left) + min_left -90
         )  # [B]
         az_rad = az_deg * (np.pi / 180.0)  # [B]
 
-        # Elevation: uniform sampling in degrees, then convert to radians
+        # Elevation (above-below): uniform sampling in degrees, then convert to radians
         elev_deg = (
-            torch.rand(batch_size, device=device) * (max_elev - min_elev) + min_elev
+            torch.rand(batch_size, device=device) * (max_below - min_above) + min_above-90
         )  # [B]
         elev_rad = elev_deg * (np.pi / 180.0)  # [B]
 
         # Convert spherical to Cartesian coordinates
-        x = dist * torch.cos(elev_rad) * torch.sin(az_rad)  # [B]
-        y = -dist * torch.sin(elev_rad)  # [B] negative for upward elevation
-        z = dist * torch.cos(elev_rad) * torch.cos(az_rad)  # [B] signed distance
+        # Camera coordinate system: Z forward, Y down, X right
+        x = dist * torch.cos(elev_rad) * torch.sin(az_rad)  # [B] left-right
+        y = -dist * torch.sin(elev_rad)  # [B] above-below (negative for upward elevation)
+        z = dist * torch.cos(elev_rad) * torch.cos(az_rad)  # [B] behind-front
 
         # Stack into position tensor
         positions = torch.stack([x, y, z], dim=-1)  # [B,3]
@@ -511,7 +528,11 @@ class PolarHighlighter(nn.Module):
         # 0) Sample random light positions (one per image)
         if light_pos is None:
             light_pos = self.sample_light_source(
-                (-1, -0.3), (-110, 110), (-90,90), batch_size=B, device=device
+                dist_to_camera=(0.3, 1),           # 0.3m to 1m from camera
+                left_right_angle=(-110, 110),      # 110° left to 110° right
+                above_below_angle=(-90, 90),       # 90° above to 90° below
+                batch_size=B, 
+                device=device
             )  # [B,3]
 
         # 1) Compute viewing and lighting geometry
@@ -565,7 +586,7 @@ class PolarHighlighter(nn.Module):
         if pol is not None:
             pol = pol.to(device)
 
-        depth, normals,moge_intrinsics = self.compute_geometry(rgb)  # [B,1,H,W], [B,3,H,W]
+        depth, normals, moge_intrinsics = self.compute_geometry(rgb)  # [B,1,H,W], [B,3,H,W]
 
         if intrinsic == "compute":
             intrinsic = moge_intrinsics.to(device)
@@ -599,6 +620,7 @@ class PolarHighlighter(nn.Module):
             "normals": normals,
             "H_dop": H_dop,
             "H_aop": H_aop,
+            "intrinsic": intrinsic,
             "light_pos": light_pos_random if light_pos is None else light_pos,
             "pcloud": pcloud,
             "light_dir": light_dir,

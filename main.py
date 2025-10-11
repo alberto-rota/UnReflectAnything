@@ -433,6 +433,11 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
         type=str,
         help="Resume training from an existing run. Provide the run name or run ID.",
     )
+    parser.add_argument(
+        "--distill-from",
+        type=str,
+        help="Train using knowledge distillation from a teacher model. Provide the run name or run ID of the teacher model.",
+    )
 
     # Parse known and unknown arguments
     args, unknown = parser.parse_known_args()
@@ -576,6 +581,35 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
                     return
                 
                 # Train the model (will start from the correct epoch)
+                engine.trainloop()
+
+                # Load best model and test
+                engine.reinstantiate_model_from_checkpoint()
+                engine.test()
+            elif hasattr(args, 'distill_from') and args.distill_from:
+                logger.info(f"Starting distillation training with teacher from run: {args.distill_from}", context="DISTILLATION")
+                
+                # Create student model
+                student_model = create_model_from_config(config, DEVICE)
+
+                # Create datasets for training
+                dataset = create_datasets_from_config(config)
+
+                # Initialize engine with student model
+                engine = Engine(
+                    model=student_model,  # Pass the student model
+                    dataset=dataset,
+                    config=config,
+                    no_wandb=config.get("NO_WANDB", False),
+                    notes=config.get("NOTES", ""),
+                )
+                
+                # Set up distillation with teacher model
+                if not engine.setup_distillation(args.distill_from):
+                    logger.error("Failed to set up distillation. Exiting.", context="DISTILLATION")
+                    return
+                
+                # Train the student model using distillation
                 engine.trainloop()
 
                 # Load best model and test
