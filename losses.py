@@ -546,21 +546,21 @@ class UnReflectLoss(nn.Module):
         losses["Decomposition"] = decomposition_loss
 
         # ===== Image Reconstruction Loss =====
-        reconstruction_loss = 0.0
-        if 'rgb_highlighted' in ground_truth:
-            # Reconstruct from ALL available predicted components
-            try:
-                pred_reconstruction = self.reconstruct_image(prediction)  # [B,3,H,W]
-                input_rgb = ground_truth['rgb_highlighted']  # [B,3,H,W]
+        # reconstruction_loss = 0.0
+        # if 'rgb_highlighted' in ground_truth:
+        #     # Reconstruct from ALL available predicted components
+        #     try:
+        #         pred_reconstruction = self.reconstruct_image(prediction)  # [B,3,H,W]
+        #         input_rgb = ground_truth['rgb_highlighted']  # [B,3,H,W]
         
-                recon_l1 = self.masked_l1_loss(pred_reconstruction, input_rgb, mask)
-                recon_ssim = self.ssim_loss(pred_reconstruction, input_rgb, mask)
-                reconstruction_loss = recon_l1 + (1.0 - recon_ssim)
-            except ValueError:
-                # If diffuse is missing, we can't reconstruct - skip reconstruction loss
-                pass
+        #         recon_l1 = self.masked_l1_loss(pred_reconstruction, input_rgb, mask)
+        #         recon_ssim = self.ssim_loss(pred_reconstruction, input_rgb, mask)
+        #         reconstruction_loss = recon_l1 + (1.0 - recon_ssim)
+        #     except ValueError:
+        #         # If diffuse is missing, we can't reconstruct - skip reconstruction loss
+        #         pass
 
-        losses["Reconstruction"] = reconstruction_loss
+        # losses["Reconstruction"] = reconstruction_loss
 
         # ===== Alpha Regularization =====
         alpha_reg_loss = 0.0
@@ -581,7 +581,7 @@ class UnReflectLoss(nn.Module):
         # ===== Total Loss =====
         total_loss = (
             self.weight_component_matching * losses["Decomposition"]
-            + self.weight_image_reconstruction * losses["Reconstruction"]
+            # + self.weight_image_reconstruction * losses["Reconstruction"]
             + self.weight_alpha_regularization * losses["AlphaRegularization"]
         )
         

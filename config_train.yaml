@@ -22,7 +22,7 @@ parameters:
       DECODERS:
         diffuse:
           FEATURE_DIM: 768
-          REASSEMBLE_OUT_CHANNELS: [48,194,384,768]
+          REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
           READOUT_TYPE: "ignore"
           USE_BN: False
@@ -31,7 +31,7 @@ parameters:
           OUTPUT_CHANNELS: 3
         # specular:
         #   FEATURE_DIM: 768
-        #   REASSEMBLE_OUT_CHANNELS: [48,194,384,768]
+        #   REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
         #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
         #   READOUT_TYPE: "ignore"
         #   USE_BN: False
@@ -39,7 +39,7 @@ parameters:
         #   OUTPUT_CHANNELS: 4
         highlight:
           FEATURE_DIM: 768
-          REASSEMBLE_OUT_CHANNELS: [48,194,384,768]
+          REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
           READOUT_TYPE: "ignore"
           USE_BN: False
@@ -54,15 +54,15 @@ parameters:
       #   VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "resize"
-      #   FEW_IMAGES: True
+      #   FEW_IMAGES: False
       #   LOAD_RGB_ONLY: False
         
-      HOUSECAT6D:
-        VAL_SCENES: "val"
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "crop"
-        FEW_IMAGES: False
-        LOAD_RGB_ONLY: False
+      # HOUSECAT6D:
+      #   VAL_SCENES: "val"
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "crop"
+      #   FEW_IMAGES: False
+      #   LOAD_RGB_ONLY: False
 
       # POLARGB:
       #   TRAIN_SCENES: "train"
@@ -84,7 +84,7 @@ parameters:
         RESIZE_MODE: "resize"
         LOAD_RGB_ONLY: True
         FEW_IMAGES: False
-        HIGHLIGHT_ENABLE: True  
+        HIGHLIGHT_ENABLE: False  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
         HIGHLIGHT_RETURN_MASK: True
         HIGHLIGHT_RECT_SIZE: [1024, 1024]
@@ -106,13 +106,13 @@ parameters:
   BATCH_SIZE: # Max batch size with img size 448 is 64
     value: 16
   NUM_WORKERS:
-    value: 6  
+    value: 6
   SHUFFLE:
     value: True
   PIN_MEMORY:
     value: true
   PREFETCH_FACTOR:
-    value: 1
+    value: 2
 
   ### Knowledge Distillation                                                          
   DISTILLATION_ALPHA:
@@ -136,7 +136,7 @@ parameters:
   SOFT_HIGHLIGHT_THRESHOLD:
     value: 0.9
   REAL_HIGHLIGHT_DILATION:
-    value: 15
+    value: 21
   # Highlight regression stabilization (optional)
   HLREG_BALANCE_MODE:
     value: "auto"   # 'none' | 'auto' | 'pos_weight'
@@ -151,9 +151,9 @@ parameters:
   WEIGHT_DECAY:
     value: 0.0
   EPOCHS:
-    value: 10
+    value: 40
   GRADIENT_ACCUMULATION_STEPS:
-    value: 1
+    value: 2
   WARMUP_STEPS:
     value: 200
   GRADIENT_CLIPPING_MAX_NORM:
@@ -208,10 +208,10 @@ parameters:
   NO_WANDB:
     value: False
   MODEL_WATCHER_FREQ_WANDB:
-    value: 100
+    value: 50
   WANDB_ENTITY:
     value: "unreflect-anything"
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: ""
+    value: "Without reconstruction operation and with no dataset highlights in the mask. Non surgical"

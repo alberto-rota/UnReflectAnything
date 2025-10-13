@@ -698,7 +698,7 @@ class Engine:
                     lossmask = None
                 # Add virtual highlights to real highlights
                 real_and_virtual_highlights = (
-                    highlight_result["highlight"] #+ real_highlight_soft_mask
+                    highlight_result["highlight"] #+real_highlight_soft_mask
                 ).clamp(0, 1)
 
                 ### Constructing ground truth dict
