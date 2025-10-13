@@ -696,20 +696,41 @@ class Engine:
                     lossmask = real_highlight_inverse_binary_mask
                 else:
                     lossmask = None
-                # Add virtual highlights to real highlights
+                # Include BOTH virtual and real highlights in GT highlight map
+                # Model learns to predict ALL highlights in the highlight channel
+                # But diffuse supervision is masked in real highlight regions
+                # Model must learn to inpaint/generalize diffuse behind real highlights
                 real_and_virtual_highlights = (
-                    highlight_result["highlight"] #+real_highlight_soft_mask
+                    highlight_result["highlight"] + real_highlight_soft_mask
                 ).clamp(0, 1)
+                
+                # Debug: Log mask statistics (only occasionally to avoid spam)
+                if phase == "Training" and batch_idx % 100 == 0:
+                    mask_coverage = (lossmask.sum() / lossmask.numel() * 100).item()
+                    real_hl_coverage = (real_highlight_soft_mask.sum() / real_highlight_soft_mask.numel() * 100).item()
+                    self.logger.info(
+                        f"Mask coverage: {mask_coverage:.1f}% valid, {100-mask_coverage:.1f}% masked | "
+                        f"Real highlights: {real_hl_coverage:.1f}% of image",
+                        context="DEBUG"
+                    )
 
                 ### Constructing ground truth dict
                 rgb_highlighted = highlight_result["rgb_highlighted"]
                 specular = sample["specular"].to(self.device, non_blocking=True)
+                
+                # Ground truth diffuse: original RGB (contains real highlights)
+                # Strategy:
+                # - In virtual highlight regions: supervised (clean diffuse available)
+                # - In real highlight regions: NO supervision (masked out)
+                # - Model learns pattern from virtual highlights and inpaints diffuse behind real highlights
+                # - Highlight GT contains BOTH real and virtual, so model learns to predict all highlights
                 diffuse = sample["rgb"].to(self.device, non_blocking=True)
+                
                 gt_decomposition = {
-                    "diffuse": diffuse,
+                    "diffuse": diffuse,  # Contains real highlights, but masked during loss
                     "rgb_highlighted": rgb_highlighted,
                     "specular": specular,
-                    "highlight": real_and_virtual_highlights,  # .repeat(1, 4, 1, 1),
+                    "highlight": real_and_virtual_highlights,  # BOTH real and virtual
                 }
                 # Polarization data is added only if available.
                 if "AoP" in sample:

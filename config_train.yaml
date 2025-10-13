@@ -72,7 +72,7 @@ parameters:
       #   LOAD_RGB_ONLY: False
 
       # CROMO:
-      #   TRAIN_SCENES: "kitchen"
+      #   # TRAIN_SCENES: "kitchen"
       #   VAL_SCENES: "test"
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "resize"
@@ -104,7 +104,7 @@ parameters:
       #   LOAD_RGB_ONLY: False
 
   BATCH_SIZE: # Max batch size with img size 448 is 64
-    value: 16
+    value: 32
   NUM_WORKERS:
     value: 6
   SHUFFLE:
