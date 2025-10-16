@@ -18,6 +18,7 @@ from engine import Engine
 from logger import get_logger
 import models
 from utilities import *
+import utilities.engine_initializers as initialize
 
 logger = get_logger(__name__).set_context("IMPORT")
 load_dotenv()
@@ -586,35 +587,7 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
                 # Load best model and test
                 engine.reinstantiate_model_from_checkpoint()
                 engine.test()
-            elif hasattr(args, 'distill_from') and args.distill_from:
-                logger.info(f"Starting distillation training with teacher from run: {args.distill_from}", context="DISTILLATION")
-                
-                # Create student model
-                student_model = create_model_from_config(config, DEVICE)
 
-                # Create datasets for training
-                dataset = create_datasets_from_config(config)
-
-                # Initialize engine with student model
-                engine = Engine(
-                    model=student_model,  # Pass the student model
-                    dataset=dataset,
-                    config=config,
-                    no_wandb=config.get("NO_WANDB", False),
-                    notes=config.get("NOTES", ""),
-                )
-                
-                # Set up distillation with teacher model
-                if not engine.setup_distillation(args.distill_from):
-                    logger.error("Failed to set up distillation. Exiting.", context="DISTILLATION")
-                    return
-                
-                # Train the student model using distillation
-                engine.trainloop()
-
-                # Load best model and test
-                engine.reinstantiate_model_from_checkpoint()
-                engine.test()
             else:
                 # Normal training (new run)
                 # Create model
@@ -641,22 +614,36 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
                 engine.test()
 
         elif mode == "test":
-            # Create model
-            model = create_model_from_config(config, DEVICE)
+            # Resolve run identifier from config for test resume
+            run_identifier = config.get("RUN", None)
+            if run_identifier is None or (isinstance(run_identifier, str) and len(run_identifier.strip()) == 0):
+                logger.error("RUN name must be provided for test mode (via config or --RUN)")
+                return
 
-            # Create datasets for testing
+            # Discover existing run directories without creating anything new
+            from utilities.run_resume import get_resume_info
+            resume_info = get_resume_info(run_identifier, initialize.device_and_directories(config)["runs_dir"])
+            if resume_info is None:
+                logger.error(f"No existing run matched RUN name: {run_identifier}")
+                return
+
+            # Create model and datasets using the current config
+            model = create_model_from_config(config, DEVICE)
             dataset = create_datasets_from_config(config)
 
-            # Initialize engine
+            # Initialize engine in resume mode, resuming the existing WandB run
             engine = Engine(
                 model=model,
                 dataset=dataset,
                 config=config,
-                no_wandb=config.get("NO_WANDB", False),
                 notes=config.get("NOTES", ""),
+                no_wandb=False,
+                resume_run_id=None,  # let initializer resolve RUN by display name
+                will_resume=True,
+                resume_info=resume_info,
             )
 
-            # Load best model and test
+            # Load best model from existing run and test
             engine.reinstantiate_model_from_checkpoint()
             engine.test()
 

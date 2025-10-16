@@ -550,7 +550,7 @@ class UnReflectLoss(nn.Module):
         if 'rgb_highlighted' in ground_truth:
             # Reconstruct from ALL available predicted components
             try:
-                pred_reconstruction = self.reconstruct_image(prediction)  # [B,3,H,W]
+                pred_reconstruction = self.reconstruct_image(prediction,mask)  # [B,3,H,W]
                 input_rgb = ground_truth['rgb_highlighted']  # [B,3,H,W]
         
                 # IMPORTANT: Apply mask to reconstruction loss too!

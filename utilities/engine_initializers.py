@@ -26,9 +26,12 @@ def device_and_directories(config):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Get runs directory from config, with fallback to default
-    runs_dir = os.path.expandvars(os.getenv("RESULTS_DIR",
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "../runs"),
-    ))
+    runs_dir = os.path.expandvars(
+        os.getenv(
+            "RESULTS_DIR",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "../runs"),
+        )
+    )
 
     # Create runs directory if it doesn't exist
     if not os.path.exists(runs_dir):
@@ -69,13 +72,13 @@ def dimensions(training_dl, config):
     """Extract dimensions from the training data"""
     # Extract frame dimensions
     input_shape = next(iter(training_dl))[
-        "rgb"
+        "raw"
     ].shape  # [batch_size, channels, height, width]
-    sample_shape = next(iter(training_dl))["rgb"].shape[1:]  # [channels, height, width]
+    sample_shape = next(iter(training_dl))["raw"].shape[1:]  # [channels, height, width]
     height = sample_shape[-2]  # Image height
     width = sample_shape[-1]  # Image width
     channels = 3  # Number of image channels
-    batch_size = next(iter(training_dl))["rgb"].shape[0]  # Batch size
+    batch_size = next(iter(training_dl))["raw"].shape[0]  # Batch size
 
     return {
         "input_shape": input_shape,
@@ -252,16 +255,18 @@ def wandb(config, model=None, notes="", no_wandb=False, resume_wandb_run_id=None
 
     run_id = None
     resume_run = None
-    
+
     # Check for resume wandb run ID first (from resume functionality)
     if resume_wandb_run_id:
         run_id = resume_wandb_run_id
         logger.info(f"Attempting to resume wandb run with ID: {run_id}")
-        
+
         # Verify that the run exists before trying to resume
         try:
             api = weightsandbiases.Api()
-            existing_run = api.run(f"{config.get('WANDB_ENTITY', 'unreflectanything')}/{config.get('WANDB_PROJECT', 'UnReflectAnything')}/{run_id}")
+            existing_run = api.run(
+                f"{config.get('WANDB_ENTITY', 'unreflect-anything')}/{config.get('WANDB_PROJECT', 'UnReflectAnything')}/{run_id}"
+            )
             if existing_run:
                 logger.info(f"Found existing wandb run to resume: {run_id}")
                 resume_run = True
@@ -270,20 +275,28 @@ def wandb(config, model=None, notes="", no_wandb=False, resume_wandb_run_id=None
                 resume_run = None
                 run_id = None
         except Exception as e:
-            logger.warning(f"Could not verify wandb run {run_id}: {e}. Will create new run")
+            logger.warning(
+                f"Could not verify wandb run {run_id}: {e}. Will create new run"
+            )
             resume_run = None
             run_id = None
     elif "RUN" in config:
         try:
-            resume_run = weightsandbiases.Api().runs(
-                path=f"{weightsandbiases.api.default_entity}/{config.get('PROJECT', 'UnReflectAnything')}",
+            entity = config.get("WANDB_ENTITY", "unreflect-anything")
+            project = config.get("WANDB_PROJECT", "UnReflectAnything")
+            runs = weightsandbiases.Api().runs(
+                path=f"{entity}/{project}",
                 filters={"display_name": config["RUN"]},
             )
-            run_id = resume_run[0].id
-            logger.info("Found run to resume:", run_id)
-
-        except Exception:
-            # logger.info("Creating new WandB run")
+            if len(runs) > 0:
+                resume_run = runs
+                run_id = runs[0].id
+                logger.info("Found run to resume:", run_id)
+            else:
+                logger.warning(f"WandB run with display_name '{config['RUN']}' not found")
+                resume_run = None
+        except Exception as e:
+            logger.warning(f"Failed to query WandB for RUN '{config['RUN']}': {e}")
             resume_run = None
     else:
         resume_run = None
@@ -292,7 +305,7 @@ def wandb(config, model=None, notes="", no_wandb=False, resume_wandb_run_id=None
     stderr_capture = io.StringIO()
     with contextlib.redirect_stderr(stderr_capture):
         wandb_instance = weightsandbiases.init(
-            entity=config.get("WANDB_ENTITY", "unreflectanything"),
+            entity=config.get("WANDB_ENTITY", "unreflect-anything"),
             project=config.get("WANDB_PROJECT", "UnReflectAnything"),
             config=config,
             notes=notes,
@@ -344,6 +357,7 @@ def _define_wandb_metrics():
     weightsandbiases.define_metric("Step/batch")
     weightsandbiases.define_metric("Step/valbatch")
     weightsandbiases.define_metric("Step/lossissues")
+    weightsandbiases.define_metric("Step/test_idx")
 
     # Group metrics by step
     weightsandbiases.define_metric("Issues/*", step_metric="Step/lossissues")
@@ -351,6 +365,7 @@ def _define_wandb_metrics():
     weightsandbiases.define_metric("Gradients/*", step_metric="Step/batch")
     weightsandbiases.define_metric("Validation/*", step_metric="Step/valbatch")
     weightsandbiases.define_metric("HyperParameters/*", step_metric="Step/batch")
+    weightsandbiases.define_metric("Test/*", step_metric="Step/test_idx")
 
     # Epoch metrics
     weightsandbiases.define_metric("Step/epoch")
@@ -409,7 +424,7 @@ def save_hyperparameters_json(run_dir, config):
     if not os.path.exists(hyperparams_path):
         with open(hyperparams_path, "x"):
             pass
-    
+
     if not os.path.exists(config_path):
         with open(config_path, "x"):
             pass
@@ -418,7 +433,7 @@ def save_hyperparameters_json(run_dir, config):
     with open(hyperparams_path, "w") as f:
         all_hyperparams = {"training": config}
         json.dump(all_hyperparams, f, indent=4, skipkeys=True, default=str)
-    
+
     # Also save the config directly for resume functionality
     with open(config_path, "w") as f:
         json.dump(config, f, indent=4, skipkeys=True, default=str)

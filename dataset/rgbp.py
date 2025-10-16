@@ -51,6 +51,7 @@ class RGBP_Dataset(Dataset):
         polarization_format: str = "single_file_clock",  # "single_file_clock", "separate_files" or "mosaic"
         rgb_dir_name: str = "rgb",
         pol_dir_name: str = "pol",
+        diffuse_dir_name: str = "diffuse",
         intrinsics_file_name: str = "intrinsics.txt",
         # Polarization data format
         # Image sizing parameters
@@ -93,6 +94,7 @@ class RGBP_Dataset(Dataset):
         self.load_rgb_only = load_rgb_only
         self.rgb_dir_name = rgb_dir_name
         self.pol_dir_name = pol_dir_name
+        self.diffuse_dir_name = diffuse_dir_name
         self.intrinsics_file_name = intrinsics_file_name
 
         # Polarization format validation
@@ -241,20 +243,20 @@ class RGBP_Dataset(Dataset):
 
         return tensor
 
-    def _resize_rgb_tensor(self, rgb: torch.Tensor) -> torch.Tensor:
+    def _resize_raw_tensor(self, raw: torch.Tensor) -> torch.Tensor:
         """
-        Resize RGB tensor to target size.
+        Resize RAW tensor to target size.
 
         Args:
-            rgb: RGB tensor of shape [3, H, W] in [0, 1]
+            raw: RAW tensor of shape [3, H, W] in [0, 1]
 
         Returns:
-            Resized RGB tensor of shape [3, target_H, target_W] in [0, 1]
+            Resized RAW tensor of shape [3, target_H, target_W] in [0, 1]
         """
         if self.target_size is None:
-            return rgb
+            return raw
 
-        return self._resize_tensor(rgb, self.target_size)
+        return self._resize_tensor(raw, self.target_size)
 
     def _resize_polarization_data(
         self, pol_data: Dict[str, torch.Tensor]
@@ -333,9 +335,9 @@ class RGBP_Dataset(Dataset):
         # If no include filter specified and not excluded, include the scene
         return True
 
-    def _find_scene_pairs(self) -> List[Tuple[str, str, str, bool]]:
+    def _find_scene_pairs(self) -> List[Tuple[str, Optional[str], Optional[str], Optional[str], bool]]:
         """
-        Find matching RGB, polarization, and intrinsics file triplets.
+        Find matching RAW (RGB), optional diffuse, polarization, and intrinsics entries per scene.
 
         Scans the root directory structure to find corresponding files:
         - RGB images in rgb/ subdirectory
@@ -343,9 +345,9 @@ class RGBP_Dataset(Dataset):
         - Camera intrinsics in intrinsics/ subdirectory (optional)
 
         Returns:
-            List of tuples (rgb_path, pol_path, intrinsics_path, has_pol_data) for valid scene pairs
+            List of tuples (raw_path, pol_path, diffuse_path, intrinsics_path, has_pol_data)
         """
-        """Find valid RGB-polarization pairs based on polarization format"""
+        """Find valid entries based on polarization format and optional diffuse folder"""
         scene_pairs = []
         for scene_name in os.listdir(self.root_dir):
             # Use new filtering logic
@@ -358,6 +360,11 @@ class RGBP_Dataset(Dataset):
 
             rgb_dir = os.path.join(scene_path, self.rgb_dir_name)
             pol_dir = os.path.join(scene_path, self.pol_dir_name)
+            diffuse_dir = (
+                os.path.join(scene_path, self.diffuse_dir_name)
+                if self.diffuse_dir_name is not None
+                else None
+            )
             intrinsics_path = os.path.join(scene_path, self.intrinsics_file_name)
 
             # Check if RGB directory exists (required)
@@ -377,14 +384,25 @@ class RGBP_Dataset(Dataset):
             pol_files = []
             if has_pol_data:
                 pol_files = [f for f in os.listdir(pol_dir) if f.endswith(self.pol_ext)]
+            # Get diffuse files if diffuse directory exists
+            diffuse_files = []
+            if diffuse_dir is not None and os.path.exists(diffuse_dir):
+                diffuse_files = [f for f in os.listdir(diffuse_dir) if f.endswith(self.rgb_ext)]
 
             for rgb_file in rgb_files:
+                raw_path = os.path.join(rgb_dir, rgb_file)
+                # Determine diffuse path if available
+                diffuse_path = None
+                if diffuse_dir is not None and (rgb_file in diffuse_files):
+                    diffuse_path = os.path.join(diffuse_dir, rgb_file)
+
                 if not has_pol_data:
-                    # No polarization data available - include RGB-only sample
+                    # No polarization data available - include raw-only sample (diffuse may or may not exist)
                     scene_pairs.append(
                         (
-                            os.path.join(rgb_dir, rgb_file),
+                            raw_path,
                             None,  # No polarization path
+                            diffuse_path,
                             intrinsics_path,
                             False,  # No polarization data
                         )
@@ -395,8 +413,9 @@ class RGBP_Dataset(Dataset):
                     if pol_file in pol_files:
                         scene_pairs.append(
                             (
-                                os.path.join(rgb_dir, rgb_file),
+                                raw_path,
                                 os.path.join(pol_dir, pol_file),
+                                diffuse_path,
                                 intrinsics_path,
                                 True,  # Has polarization data
                             )
@@ -418,8 +437,9 @@ class RGBP_Dataset(Dataset):
                         pol_base_path = os.path.join(pol_dir, base_name)
                         scene_pairs.append(
                             (
-                                os.path.join(rgb_dir, rgb_file),
+                                raw_path,
                                 pol_base_path,  # Base path for separate files
+                                diffuse_path,
                                 intrinsics_path,
                                 True,  # Has polarization data
                             )
@@ -442,8 +462,9 @@ class RGBP_Dataset(Dataset):
                         pol_base_path = os.path.join(pol_dir, base_name)
                         scene_pairs.append(
                             (
-                                os.path.join(rgb_dir, rgb_file),
+                                raw_path,
                                 pol_base_path,  # Base path for separate Stokes files
+                                diffuse_path,
                                 intrinsics_path,
                                 True,  # Has polarization data
                             )
@@ -455,8 +476,9 @@ class RGBP_Dataset(Dataset):
                     if pol_file in pol_files:
                         scene_pairs.append(
                             (
-                                os.path.join(rgb_dir, rgb_file),
+                                raw_path,
                                 os.path.join(pol_dir, pol_file),
+                                diffuse_path,
                                 intrinsics_path,
                                 True,  # Has polarization data
                             )
@@ -476,8 +498,8 @@ class RGBP_Dataset(Dataset):
         """
         """Get list of scene names that are actually loaded in the dataset."""
         loaded_scenes = set()
-        for rgb_path, _, _, _ in self.scene_pairs:
-            scene_name = os.path.basename(os.path.dirname(os.path.dirname(rgb_path)))
+        for raw_path, _, _, _, _ in self.scene_pairs:
+            scene_name = os.path.basename(os.path.dirname(os.path.dirname(raw_path)))
             loaded_scenes.add(scene_name)
         return sorted(list(loaded_scenes))
 
@@ -573,63 +595,87 @@ class RGBP_Dataset(Dataset):
         else:
             return self._load_and_process_polarization_impl(pol_path)
 
-    def _load_rgb_and_separate(
-        self, rgb_path: str, f_spec_half: torch.Tensor
+    def _load_raw_and_separate(
+        self, raw_path: str, f_spec_half: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
-        """Optimized RGB loading and separation at full resolution"""
+        """Optimized RAW loading and separation at full resolution"""
 
-        # Load RGB directly as torch tensor
-        rgb_img = Image.open(rgb_path).convert("RGB")
-        rgb = torch.from_numpy(np.asarray(rgb_img, dtype=np.float32)) / 255.0
-        H, W, _ = rgb.shape
+        # Load RAW directly as torch tensor
+        raw_img = Image.open(raw_path).convert("RGB")
+        raw = torch.from_numpy(np.asarray(raw_img, dtype=np.float32)) / 255.0
+        H, W, _ = raw.shape
 
         # Upsample specular fraction
         if self.simplify_upsampling:
             f_full = self._simple_upsample(f_spec_half, (H, W))
         else:
             # Fall back to original method if needed
-            f_full = self._edge_aware_upsample_original(f_spec_half, rgb)
+            f_full = self._edge_aware_upsample_original(f_spec_half, raw)
 
         # Compute specular/diffuse separation
-        rgb_chw = rgb.permute(2, 0, 1)  # 3xHxW
+        raw_chw = raw.permute(2, 0, 1)  # 3xHxW
         f_expanded = f_full.unsqueeze(0)  # 1xHxW
 
-        I_spec = (f_expanded * rgb_chw).clamp(0, 1)
-        I_diff = (rgb_chw - I_spec).clamp(0, 1)
+        I_spec = (f_expanded * raw_chw).clamp(0, 1)
+        I_diff = (raw_chw - I_spec).clamp(0, 1)
 
         # Return full resolution data - resizing will be done later if needed
         return {
-            "rgb": rgb_chw,
+            "raw": raw_chw,
             "specular": I_spec,
             "diffuse": I_diff,
         }
 
-    def _load_rgb_only(self, rgb_path: str) -> Dict[str, torch.Tensor]:
+    def _load_raw_only(self, raw_path: str) -> Dict[str, torch.Tensor]:
         """
-        Load RGB data only (when polarization data is not available) at full resolution.
+        Load RAW data only (when polarization data is not available) at full resolution.
 
         Args:
-            rgb_path: Path to RGB image file
+            raw_path: Path to RAW image file
 
         Returns:
-            Dictionary containing RGB data with dummy specular/diffuse components at full resolution
+            Dictionary containing RAW data with dummy specular/diffuse components at full resolution
         """
-        # Load RGB directly as torch tensor
-        rgb_img = Image.open(rgb_path).convert("RGB")
-        rgb = torch.from_numpy(np.asarray(rgb_img, dtype=np.float32)) / 255.0
+        # Load RAW directly as torch tensor
+        raw_img = Image.open(raw_path).convert("RGB")
+        raw = torch.from_numpy(np.asarray(raw_img, dtype=np.float32)) / 255.0
 
         # Convert to CHW format
-        rgb_chw = rgb.permute(2, 0, 1)  # [3, H, W]
+        raw_chw = raw.permute(2, 0, 1)  # [3, H, W]
 
-        # Create dummy specular and diffuse components (all zeros for specular, RGB for diffuse)
-        I_spec = torch.zeros_like(rgb_chw)  # [3, H, W] - no specular component
-        I_diff = rgb_chw.clone()  # [3, H, W] - all RGB is diffuse
+        # Create dummy specular and diffuse components (all zeros for specular, RAW for diffuse)
+        I_spec = torch.zeros_like(raw_chw)  # [3, H, W] - no specular component
+        I_diff = raw_chw.clone()  # [3, H, W] - all RAW is diffuse
 
         # Return full resolution data - resizing will be done later if needed
         return {
-            "rgb": rgb_chw,
+            "raw": raw_chw,
             "specular": I_spec,
             "diffuse": I_diff,
+        }
+
+    def _load_raw_and_diffuse(self, raw_path: str, diffuse_path: str) -> Dict[str, torch.Tensor]:
+        """Load RAW and DIFFUSE images and compute SPECULAR as raw - diffuse.
+
+        Returns a dict with keys: 'raw', 'diffuse', 'specular' as CHW tensors in [0,1].
+        """
+        # Load images
+        raw_img = Image.open(raw_path).convert("RGB")
+        raw = torch.from_numpy(np.asarray(raw_img, dtype=np.float32)) / 255.0
+        diffuse_img = Image.open(diffuse_path).convert("RGB")
+        diffuse = torch.from_numpy(np.asarray(diffuse_img, dtype=np.float32)) / 255.0
+
+        # To CHW
+        raw_chw = raw.permute(2, 0, 1)
+        diffuse_chw = diffuse.permute(2, 0, 1)
+
+        # Specular as residual
+        specular = (raw_chw - diffuse_chw).clamp(0.0, 1.0)
+
+        return {
+            "raw": raw_chw,
+            "diffuse": diffuse_chw,
+            "specular": specular,
         }
 
     def _compute_highlight_mask(self, frame_chw: torch.Tensor) -> torch.Tensor:
@@ -708,14 +754,14 @@ class RGBP_Dataset(Dataset):
 
         return torch.tensor([best_top, best_left, best_bottom, best_right]).int()
 
-    def _crop_rectangle_from_rgb(
-        self, rgb_chw: torch.Tensor, rect_coords: torch.Tensor
+    def _crop_rectangle_from_raw(
+        self, raw_chw: torch.Tensor, rect_coords: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Crop rectangle from RGB and compute its highlight mask.
+        Crop rectangle from RAW and compute its highlight mask.
 
         Returns:
-            (cropped_rgb [C,h,w], cropped_mask [1,h,w])
+            (cropped_raw [C,h,w], cropped_mask [1,h,w])
         """
         top, left, bottom, right = [int(v) for v in rect_coords]
 
@@ -723,24 +769,24 @@ class RGBP_Dataset(Dataset):
             if self.highlight_rect_size is not None:
                 h, w = self.highlight_rect_size
                 empty_frame = torch.zeros(
-                    rgb_chw.shape[0], h, w, device=rgb_chw.device, dtype=rgb_chw.dtype
+                    raw_chw.shape[0], h, w, device=raw_chw.device, dtype=raw_chw.dtype
                 )
                 empty_mask = torch.zeros(
-                    1, h, w, device=rgb_chw.device, dtype=rgb_chw.dtype
+                    1, h, w, device=raw_chw.device, dtype=raw_chw.dtype
                 )
                 return empty_frame, empty_mask
             else:
-                return rgb_chw, torch.zeros(
+                return raw_chw, torch.zeros(
                     1,
-                    rgb_chw.shape[1],
-                    rgb_chw.shape[2],
-                    device=rgb_chw.device,
-                    dtype=rgb_chw.dtype,
+                    raw_chw.shape[1],
+                    raw_chw.shape[2],
+                    device=raw_chw.device,
+                    dtype=raw_chw.dtype,
                 )
 
-        cropped_rgb = rgb_chw[:, top : bottom + 1, left : right + 1]
-        cropped_mask = self._compute_highlight_mask(cropped_rgb)
-        return cropped_rgb, cropped_mask
+        cropped_raw = raw_chw[:, top : bottom + 1, left : right + 1]
+        cropped_mask = self._compute_highlight_mask(cropped_raw)
+        return cropped_raw, cropped_mask
 
     def _edge_aware_upsample_original(
         self, f_half: torch.Tensor, rgb_full: torch.Tensor
@@ -786,37 +832,41 @@ class RGBP_Dataset(Dataset):
         Returns:
             Dictionary containing:
             - Polarization data: 'I0', 'I45', 'I90', 'I135', 'S0', 'S1', 'S2', 'DoLP', 'AoP', 'f_spec' (if available)
-            - RGB data: 'rgb', 'specular', 'diffuse'
+            - Image data: 'raw', 'specular', 'diffuse' (with backward-compatible alias 'rgb' == 'raw')
             - Camera data: 'intrinsics' [3, 3]
             All image tensors have shape [C, H, W] where H, W match target_size if specified
         """
-        rgb_path, pol_path, intrinsics_path, has_pol_data = self.scene_pairs[idx]
+        raw_path, pol_path, diffuse_path, intrinsics_path, has_pol_data = self.scene_pairs[idx]
 
         # Load data (potentially from cache)
         intrinsics = self._load_intrinsics(intrinsics_path)
 
         if has_pol_data and not self.load_rgb_only:
-            # Load polarization data and use it for RGB separation
+            # Load polarization data and use it for RAW separation if diffuse not provided
             pol_data = self._load_and_process_polarization(pol_path)
             # Get specular fraction for RGB processing
             f_spec = pol_data["f_spec"].squeeze(0)  # Remove batch dimension [H, W]
-            rgb_data = self._load_rgb_and_separate(rgb_path, f_spec)
+            if diffuse_path is not None:
+                raw_data = self._load_raw_and_diffuse(raw_path, diffuse_path)
+            else:
+                raw_data = self._load_raw_and_separate(raw_path, f_spec)
             # Combine results
-            sample = {**pol_data, **rgb_data, "intrinsics": intrinsics}
+            sample = {**pol_data, **raw_data, "intrinsics": intrinsics}
         else:
-            # No polarization data available or load_rgb_only is True - load RGB only
-            # When load_rgb_only=True, polarization data is ignored even if available
-            rgb_data = self._load_rgb_only(rgb_path)
-            sample = {**rgb_data, "intrinsics": intrinsics}
+            # No polarization data available or load_rgb_only is True - load RAW (and diffuse if present)
+            if diffuse_path is not None:
+                raw_data = self._load_raw_and_diffuse(raw_path, diffuse_path)
+            else:
+                raw_data = self._load_raw_only(raw_path)
+            sample = {**raw_data, "intrinsics": intrinsics}
 
         # Optional highlight detection and cropping on full resolution
-        if self.highlight_enabled and "rgb" in sample:
-            rgb_chw = sample["rgb"]  # Full resolution RGB
-            mask = self._compute_highlight_mask(rgb_chw)
-
+        if self.highlight_enabled and "raw" in sample:
+            raw_chw = sample["raw"]  # Full resolution RAW
+            mask = self._compute_highlight_mask(raw_chw)
             if self.highlight_return_mask:
                 sample["highlight_masks"] = mask
-                total_pixels = rgb_chw.shape[-2] * rgb_chw.shape[-1]
+                total_pixels = raw_chw.shape[-2] * raw_chw.shape[-1]
                 coverage_percent = (mask.sum() / max(total_pixels, 1)) * 100.0
                 sample["highlight_coverage"] = coverage_percent.to(torch.float32)
 
@@ -827,16 +877,16 @@ class RGBP_Dataset(Dataset):
                 sample["rect_coords"] = rect_coords
 
                 if self.highlight_return_rect:
-                    rect_rgb, rect_mask = self._crop_rectangle_from_rgb(
-                        rgb_chw, rect_coords
+                    rect_raw, rect_mask = self._crop_rectangle_from_raw(
+                        raw_chw, rect_coords
                     )
 
-                    sample["rect_crop"] = rect_rgb
+                    sample["rect_crop"] = rect_raw
                     sample["rect_mask"] = rect_mask
 
                     if self.highlight_return_rect_as_rgb:
-                        sample["uncropped_rgb"] = sample["rgb"]
-                        sample["rgb"] = rect_rgb
+                        sample["uncropped_raw"] = sample["raw"]
+                        sample["raw"] = rect_raw
                         # Also crop specular and diffuse components
                         if "specular" in sample:
                             sample["specular"] = sample["specular"][
@@ -881,9 +931,10 @@ class RGBP_Dataset(Dataset):
 
         # Resize all data to target size if specified
         if self.target_size is not None:
-            # Resize RGB-related data
-            if "rgb" in sample:
-                sample["rgb"] = self._resize_rgb_tensor(sample["rgb"])
+
+            # Resize RAW-related data
+            if "raw" in sample:
+                sample["raw"] = self._resize_raw_tensor(sample["raw"])
             if "specular" in sample:
                 sample["specular"] = self._resize_tensor(
                     sample["specular"], self.target_size
@@ -901,7 +952,7 @@ class RGBP_Dataset(Dataset):
                 ).squeeze(0)
             if "rect_crop" in sample and not self.highlight_return_rect_as_rgb:
                 # Only resize rect_crop if it's not being used as the main RGB
-                sample["rect_crop"] = self._resize_rgb_tensor(sample["rect_crop"])
+                sample["rect_crop"] = self._resize_raw_tensor(sample["rect_crop"])
             if "rect_mask" in sample and not self.highlight_return_rect_as_rgb:
                 # Only resize rect_mask if it's not being used as the main RGB
                 sample["rect_mask"] = F.interpolate(
@@ -938,14 +989,18 @@ class RGBP_Dataset(Dataset):
         if self.transform:
             sample = self.transform(sample)
 
-        if self.load_rgb_only:
-            sample_rgbonly = {
-                "rgb": sample["rgb"],
-                "specular": sample["specular"],
-                "diffuse": sample["diffuse"],
-                "intrinsics": sample["intrinsics"],
-            }
-            return sample_rgbonly
+        # if self.load_rgb_only:
+        #     sample_rgbonly = {
+        #         "rgb": sample["rgb"],
+        #         "specular": sample["specular"],
+        #         "diffuse": sample["diffuse"],
+        #         "intrinsics": sample["intrinsics"],
+        #     }
+        #     return sample_rgbonly
+
+        # Backward-compatible alias: provide 'rgb' that mirrors 'raw'
+        # if "raw" in sample:
+        #     sample["rgb"] = sample["raw"]
 
         return sample
 
@@ -997,6 +1052,7 @@ def from_config(
         "SCARED": SCARED_Dataset,
         "CROMO": CROMO_Dataset,
         "SYNTHETIC": SYNTHETIC_Dataset,
+        "PSD": PSD_Dataset,
         # Future datasets will be added here by the user
     }
 
@@ -1343,6 +1399,34 @@ class SCARED_Dataset(RGBP_Dataset):
             **kwargs,
         )
         # Add any SCARED-specific initialization here
+        
+class PSD_Dataset(RGBP_Dataset):
+    """
+    PSD dataset implementation for polarization-guided RGB processing.
+
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with PSD-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+
+    The PSD dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize PSD dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(
+            root_dir="$DATASET_DIR/PSD_Dataset/",
+            rgb_ext=".png",
+            rgb_dir_name="PSD_val_specular",
+            diffuse_dir_name="PSD_val_diffuse",
+            **kwargs,
+        )
+        # Add any SYNTHETIC-specific initialization here
 
 
 class SYNTHETIC_Dataset(RGBP_Dataset):

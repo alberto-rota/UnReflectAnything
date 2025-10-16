@@ -37,15 +37,15 @@ parameters:
         #   USE_BN: False
         #   OUTPUT_IMAGE_SIZE: [448,448]
         #   OUTPUT_CHANNELS: 4
-        highlight:
-          FEATURE_DIM: 768
-          REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-          READOUT_TYPE: "ignore"
-          USE_BN: False
-          DROPOUT: 0.1
-          OUTPUT_IMAGE_SIZE: [448,448]
-          OUTPUT_CHANNELS: 1
+        # highlight:
+        #   FEATURE_DIM: 768
+        #   REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
+        #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+        #   READOUT_TYPE: "ignore"
+        #   USE_BN: False
+        #   DROPOUT: 0.1
+        #   OUTPUT_IMAGE_SIZE: [448,448]
+        #   OUTPUT_CHANNELS: 1
 
   ### DATA                                                                      
   DATASETS:
@@ -58,6 +58,7 @@ parameters:
       #   LOAD_RGB_ONLY: False
         
       # HOUSECAT6D:
+      #   TRAIN_SCENES: "none"
       #   VAL_SCENES: "val"
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "crop"
@@ -72,11 +73,18 @@ parameters:
       #   LOAD_RGB_ONLY: False
 
       # CROMO:
-      #   # TRAIN_SCENES: "kitchen"
+      #   TRAIN_SCENES: "kitchen"
       #   VAL_SCENES: "test"
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "resize"
       #   LOAD_RGB_ONLY: False
+    
+      # PSD:
+      #   TRAIN_SCENES: "PSD_val"
+      #   VAL_SCENES: "PSD_Test"
+      #   TARGET_SIZE: [448,448]  
+      #   RESIZE_MODE: "resize"
+      #   LOAD_RGB_ONLY: True
 
       SCARED:
         VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
@@ -84,11 +92,11 @@ parameters:
         RESIZE_MODE: "resize"
         LOAD_RGB_ONLY: True
         FEW_IMAGES: False
-        HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_ENABLE: True  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
         HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [1024, 1024]
-        HIGHLIGHT_RETURN_RECT_AS_RGB: True
+        HIGHLIGHT_RECT_SIZE: [800, 800]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
 
       # SYNTHETIC:
@@ -126,7 +134,7 @@ parameters:
   SHININESS:
     value: 10
   KS:
-    value: 2.0
+    value: 1.0
   LIGHT_DISTANCE_RANGE:
     value: [0.04, 0.2]
   LIGHT_LEFT_RIGHT_ANGLE:
@@ -136,7 +144,7 @@ parameters:
   SOFT_HIGHLIGHT_THRESHOLD:
     value: 0.9
   REAL_HIGHLIGHT_DILATION:
-    value: 21
+    value: 15
   # Highlight regression stabilization (optional)
   HLREG_BALANCE_MODE:
     value: "auto"   # 'none' | 'auto' | 'pos_weight'
@@ -147,13 +155,13 @@ parameters:
 
   ### OPTIMIZATION                                                                      
   LEARNING_RATE:
-    value: 5.0e-4
+    value: 1.0e-3
   WEIGHT_DECAY:
-    value: 0.0
+    value: 1.0e-8
   EPOCHS:
     value: 40
   GRADIENT_ACCUMULATION_STEPS:
-    value: 2
+    value: 1
   WARMUP_STEPS:
     value: 200
   GRADIENT_CLIPPING_MAX_NORM:
@@ -163,11 +171,11 @@ parameters:
       ONPLATEAU:
         PATIENCE: 10
         FACTOR: 0.1
-      COSINE:
-        N_PERIODS: 20
-      # STEPWISE:
-      #   N_STEPS: 3
-      #   GAMMA: 0.5
+      # COSINE:
+      #   N_PERIODS: 5
+      STEPWISE:
+        N_STEPS: 2
+        GAMMA: 0.1
       # EXPONENTIAL:
       #   GAMMA: 0.5
 
@@ -188,7 +196,7 @@ parameters:
   DIFFUSE_LOSS_WEIGHT:
     value: 1.0
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 1.0
+    value: 0.0
   COMPONENT_MATCHING_LOSS_WEIGHT:
     value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
@@ -214,4 +222,4 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "Without reconstruction operation and with no dataset highlights in the mask. Non surgical"
+    value: "Diffuse only. High LR"

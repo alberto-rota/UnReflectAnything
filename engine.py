@@ -30,6 +30,8 @@ class Engine:
         notes: str = "",
         no_wandb: bool = False,
         resume_run_id: str = None,
+        resume_info: Optional[dict] = None,
+        will_resume: bool = False,
         **kwargs,
     ):
         """
@@ -54,6 +56,9 @@ class Engine:
         self.config = config
         self.config["NOTES"] = notes
         self.no_wandb = no_wandb
+        # Mark if this Engine is expected to resume from an existing run
+        # This must be set before any directory setup happens
+        self._will_resume = bool(will_resume)
 
         # Initialize device and directories
         device_dirs = initialize.device_and_directories(config)
@@ -84,7 +89,7 @@ class Engine:
         
         # Skip directory setup during initialization if we're going to resume
         # The directories will be set up during resume_from_run()
-        if not hasattr(self, '_will_resume'):
+        if not self._will_resume:
             init(initialize.setup_run_directories, self.RUNS_DIR, self.wandb, False)
             init(
                 initialize.earlystopping,
@@ -94,24 +99,35 @@ class Engine:
             )
             self.config["name"] = self.runname
         else:
-            # For resume mode, set a temporary name that will be updated later
-            self.config["name"] = "resuming"
+            # For resume mode, if resume_info is provided we bind the existing directories immediately
+            if resume_info is not None:
+                self.runname = os.path.basename(resume_info.get("run_dir"))
+                self.RUN_DIR = resume_info.get("run_dir")
+                self.MODELS_DIR = resume_info.get("models_dir")
+                self.TEST_DIR = os.path.join(self.RUN_DIR, "tests")
+                self.paths_file = os.path.join(self.RUN_DIR, "loadeddata.csv")
+                self.config["name"] = self.runname
+            else:
+                # Temporary placeholder; will be updated upon resume
+                self.config["name"] = "resuming"
         self.add_polar_highlights = PolarHighlighter(
             height=self.height, width=self.width
         ).to(self.device)
 
-        # Save hyperparameters to json
-        initialize.save_hyperparameters_json(self.RUN_DIR, self.config)
+        # Save hyperparameters to json only when not resuming
+        if not self._will_resume:
+            initialize.save_hyperparameters_json(self.RUN_DIR, self.config)
 
         # Once the run name is set, we move all the log files to the run directory
-        TEMPORARY_LOG_DIR = os.path.join(self.RUNS_DIR, "temporary")
-        if os.path.exists(TEMPORARY_LOG_DIR):
-            for log_file in os.listdir(TEMPORARY_LOG_DIR):
-                if log_file.endswith(".log"):
-                    shutil.move(
-                        os.path.join(TEMPORARY_LOG_DIR, log_file),
-                        os.path.join(self.RUN_DIR, log_file),
-                    )
+        if not self._will_resume:
+            TEMPORARY_LOG_DIR = os.path.join(self.RUNS_DIR, "temporary")
+            if os.path.exists(TEMPORARY_LOG_DIR):
+                for log_file in os.listdir(TEMPORARY_LOG_DIR):
+                    if log_file.endswith(".log"):
+                        shutil.move(
+                            os.path.join(TEMPORARY_LOG_DIR, log_file),
+                            os.path.join(self.RUN_DIR, log_file),
+                        )
 
         # Initialize polarization-specific losses
         self.logger = get_logger(
@@ -268,7 +284,9 @@ class Engine:
 
     def test(self):
         """Test phase"""
-        result = self.run_epoch(phase="Test")
+        # Persistent test index: auto test after training is idx 0
+        test_idx = self._load_and_increment_test_index()
+        result = self.run_epoch(phase="Test", test_idx=test_idx)
         if self.wandb is not None:
             self.log_tests()
         return result
@@ -572,7 +590,7 @@ class Engine:
             return True
         return False
 
-    def run_epoch(self, phase: str) -> Optional[float]:
+    def run_epoch(self, phase: str, test_idx: Optional[int] = None) -> Optional[float]:
         """
         Run one epoch of training, validation, or test.
         Adapted for polarization-based reflection removal with memory optimizations.
@@ -667,7 +685,7 @@ class Engine:
                     device=self.device,
                 )
                 highlight_result = self.add_polar_highlights(
-                    rgb=sample["rgb"].to(self.device, non_blocking=True),
+                    rgb=sample["diffuse"].to(self.device, non_blocking=True),
                     pol=None,
                     light_pos=random_light_pos,
                     intrinsic="compute",  # sample["intrinsics"].to(self.device, non_blocking=True),
@@ -677,7 +695,7 @@ class Engine:
 
                 # Compute soft highlight map
                 real_highlight_soft_mask = get_soft_highlight_map(
-                    sample["rgb"].to(self.device, non_blocking=True),
+                    sample["diffuse"].to(self.device, non_blocking=True),
                     threshold=self.config.SOFT_HIGHLIGHT_THRESHOLD,
                 )
                 # Compute inverse binary mask to mask out real highlights from the loss computation
@@ -704,27 +722,13 @@ class Engine:
                     highlight_result["highlight"] + real_highlight_soft_mask
                 ).clamp(0, 1)
                 
-                # Debug: Log mask statistics (only occasionally to avoid spam)
-                if phase == "Training" and batch_idx % 100 == 0:
-                    mask_coverage = (lossmask.sum() / lossmask.numel() * 100).item()
-                    real_hl_coverage = (real_highlight_soft_mask.sum() / real_highlight_soft_mask.numel() * 100).item()
-                    self.logger.info(
-                        f"Mask coverage: {mask_coverage:.1f}% valid, {100-mask_coverage:.1f}% masked | "
-                        f"Real highlights: {real_hl_coverage:.1f}% of image",
-                        context="DEBUG"
-                    )
 
                 ### Constructing ground truth dict
                 rgb_highlighted = highlight_result["rgb_highlighted"]
                 specular = sample["specular"].to(self.device, non_blocking=True)
                 
                 # Ground truth diffuse: original RGB (contains real highlights)
-                # Strategy:
-                # - In virtual highlight regions: supervised (clean diffuse available)
-                # - In real highlight regions: NO supervision (masked out)
-                # - Model learns pattern from virtual highlights and inpaints diffuse behind real highlights
-                # - Highlight GT contains BOTH real and virtual, so model learns to predict all highlights
-                diffuse = sample["rgb"].to(self.device, non_blocking=True)
+                diffuse = sample["diffuse"].to(self.device, non_blocking=True)
                 
                 gt_decomposition = {
                     "diffuse": diffuse,  # Contains real highlights, but masked during loss
@@ -760,29 +764,12 @@ class Engine:
                 ### Forward pass
                 pred_decomposition = self.model(model_input)
 
-                ### Distillation forward pass (if teacher model is available)
-                if hasattr(self, 'teacher_model') and self.teacher_model is not None:
-                    with torch.no_grad():  # Teacher model doesn't need gradients
-                        teacher_pred_decomposition = self.teacher_model(model_input)
-                else:
-                    teacher_pred_decomposition = None
-
-                ### Loss Computation
-                if hasattr(self, 'teacher_model') and self.teacher_model is not None:
-                    # Use distillation loss
-                    losses = self._compute_distillation_loss(
-                        student_pred=pred_decomposition,
-                        teacher_pred=teacher_pred_decomposition,
-                        ground_truth=gt_decomposition,
-                        mask=lossmask,
-                    )
-                else:
-                    # Use standard loss
-                    losses = self.loss(
-                        prediction=pred_decomposition,
-                        ground_truth=gt_decomposition,
-                        mask=lossmask,
-                    )
+                ### COMPUTE LOSS FUNCTION
+                losses = self.loss(
+                    prediction=pred_decomposition,
+                    ground_truth=gt_decomposition,
+                    mask=lossmask,
+                )
                 loss_value = losses["total"]
 
                 # Compositing the reconstructed image - for visualization purposes
@@ -841,6 +828,9 @@ class Engine:
                     ],
                     f"Step/{'idx' if phase == 'Test' else 'epoch'}": self.step["epoch"],
                 }
+                if phase == "Test" and test_idx is not None:
+                    metrics["Step/test_idx"] = test_idx
+                    metrics["Index"] = float(test_idx)
 
                 # Add individual loss components if available
                 if isinstance(losses, dict):
@@ -941,6 +931,8 @@ class Engine:
                     elif phase == "Test":
                         batch_str = "idx"
                     wandb_metrics[f"Step/{batch_str}"] = self.step[f"{phase}_batch"]
+                    if phase == "Test" and test_idx is not None:
+                        wandb_metrics["Step/test_idx"] = test_idx
                     self.wandb.log(wandb_metrics)
 
                 # Strategic memory cleanup - more aggressive for larger batches
@@ -981,6 +973,8 @@ class Engine:
                 if phase in key
             }
             epoch_metrics[f"Step/{epochstr}"] = self.step["epoch"]
+            if phase == "Test" and test_idx is not None:
+                epoch_metrics["Step/test_idx"] = test_idx
             self.wandb.log(epoch_metrics)
 
         return avg_loss
@@ -1115,13 +1109,13 @@ class Engine:
                 prediction_row, gt_row, mode="vertical", resize_to_match=False
             )
             visualization_dict["images/Comparison_panel"] = prediction_panel_loggable
-            self._add_image_safely(
-                visualization_dict,
-                "images/Comparison_panel",
-                prediction_panel_loggable,
-                caption="Comparison Panel",
-                batch_idx=batch_idx,
-            )
+            # self._add_image_safely(
+            #     visualization_dict,
+            #     "images/Comparison_panel",
+            #     prediction_panel_loggable,
+            #     caption="Comparison Panel",
+            #     batch_idx=batch_idx,
+            # )
             return visualization_dict
         else:
         
@@ -1228,7 +1222,7 @@ class Engine:
         """
         if checkpoint_path is None:
             # Try to load best model
-            checkpoint_path = os.path.join(self.MODELS_DIR, "best_model.pth")
+            checkpoint_path = os.path.join(self.MODELS_DIR, "weights_best.pt")
 
         if not os.path.exists(checkpoint_path):
             self.logger.warning(
@@ -1391,169 +1385,6 @@ class Engine:
             self._reinitialize_wandb()
         
         return True
-
-    def setup_distillation(self, teacher_run_identifier: str) -> bool:
-        """
-        Set up knowledge distillation with a teacher model from an existing run.
-        
-        Args:
-            teacher_run_identifier (str): Run name or run ID of the teacher model
-            
-        Returns:
-            bool: True if distillation setup was successful, False otherwise
-        """
-        from utilities.run_resume import get_resume_info, load_checkpoint_for_resume
-        
-        # Get teacher run information
-        teacher_info = get_resume_info(teacher_run_identifier, self.RUNS_DIR)
-        if teacher_info is None:
-            self.logger.error(f"Failed to get teacher run info for: {teacher_run_identifier}")
-            return False
-        
-        # Load teacher model checkpoint
-        teacher_checkpoint = load_checkpoint_for_resume(
-            teacher_info['latest_checkpoint'], self.device
-        )
-        if teacher_checkpoint is None:
-            self.logger.error("Failed to load teacher checkpoint data")
-            return False
-        
-        # Create teacher model with same architecture as student
-        teacher_model = self._create_teacher_model(teacher_checkpoint)
-        if teacher_model is None:
-            self.logger.error("Failed to create teacher model")
-            return False
-        
-        # Load teacher model weights
-        try:
-            teacher_model.load_state_dict(teacher_checkpoint['model_state_dict'])
-            teacher_model.eval()  # Set to evaluation mode
-            self.logger.info("Loaded teacher model weights", context="DISTILLATION")
-        except Exception as e:
-            self.logger.error(f"Failed to load teacher model weights: {e}")
-            return False
-        
-        # Store teacher model and distillation parameters
-        self.teacher_model = teacher_model
-        self.distillation_alpha = self.config.get("DISTILLATION_ALPHA", 0.7)  # Weight for distillation loss
-        self.distillation_temperature = self.config.get("DISTILLATION_TEMPERATURE", 4.0)  # Temperature for softmax
-        
-        self.logger.info(f"Set up distillation with teacher from run: {teacher_run_identifier}", context="DISTILLATION")
-        self.logger.info(f"Distillation alpha: {self.distillation_alpha}, Temperature: {self.distillation_temperature}", context="DISTILLATION")
-        
-        return True
-
-    def _create_teacher_model(self, teacher_checkpoint):
-        """Create teacher model with the same architecture as student"""
-        try:
-            # Get model class information from checkpoint
-            model_class_name = teacher_checkpoint.get("model_class_name")
-            model_class_module = teacher_checkpoint.get("model_class_module")
-            
-            if model_class_name and model_class_module:
-                # Dynamically import the model class
-                import importlib
-                module = importlib.import_module(model_class_module)
-                model_class = getattr(module, model_class_name)
-                
-                # Create teacher model instance
-                teacher_model = model_class()
-                teacher_model.to(self.device)
-                
-                return teacher_model
-            else:
-                # Fallback: create model using current config (assumes same architecture)
-                from main import create_model_from_config
-                teacher_model = create_model_from_config(self.config, self.device)
-                return teacher_model
-                
-        except Exception as e:
-            self.logger.error(f"Error creating teacher model: {e}")
-            return None
-
-    def _compute_distillation_loss(self, student_pred, teacher_pred, ground_truth, mask):
-        """
-        Compute combined loss for knowledge distillation.
-        
-        Args:
-            student_pred: Student model predictions
-            teacher_pred: Teacher model predictions  
-            ground_truth: Ground truth targets
-            mask: Loss mask
-            
-        Returns:
-            dict: Dictionary containing loss components
-        """
-        # Compute standard loss for ground truth supervision
-        standard_losses = self.loss(
-            prediction=student_pred,
-            ground_truth=ground_truth,
-            mask=mask,
-        )
-        
-        # Compute distillation loss between student and teacher predictions
-        distillation_losses = self._compute_prediction_distillation_loss(
-            student_pred, teacher_pred
-        )
-        
-        # Combine losses
-        combined_losses = {}
-        
-        # Add standard loss components
-        for key, value in standard_losses.items():
-            combined_losses[f"student_{key}"] = value
-        
-        # Add distillation loss components
-        for key, value in distillation_losses.items():
-            combined_losses[f"distill_{key}"] = value
-        
-        # Compute total loss with alpha weighting
-        total_loss = (
-            (1 - self.distillation_alpha) * standard_losses["total"] +
-            self.distillation_alpha * distillation_losses["total"]
-        )
-        
-        combined_losses["total"] = total_loss
-        return combined_losses
-
-    def _compute_prediction_distillation_loss(self, student_pred, teacher_pred):
-        """
-        Compute distillation loss between student and teacher predictions.
-        
-        Args:
-            student_pred: Student model predictions
-            teacher_pred: Teacher model predictions
-            
-        Returns:
-            dict: Dictionary containing distillation loss components
-        """
-        from losses import DistillationLoss
-        
-        # Initialize distillation loss if not already done
-        if not hasattr(self, 'distillation_loss_fn'):
-            self.distillation_loss_fn = DistillationLoss(
-                alpha=1.0,  # Pure distillation loss (no hard targets)
-                temperature=self.distillation_temperature
-            )
-        
-        losses = {}
-        total_distill_loss = 0.0
-        
-        # Distill each component of the decomposition
-        for component in ["diffuse", "specular", "highlight"]:
-            if component in student_pred and component in teacher_pred:
-                # Compute distillation loss for this component
-                distill_loss = self.distillation_loss_fn(
-                    student_pred[component], 
-                    teacher_pred[component]
-                )
-                losses[f"{component}_distill"] = distill_loss["total"]
-                total_distill_loss += distill_loss["total"]
-        
-        # Add total distillation loss
-        losses["total"] = total_distill_loss
-        
-        return losses
 
     def _setup_resume_directories(self, resume_info):
         """Set up directories using existing run information"""
@@ -1726,8 +1557,38 @@ class Engine:
     def _add_image_safely(self, viz_dict, key, tensor, caption, batch_idx=0):
         """Safely add image to visualization dictionary"""
 
-        viz_dict[key] = wandb.Image(self._to_cpu_image(tensor))
-        wandb.log({key: viz_dict[key]})
+        image = wandb.Image(self._to_cpu_image(tensor))
+        viz_dict[key] = image
+        payload = {key: image}
+        # If a Test index is present in recent metrics, attach it
+        if not self.metrics["Test"].empty and "Step/test_idx" in self.metrics["Test"].columns:
+            try:
+                payload["Step/test_idx"] = int(self.metrics["Test"]["Step/test_idx"].iloc[-1])
+            except Exception:
+                pass
+        wandb.log(payload)
+
+    def _load_and_increment_test_index(self) -> int:
+        """Load current test index from RUN_DIR and increment it for next test.
+        Returns the current index to be used for this test.
+        """
+        idx_path = os.path.join(self.RUN_DIR, "test_index.txt")
+        current = 0
+        try:
+            if os.path.exists(idx_path):
+                with open(idx_path, "r") as f:
+                    content = f.read().strip()
+                    if content != "":
+                        current = int(content)
+        except Exception:
+            current = 0
+        # Increment and persist for the next test
+        try:
+            with open(idx_path, "w") as f:
+                f.write(str(current + 1))
+        except Exception:
+            pass
+        return current
 
     # except Exception as e:
     #     self.logger.warning(f"Failed to create {key} visualization: {e}")

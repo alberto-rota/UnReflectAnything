@@ -6,7 +6,6 @@ from typing import Optional, Tuple, Union
 
 import numpy as np
 import torch
-from google.cloud import storage
 from PIL import Image
 from sklearn.decomposition import PCA
 from torch import Tensor
