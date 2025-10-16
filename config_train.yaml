@@ -37,15 +37,15 @@ parameters:
         #   USE_BN: False
         #   OUTPUT_IMAGE_SIZE: [448,448]
         #   OUTPUT_CHANNELS: 4
-        # highlight:
-        #   FEATURE_DIM: 768
-        #   REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
-        #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-        #   READOUT_TYPE: "ignore"
-        #   USE_BN: False
-        #   DROPOUT: 0.1
-        #   OUTPUT_IMAGE_SIZE: [448,448]
-        #   OUTPUT_CHANNELS: 1
+        highlight:
+          FEATURE_DIM: 768
+          REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
+          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+          READOUT_TYPE: "ignore"
+          USE_BN: False
+          DROPOUT: 0.1
+          OUTPUT_IMAGE_SIZE: [448,448]
+          OUTPUT_CHANNELS: 1
 
   ### DATA                                                                      
   DATASETS:
@@ -114,7 +114,7 @@ parameters:
   BATCH_SIZE: # Max batch size with img size 448 is 64
     value: 32
   NUM_WORKERS:
-    value: 6
+    value: 8
   SHUFFLE:
     value: True
   PIN_MEMORY:
@@ -131,10 +131,18 @@ parameters:
   ### POLARIZATION / HIGHLIGHTS                                                        
   MOGE_MODEL:
     value: "Ruicheng/moge-2-vits-normal"
-  SHININESS:
-    value: 10
-  KS:
-    value: 1.0
+  SURFACE_ROUGHNESS:
+    value: 50.0
+  INTENSITY:
+    value: 2.0
+  NOISE_TYPE:
+    value: fbm  # fbm | worley
+  NOISE_OCTAVES:
+    value: 4
+  NOISE_PERSISTENCE:
+    value: 0.75
+  NOISE_WORLEY_CELLS:
+    value: 32
   LIGHT_DISTANCE_RANGE:
     value: [0.04, 0.2]
   LIGHT_LEFT_RIGHT_ANGLE:
@@ -222,5 +230,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "Diffuse only. High LR"
+    value: "Adds noise to virtual highlights"
   

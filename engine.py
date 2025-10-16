@@ -19,6 +19,13 @@ from losses import UnReflectLoss
 from polar_highlighter import PolarHighlighter, get_soft_highlight_map
 import torchvision.transforms as transforms
 from utilities.visualization import panelize, rgb
+from utilities.ablation import Ablation
+
+# Module-level ablation context so engine code can optionally use:
+#   with ablation:
+# or instance-specific via:
+#   with self.ablation:
+ablation = Ablation(False)
 
 
 class Engine:
@@ -56,6 +63,13 @@ class Engine:
         self.config = config
         self.config["NOTES"] = notes
         self.no_wandb = no_wandb
+        # Bind ablation flag from config to both instance and module-level context
+        try:
+            enabled = bool(self.config.get("ABLATE", False))
+        except Exception:
+            enabled = False
+        ablation.set(enabled)
+        self.ablation = ablation
         # Mark if this Engine is expected to resume from an existing run
         # This must be set before any directory setup happens
         self._will_resume = bool(will_resume)
@@ -686,11 +700,13 @@ class Engine:
                 )
                 highlight_result = self.add_polar_highlights(
                     rgb=sample["diffuse"].to(self.device, non_blocking=True),
-                    pol=None,
                     light_pos=random_light_pos,
-                    intrinsic="compute",  # sample["intrinsics"].to(self.device, non_blocking=True),
-                    shininess=self.config.SHININESS,
-                    ks=self.config.KS,
+                    noise=0.03,
+                    noise_type=self.config.NOISE_TYPE,
+                    noise_octaves=self.config.NOISE_OCTAVES,
+                    noise_persistence=self.config.NOISE_PERSISTENCE,
+                    surface_roughness=self.config.SURFACE_ROUGHNESS,
+                    intensity=self.config.INTENSITY,
                 )
 
                 # Compute soft highlight map
@@ -760,7 +776,10 @@ class Engine:
                 # Log memory usage before forward pass if monitoring
                 if self.memory_monitoring and batch_idx % 10 == 0:
                     self._log_memory_usage(f"Before forward pass - batch {batch_idx}")
-
+                
+                if self.ablation:
+                    print("This is an ablation block")
+                
                 ### Forward pass
                 pred_decomposition = self.model(model_input)
 

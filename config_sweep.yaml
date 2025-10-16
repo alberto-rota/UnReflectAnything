@@ -136,10 +136,12 @@ parameters:
   ### POLARIZATION / HIGHLIGHTS                                                        
   MOGE_MODEL:
     value: "Ruicheng/moge-2-vits-normal"
-  SHININESS:
+  SURFACE_ROUGHNESS:
     value: 10
-  KS:
+  INTENSITY:
     value: 2.0
+  NOISE_TYPE:
+    values: [fbm, worley]
   LIGHT_DISTANCE_RANGE:
     value: [0.04, 0.2]
   LIGHT_LEFT_RIGHT_ANGLE:
