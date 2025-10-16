@@ -11,6 +11,9 @@ project: UnReflectAnything
 
 parameters:
 
+  ABLATE: 
+    values: [False, True]
+    
   ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:

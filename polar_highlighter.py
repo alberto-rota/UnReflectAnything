@@ -7,10 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
-from transformers import (
-    AutoImageProcessor,
-    DPTForDepthEstimation,
-)
+# Note: transformers imports removed as they are not used
 from moge.model.v2 import MoGeModel
 
 def time_module(module_name):
@@ -169,6 +166,47 @@ class PolarHighlighter(nn.Module):
     def normalize_vector(self, v, eps=1e-8):
         """Normalize vectors along dim=1"""
         return v / (v.norm(dim=1, keepdim=True).clamp_min(eps))
+
+    def generate_fractal_noise(self, B, H, W, device, dtype, octaves=4, persistence=0.5):
+        """
+        Generate batched, smooth multi-octave noise [B,1,H,W] on the given device.
+        Uses bilinear-upsampled Gaussian noise at progressively finer scales.
+
+        Args:
+            B: batch size
+            H, W: spatial size
+            device: torch device
+            dtype: tensor dtype
+            octaves: number of frequency bands
+            persistence: amplitude decay per octave (in (0,1])
+
+        Returns:
+            noise: tensor in [0,1], shape [B,1,H,W]
+        """
+        noise_accum = None
+        amplitude = 1.0
+        total_amp = 0.0
+        for o in range(octaves):
+            # Coarse resolution decreases with octave depth (start from H/8, W/8)
+            div = 2 ** (o + 3)
+            h_low = max(1, H // div)
+            w_low = max(1, W // div)
+            low = torch.randn(B, 1, h_low, w_low, device=device, dtype=dtype)
+            up = F.interpolate(low, size=(H, W), mode="bilinear", align_corners=False)
+            if noise_accum is None:
+                noise_accum = amplitude * up
+            else:
+                noise_accum = noise_accum + amplitude * up
+            total_amp += amplitude
+            amplitude *= persistence
+
+        # Normalize to [0,1]
+        noise = noise_accum / max(total_amp, 1e-6)
+        # Per-sample min-max normalization for stable range
+        minv = noise.amin(dim=(2, 3), keepdim=True)
+        maxv = noise.amax(dim=(2, 3), keepdim=True)
+        noise = (noise - minv) / (maxv - minv + 1e-6)
+        return noise
 
     @time_module("depth_estimation")
     @time_module("geometry_estimation")
@@ -375,7 +413,7 @@ class PolarHighlighter(nn.Module):
         return v, l, n, nl, nv, light_pos, P
 
     @time_module("blinn_phong_specular")
-    def compute_blinn_phong_specular(self, v, l, n, nv, shininess, ks, F0):
+    def compute_blinn_phong_specular(self, v, l, n, nv, shininess, ks, F0, roughness=None, noise_octaves=4, noise_persistence=0.5):
         """
         Compute Blinn-Phong specular lobe with Schlick Fresnel approximation.
         Physics: I_spec = ks * F(θ) * (n·h)^α, where h = (v+l)/|v+l| is the half-vector.
@@ -389,6 +427,9 @@ class PolarHighlighter(nn.Module):
             shininess: specular exponent α
             ks: specular strength
             F0: Fresnel reflectance at normal incidence
+            roughness: optional roughness in [0,1]; if provided, adds spatial jitter to falloff
+            noise_octaves: number of noise octaves when jittering
+            noise_persistence: amplitude falloff across octaves
 
         Returns:
             H: [B,1,H,W] highlight luminance
@@ -396,7 +437,35 @@ class PolarHighlighter(nn.Module):
         # Compute half-vector and specular lobe
         h = self.normalize_vector(l + v)  # [B,3,H,W] half-vector
         nh = (n * h).sum(1, keepdim=True).clamp_min(0.0)  # [B,1,H,W]
-        spec_lobe = nh**shininess  # [B,1,H,W]
+        # Optional roughness-driven spatial jitter to reduce smoothness of falloff
+        if roughness is not None:
+            if not torch.is_tensor(roughness):
+                roughness_t = torch.tensor(roughness, device=nh.device, dtype=nh.dtype)
+            else:
+                roughness_t = roughness.to(device=nh.device, dtype=nh.dtype)
+            roughness_t = torch.clamp(roughness_t, 0.0, 1.0)
+            if (roughness_t > 0).any():
+                B, _, H, W = nh.shape
+                noise = self.generate_fractal_noise(B, H, W, nh.device, nh.dtype, octaves=noise_octaves, persistence=noise_persistence)
+                # Map noise in [0,1] to multiplicative jitter around 1.0
+                # amplitude scales with roughness (max +/-60%)
+                jitter_ampl = 0.6 * roughness_t
+                # Broadcast jitter_ampl to spatial dims if needed
+                if jitter_ampl.ndim == 1:
+                    jitter_ampl = jitter_ampl.view(B, 1, 1, 1)
+                nh = nh * (1.0 + (noise - 0.5) * 2.0 * jitter_ampl)
+                nh = nh.clamp(0.0, 1.0)
+
+        # Allow shininess to be scalar or broadcastable tensor
+        if torch.is_tensor(shininess):
+            if shininess.ndim == 1:
+                # [B] -> [B,1,1,1]
+                shininess = shininess.view(shininess.shape[0], 1, 1, 1)
+            elif shininess.ndim == 2:
+                # [B,1] -> [B,1,1,1]
+                shininess = shininess.view(shininess.shape[0], 1, 1, 1)
+            # else: assume broadcastable to [B,1,H,W]
+        spec_lobe = nh ** shininess  # [B,1,H,W]
 
         # Apply Schlick Fresnel approximation
         F = self.schlick_fresnel(nv, F0=F0)  # [B,1,H,W]
@@ -499,6 +568,7 @@ class PolarHighlighter(nn.Module):
         n_rel=1.5,
         F0=0.04,
         clamp_H=True,
+        roughness=0.0,
     ):
         """
         Synthesize specular highlights and update Stokes parameters.
@@ -509,8 +579,9 @@ class PolarHighlighter(nn.Module):
             depth: [B,1,H,W] depth map in meters
             normals: [B,3,H,W] surface normals
             K: [B,3,3] camera intrinsics
-            shininess: specular exponent
+            shininess: base specular exponent (higher = sharper highlight)
             ks: specular strength
+            roughness: surface roughness in [0,1]; 0 preserves base shininess, 1 is very rough
             n_rel: relative refractive index
             F0: Fresnel reflectance at normal incidence
             clamp_H: whether to normalize highlight intensity
@@ -540,24 +611,40 @@ class PolarHighlighter(nn.Module):
             depth, normals, K, light_pos
         )
 
-        # 2) Compute Blinn-Phong specular lobe with Fresnel modulation
-        H = self.compute_blinn_phong_specular(v, l, n, nv, shininess, ks, F0)
+        # 2) Compute effective shininess from roughness
+        # roughness in [0,1]: 0 -> base shininess (sharp), 1 -> min_shininess (broad)
+        if not torch.is_tensor(roughness):
+            roughness_t = torch.tensor(roughness, device=device, dtype=rgb_lin.dtype)
+        else:
+            roughness_t = roughness.to(device=device, dtype=rgb_lin.dtype)
+        roughness_t = torch.clamp(roughness_t, 0.0, 1.0)
+        min_shininess = torch.as_tensor(1.0, device=device, dtype=rgb_lin.dtype)
+        base_shininess = torch.as_tensor(shininess, device=device, dtype=rgb_lin.dtype)
+        # Quadratic falloff provides perceptual smoothness control
+        shininess_eff = min_shininess + (base_shininess - min_shininess) * ((1.0 - roughness_t) ** 2)
+        # 3) Compute Blinn-Phong specular lobe with Fresnel modulation
+        H = self.compute_blinn_phong_specular(
+            v, l, n, nv,
+            shininess_eff,
+            ks, F0,
+            roughness=roughness,
+        )
         if clamp_H:
             H = H / (
                 H.amax(dim=(2, 3), keepdim=True).clamp_min(1e-6)
             )  # normalize to [0,1]
 
-        # 3) Compute polarization parameters from Fresnel theory
+        # 4) Compute polarization parameters from Fresnel theory
         H_dop, H_aop = self.compute_polarization_parameters(v, l, nl, n_rel)
 
-        # 4) Build highlight Stokes vector
+        # 5) Build highlight Stokes vector
         S0_H, S1_H, S2_H = self.compute_highlight_stokes_vector(H, H_dop, H_aop)
         H_stokes = torch.cat([S0_H, S1_H, S2_H], dim=1)
 
         return H, H_stokes, H_aop, H_dop, light_pos, pcloud, l, v
 
     # @time_module("forward_pass")
-    def forward(self, rgb, pol=None, light_pos=None, intrinsic=None, shininess=80.0, ks=10.0, n_rel=1.5, F0=0.4, return_light_pos=False):
+    def forward(self, rgb, pol=None, light_pos=None, intrinsic=None, shininess=80.0, ks=10.0, n_rel=1.5, F0=0.4, return_light_pos=False, roughness=0.0):
         """
         Forward pass for polar highlight synthesis.
 
@@ -565,8 +652,9 @@ class PolarHighlighter(nn.Module):
             rgb: [B,3,H,W] RGB image (0-1 normalized)
             pol: [B,3,H,W] input polarization Stokes parameters (S0,S1,S2), optional
             intrinsic: [B,3,3] camera intrinsic matrix
-            shininess: specular exponent
+            shininess: base specular exponent (higher = sharper highlight)
             ks: specular strength   
+            roughness: surface roughness in [0,1]; 0 preserves base shininess, 1 is very rough
             n_rel: relative refractive index
             F0: Fresnel reflectance at normal incidence
 
@@ -608,6 +696,7 @@ class PolarHighlighter(nn.Module):
                 ks=ks,
                 n_rel=n_rel,
                 F0=F0,
+                roughness=roughness,
             )
         )
 

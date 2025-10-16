@@ -91,7 +91,7 @@ parameters:
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
         LOAD_RGB_ONLY: True
-        FEW_IMAGES: False
+        FEW_IMAGES: True
         HIGHLIGHT_ENABLE: True  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
         HIGHLIGHT_RETURN_MASK: True
@@ -223,3 +223,4 @@ parameters:
     value: "UnReflectAnything"
   NOTES:
     value: "Diffuse only. High LR"
+  

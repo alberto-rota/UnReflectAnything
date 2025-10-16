@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional
+import os
 
 import torch
 import torch.nn as nn
@@ -1257,3 +1258,111 @@ def get_model_size_mb(model):
     # Assuming float32 (4 bytes per parameter)
     size_mb = summary["total_parameters"] * 4 / (1024 * 1024)
     return size_mb
+
+
+def load_best_model_by_run(run_identifier: str, device: Optional[torch.device] = None, runs_dir: Optional[str] = None) -> nn.Module:
+    """
+    Load and return a model instantiated from a run's best checkpoint.
+
+    Args:
+        run_identifier: Run name or ID used to locate the run directory.
+        device: Optional torch.device. Defaults to CUDA if available else CPU.
+        runs_dir: Optional absolute path to the root runs directory. If None, uses the
+                  same resolution logic as the training engine (RESUlTS_DIR env or default).
+
+    Returns:
+        nn.Module: The model put on the requested device, loaded with best weights, set to eval().
+
+    Raises:
+        FileNotFoundError: If the run or best checkpoint cannot be found.
+        RuntimeError: If model instantiation or state loading fails.
+    """
+    # Resolve device
+    load_device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Resolve runs directory using same logic as engine initializers if not provided
+    if runs_dir is None:
+        try:
+            from utilities import engine_initializers as initialize  # local import to avoid cycles
+            runs_dir = initialize.device_and_directories({})["runs_dir"]
+        except Exception:
+            # Fallback: environment variable or repo default
+            runs_dir = os.path.expandvars(
+                os.getenv(
+                    "RESULTS_DIR",
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs"),
+                )
+            )
+
+    # Find the run and its models directory
+    try:
+        from utilities.run_resume import get_resume_info  # local import to avoid cycles
+        resume_info = get_resume_info(run_identifier, runs_dir)
+    except Exception as e:
+        raise FileNotFoundError(f"Failed to resolve run '{run_identifier}' in runs_dir '{runs_dir}': {e}")
+
+    if resume_info is None:
+        raise FileNotFoundError(f"Run not found or invalid: {run_identifier}")
+
+    models_dir = resume_info.get("models_dir")
+    run_dir = resume_info.get("run_dir")
+    if models_dir is None or not os.path.isdir(models_dir):
+        raise FileNotFoundError(f"Models directory not found for run: {run_identifier}")
+
+    # Prefer weights_best.pt (EarlyStopping), fallback to best_model.pth (engine best)
+    candidate_paths = [
+        os.path.join(models_dir, "weights_best.pt"),
+        os.path.join(models_dir, "best_model.pth"),
+    ]
+    best_ckpt = next((p for p in candidate_paths if os.path.exists(p)), None)
+    if best_ckpt is None:
+        raise FileNotFoundError(
+            f"Best checkpoint not found. Looked for: {', '.join(candidate_paths)}"
+        )
+
+    # Load checkpoint and reconstruct model from saved config
+    checkpoint = torch.load(best_ckpt, map_location=load_device, weights_only=False)
+
+    # Prefer config packaged inside checkpoint; else use run's config from resume_info
+    saved_config = checkpoint.get("config", resume_info.get("config"))
+    if saved_config is None:
+        # As a last resort, try to read config.json from the run directory
+        import json
+
+        config_path = os.path.join(run_dir, "config.json") if run_dir else None
+        if config_path and os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                saved_config = json.load(f)
+        else:
+            raise RuntimeError("No configuration found to rebuild model architecture")
+
+    # Ensure DotMap for the model factory
+    try:
+        from dotmap import DotMap  # local import
+        if not isinstance(saved_config, DotMap):
+            saved_config = DotMap(saved_config)
+    except Exception:
+        # If DotMap import fails, attempt to use raw dict (factory expects DotMap but guard anyway)
+        pass
+
+    # Build model using the main factory to ensure identical architecture
+    try:
+        from main import create_model_from_config  # local import to avoid top-level cycle
+        model = create_model_from_config(saved_config, load_device)
+    except Exception as e:
+        raise RuntimeError(f"Failed to instantiate model from saved config: {e}")
+
+    # Load weights (handle both full checkpoint and raw state_dict formats)
+    state_dict = checkpoint.get("model_state_dict", None)
+    if state_dict is None:
+        # If the file is a plain state_dict
+        state_dict = checkpoint
+
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if len(unexpected) > 0:
+        # Not fatal; but surface to caller as warning via exception message for clarity
+        # Users can inspect and decide to ignore
+        pass
+
+    model = model.to(load_device).eval()
+    return model

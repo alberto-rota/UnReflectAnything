@@ -38,52 +38,62 @@ def rgb(
     label: Optional[Union[Tuple[str, int, str], Tuple[str, int, int, str]]] = None,
     **kwargs: Any,
 ) -> Union[None, torch.Tensor, Image.Image]:
-    """
+    r"""
     Display tensor as RGB image using lovely_tensors with robust input handling.
 
     Args:
-        t (torch.Tensor): The tensor to display. Supports various shapes:
-            - HxW (grayscale)
-            - HxWx1 or HxWxC (grayscale or RGB)
-            - 1xHxW or CxHxW (grayscale or RGB)
-            - 1x1xHxW, 1xCxHxW, 1xHxWx1, 1xHxWxC (batched)
+        t (torch.Tensor):
+            The tensor to display. Supports various shapes:
+                - HxW (grayscale)
+                - HxWx1 or HxWxC (grayscale or RGB)
+                - 1xHxW or CxHxW (grayscale or RGB)
+                - 1x1xHxW, 1xCxHxW, 1xHxWx1, 1xHxWxC (batched)
         as_tensor (Union[bool, str]):
             - False: Display image (default)
             - True: Return torch.Tensor
             - "pil": Return PIL Image
-        pca (Optional[PCA]): Pre-fitted PCA object for high-dimensional tensors. If None and channels > 3, computes new PCA.
-        resize (Optional[Tuple[int, int]]): Target size (height, width) for resizing. Defaults to None.
-        interpolation (str): Interpolation method for resizing ("bilinear", "nearest", "bicubic"). Defaults to "bilinear".
-        colormap (Optional[str]): Colormap name for single-channel images (e.g., "plasma", "viridis", "jet"). Defaults to None.
-        vmin (Optional[float]): Minimum value for colormap normalization. Defaults to tensor min.
-        vmax (Optional[float]): Maximum value for colormap normalization. Defaults to tensor max.
+        pca (Optional[PCA]):
+            Pre-fitted PCA object for high-dimensional tensors.
+            If None and channels > 3, computes new PCA.
+        resize (Optional[Tuple[int, int]]):
+            Target size (height, width) for resizing. Defaults to None.
+        interpolation (str):
+            Interpolation method for resizing ("bilinear", "nearest", "bicubic"). Defaults to "bilinear".
+        colormap (Optional[str]):
+            Colormap name for single-channel images (e.g., "plasma", "viridis", "jet"). Defaults to None.
+        vmin (Optional[float]):
+            Minimum value for colormap normalization. Defaults to tensor min.
+        vmax (Optional[float]):
+            Maximum value for colormap normalization. Defaults to tensor max.
         border (Optional[Union[dict, Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int]]]):
             Border specification. Prefer dict form: {"color": ..., "thickness": int}.
             Tuple form (color, thickness) is still accepted for backward compatibility.
             Color can be:
-            - RGB list/tuple: [r, g, b] or (r, g, b) with values in [0, 1]
-            - torch.Tensor: RGB tensor with values in [0, 1]
-            - np.ndarray: RGB array with values in [0, 1]
-            - str: Hex color code (e.g., "#FF0000")
+                - RGB list/tuple: [r, g, b] or (r, g, b) with values in [0, 1]
+                - torch.Tensor: RGB tensor with values in [0, 1]
+                - np.ndarray: RGB array with values in [0, 1]
+                - str: Hex color code (e.g., "#FF0000")
             Thickness is the border width in pixels. Defaults to None.
         label (Optional[Union[dict, Tuple[str, int, str], Tuple[str, int, int, str]]]):
             Label specification. Prefer dict form:
-              {"position": str, "height": int, "margin": int, "text": str, "style": str, "latex": bool}
+                {"position": str, "height": int, "margin": int, "text": str, "style": str, "latex": bool}
             Tuple forms are still accepted: (position, height, text) or
-            (position, height, padding, text). The padding value is treated as margin.
+                (position, height, padding, text). The padding value is treated as margin.
             Draws a white rectangular label with black text in Computer Modern font.
-            - position: combinations of top/bottom with optional left/right and inside/outside,
-              e.g. "top", "bottom-right", "top-left-outside". If left/right omitted, centers.
-            - height: rectangle height in pixels; text is scaled to fit height.
-            - margin: pixels used as spacing from edges (and expansion for outside labels).
-              Inner padding around text is auto-scaled from height.
-            - style: one of {"normal", "bold", "italic"}; defaults to "bold".
-            - latex: if True, or if text is wrapped with $...$, render text as LaTeX.
-            - text: the string to render inside the rectangle.
-        **kwargs (Any): Additional keyword arguments passed to lt.rgb().
+                - position: combinations of top/bottom with optional left/right and inside/outside,
+                  e.g. "top", "bottom-right", "top-left-outside". If left/right omitted, centers.
+                - height: rectangle height in pixels; text is scaled to fit height.
+                - margin: pixels used as spacing from edges (and expansion for outside labels).
+                  Inner padding around text is auto-scaled from height.
+                - style: one of {"normal", "bold", "italic"}; defaults to "bold".
+                - latex: if True, or if text is wrapped with $...$, render text as LaTeX.
+                - text: the string to render inside the rectangle.
+        **kwargs (Any):
+            Additional keyword arguments passed to lt.rgb().
 
     Returns:
-        Union[None, torch.Tensor, Image.Image]: Based on as_tensor parameter
+        Union[None, torch.Tensor, Image.Image]:
+            Based on as_tensor parameter
     """
 
     # Normalize input tensor to standard format: CxHxW

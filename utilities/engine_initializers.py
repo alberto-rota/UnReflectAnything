@@ -357,7 +357,8 @@ def _define_wandb_metrics():
     weightsandbiases.define_metric("Step/batch")
     weightsandbiases.define_metric("Step/valbatch")
     weightsandbiases.define_metric("Step/lossissues")
-    weightsandbiases.define_metric("Step/test_idx")
+    # Use generic test index as the grouping step; avoid static per-index metrics
+    # Individual test runs will be logged under Test/test_idx_NUM/* keys
 
     # Group metrics by step
     weightsandbiases.define_metric("Issues/*", step_metric="Step/lossissues")

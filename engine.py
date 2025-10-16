@@ -892,9 +892,16 @@ class Engine:
                             gt_decomposition,
                             pred_decomposition,
                             gt_data,
+                            as_single_panel=True,
+                            batch_idx=batch_idx,
+                            phase=phase,
+                            test_idx=test_idx if phase == "Test" else None,
+                            # Ensure images are logged under the correct Test prefix inside helper
+                            # (helper will no-op prefixing for non-Test phases)
                         )
                         if images:
-                            metrics.update(images)
+                            # Images are logged directly inside helper with proper prefixes.
+                            # Avoid adding to metrics to prevent duplicate logging.
                             images_logged = True
 
                         # Clean up sample copy immediately
@@ -929,10 +936,20 @@ class Engine:
                     elif phase == "Validation":
                         batch_str = "valbatch"
                     elif phase == "Test":
-                        batch_str = "idx"
+                        batch_str = f"test_idx_{test_idx}"
                     wandb_metrics[f"Step/{batch_str}"] = self.step[f"{phase}_batch"]
                     if phase == "Test" and test_idx is not None:
                         wandb_metrics["Step/test_idx"] = test_idx
+                        # Rewrite all Test metric keys to include test index as prefix
+                        prefixed_metrics = {}
+                        for key, value in wandb_metrics.items():
+                            if isinstance(key, str) and key.startswith("Test/"):
+                                rest = key[len("Test/"):]
+                                new_key = f"Test/test_idx_{test_idx}/{rest}"
+                                prefixed_metrics[new_key] = value
+                            else:
+                                prefixed_metrics[key] = value
+                        wandb_metrics = prefixed_metrics
                     self.wandb.log(wandb_metrics)
 
                 # Strategic memory cleanup - more aggressive for larger batches
@@ -959,23 +976,43 @@ class Engine:
 
         # Log epoch metrics to wandb
         if self.wandb:
-            epochstr = "idx" if phase == "Test" else "epoch"
-            epoch_metrics = self._prepare_metrics_for_wandb(
-                self.metrics[phase][
-                    self.metrics[phase][f"Step/{epochstr}"] == self.step["epoch"]
-                ].mean(),
-                phase,
-            )
-            # Format epoch metrics properly
-            epoch_metrics = {
-                key.replace(phase, f"{phase}/{epochstr}"): value
-                for key, value in epoch_metrics.items()
-                if phase in key
-            }
-            epoch_metrics[f"Step/{epochstr}"] = self.step["epoch"]
+            # For Test phase, filter using the stable column 'Step/test_idx'.
+            # For Training/Validation, filter using 'Step/epoch' as before.
             if phase == "Test" and test_idx is not None:
-                epoch_metrics["Step/test_idx"] = test_idx
-            self.wandb.log(epoch_metrics)
+                df = self.metrics[phase]
+                if "Step/test_idx" in df.columns:
+                    selector = df["Step/test_idx"] == test_idx
+                    df_mean = df[selector].mean(numeric_only=True)
+                else:
+                    # Fallback: no explicit test_idx column found; average all rows
+                    df_mean = df.mean(numeric_only=True)
+                epoch_label = f"test_idx_{test_idx}"
+            else:
+                df_mean = self.metrics[phase][
+                    self.metrics[phase]["Step/epoch"] == self.step["epoch"]
+                ].mean()
+                epoch_label = "epoch"
+
+            epoch_metrics = self._prepare_metrics_for_wandb(df_mean, phase)
+            # Build final logging dict with strict Test prefixing convention
+            final_epoch_metrics = {}
+            if phase == "Test" and test_idx is not None:
+                for key, value in epoch_metrics.items():
+                    if key.startswith("Test/"):
+                        rest = key[len("Test/"):]
+                        new_key = f"Test/test_idx_{test_idx}/{rest}"
+                        final_epoch_metrics[new_key] = value
+                # Record step keys
+                final_epoch_metrics[f"Step/test_idx_{test_idx}"] = test_idx
+                final_epoch_metrics["Step/test_idx"] = test_idx
+            else:
+                # Training/Validation: keep standard epoch prefixing
+                for key, value in epoch_metrics.items():
+                    if key.startswith(phase + "/"):
+                        final_epoch_metrics[key.replace(phase, f"{phase}/{epoch_label}")] = value
+                final_epoch_metrics[f"Step/{epoch_label}"] = self.step["epoch"]
+
+            self.wandb.log(final_epoch_metrics)
 
         return avg_loss
 
@@ -1038,6 +1075,8 @@ class Engine:
         sample,
         as_single_panel=True,
         batch_idx=0,
+        phase: str = None,
+        test_idx: Optional[int] = None,
     ):
         """
         Creates visualization images for polarization-based reflection removal training.
@@ -1109,13 +1148,15 @@ class Engine:
                 prediction_row, gt_row, mode="vertical", resize_to_match=False
             )
             visualization_dict["images/Comparison_panel"] = prediction_panel_loggable
-            # self._add_image_safely(
-            #     visualization_dict,
-            #     "images/Comparison_panel",
-            #     prediction_panel_loggable,
-            #     caption="Comparison Panel",
-            #     batch_idx=batch_idx,
-            # )
+            self._add_image_safely(
+                visualization_dict,
+                "images/Comparison_panel",
+                prediction_panel_loggable,
+                caption="Comparison Panel",
+                batch_idx=batch_idx,
+                phase=phase,
+                test_idx=test_idx,
+            )
             return visualization_dict
         else:
         
@@ -1131,6 +1172,8 @@ class Engine:
                     pred_decomposition["recon"],
                     "Reconstruction",
                     batch_idx,
+                    phase=phase,
+                    test_idx=test_idx,
                 )
 
             # Then add any other model output components
@@ -1150,6 +1193,8 @@ class Engine:
                         comp_tensor,
                         caption,
                         batch_idx,
+                        phase=phase,
+                        test_idx=test_idx,
                     )
 
             # Input images
@@ -1181,6 +1226,8 @@ class Engine:
                         gt_decomposition[tensor_key],
                         caption,
                         batch_idx,
+                        phase=phase,
+                        test_idx=test_idx,
                     )
 
             # Ground truth components - dynamically detect available components
@@ -1208,6 +1255,8 @@ class Engine:
                         comp_tensor,
                         caption,
                         batch_idx,
+                        phase=phase,
+                        test_idx=test_idx,
                     )
 
             # Final cleanup
@@ -1554,14 +1603,23 @@ class Engine:
 
         return pil_image
 
-    def _add_image_safely(self, viz_dict, key, tensor, caption, batch_idx=0):
+    def _add_image_safely(self, viz_dict, key, tensor, caption, batch_idx=0, phase: str = None, test_idx: Optional[int] = None):
         """Safely add image to visualization dictionary"""
 
         image = wandb.Image(self._to_cpu_image(tensor))
-        viz_dict[key] = image
-        payload = {key: image}
-        # If a Test index is present in recent metrics, attach it
-        if not self.metrics["Test"].empty and "Step/test_idx" in self.metrics["Test"].columns:
+        # Construct logging key with required prefixing for Test phase
+        log_key = key
+        if phase == "Test" and test_idx is not None:
+            # Avoid double-prefixing if already present
+            if not key.startswith(f"Test/test_idx_{test_idx}/"):
+                log_key = f"Test/test_idx_{test_idx}/{key}"
+        viz_dict[log_key] = image
+        payload = {log_key: image}
+        # Attach step index for grouping if available
+        if phase == "Test" and test_idx is not None:
+            payload["Step/test_idx"] = int(test_idx)
+        elif not self.metrics["Test"].empty and "Step/test_idx" in self.metrics["Test"].columns:
+            # Fallback: infer last test_idx from metrics table
             try:
                 payload["Step/test_idx"] = int(self.metrics["Test"]["Step/test_idx"].iloc[-1])
             except Exception:
