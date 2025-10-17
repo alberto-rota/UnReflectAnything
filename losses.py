@@ -139,6 +139,27 @@ class TVLoss(nn.Module):
 
 
 # -------------------------
+#   Color-space utilities
+# -------------------------
+def rgb_hsv_saturation(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """
+    Compute HSV saturation from RGB in [0,1].
+
+    Args:
+        x: [B,3,H,W] tensor in [0,1]
+        eps: numerical stability for division
+
+    Returns:
+        [B,1,H,W] saturation in [0,1]
+    """
+    # [B,1,H,W]
+    maxc, _ = x.max(dim=1, keepdim=True)
+    minc, _ = x.min(dim=1, keepdim=True)
+    delta = maxc - minc
+    return delta / (maxc + eps)
+
+
+# -------------------------
 #   Compositing utilities
 # -------------------------
 def alpha_composite(components, output_format='rgb'):
@@ -343,7 +364,15 @@ class UnReflectLoss(nn.Module):
         weight_component_matching=1.0,
         weight_image_reconstruction=0.5,
         weight_alpha_regularization=0.0,
-        weight_spatial_consistency=0.0,
+        weight_spatial_consistency=0.0,  # legacy placeholder (unused)
+
+        # New: diffuse saturation and ring-consistency regularizers (default off)
+        weight_diffuse_saturation: float = 0.0,
+        diffuse_saturation_max: float = 0.35,
+        weight_diffuse_ring: float = 0.0,
+        ring_kernel_size: int = 7,           # odd; dilation size for surrounding ring
+        ring_var_weight: float = 0.5,        # weight on variance matching vs mean matching
+        ring_texture_weight: float = 1.0,    # weight on texture consistency term
 
         # Highlight regression config
         hlreg_w_l1=1.0,
@@ -381,6 +410,12 @@ class UnReflectLoss(nn.Module):
         self.weight_image_reconstruction = weight_image_reconstruction
         self.weight_alpha_regularization = weight_alpha_regularization
         self.weight_spatial_consistency = weight_spatial_consistency
+        self.weight_diffuse_saturation = weight_diffuse_saturation
+        self.diffuse_saturation_max = diffuse_saturation_max
+        self.weight_diffuse_ring = weight_diffuse_ring
+        self.ring_kernel_size = ring_kernel_size
+        self.ring_var_weight = ring_var_weight
+        self.ring_texture_weight = ring_texture_weight
 
         # Highlight rendering
         self.highlight_color = torch.tensor(highlight_color, dtype=torch.float32)
@@ -405,6 +440,86 @@ class UnReflectLoss(nn.Module):
             pos_weight=hlreg_pos_weight,
             focal_gamma=hlreg_focal_gamma,
         )
+
+        # Small gradient kernels for texture consistency (applied per-channel)
+        kx = torch.tensor([[-1.0, 1.0]], dtype=torch.float32).view(1, 1, 1, 2)
+        ky = torch.tensor([[-1.0], [1.0]], dtype=torch.float32).view(1, 1, 2, 1)
+        self.register_buffer("_ring_kx", kx)
+        self.register_buffer("_ring_ky", ky)
+
+    @staticmethod
+    def _to_single_channel_mask(mask: torch.Tensor) -> torch.Tensor:
+        """
+        Ensure binary mask [B,1,H,W]. Accepts [B,1,H,W] or [B,C,H,W]. Values in {0,1}.
+        """
+        if mask.dim() != 4:
+            raise ValueError("mask must be 4D [B,C,H,W]")
+        if mask.size(1) == 1:
+            return mask
+        return (mask.sum(dim=1, keepdim=True) > 0).float()
+
+    @staticmethod
+    def _safe_mean(x: torch.Tensor, m: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+        # x: [B,C,H,W], m: [B,1,H,W]
+        m = m.clamp(0.0, 1.0)
+        denom = m.sum(dim=(2, 3), keepdim=True).clamp_min(eps)
+        return (x * m).sum(dim=(2, 3), keepdim=True) / denom
+
+    @staticmethod
+    def _safe_var(x: torch.Tensor, m: torch.Tensor, mean: torch.Tensor = None, eps: float = 1e-8) -> torch.Tensor:
+        m = m.clamp(0.0, 1.0)
+        if mean is None:
+            mean = UnReflectLoss._safe_mean(x, m, eps)
+        denom = m.sum(dim=(2, 3), keepdim=True).clamp_min(eps)
+        return (((x - mean) ** 2) * m).sum(dim=(2, 3), keepdim=True) / denom
+
+    def _hole_and_ring_masks(self, include_mask: torch.Tensor) -> tuple:
+        """
+        From include mask [B,1,H,W] (1=valid/context), build hole mask (complement)
+        and a thin ring around the hole using max-pooling dilation.
+        Returns (hole_mask, ring_mask) both [B,1,H,W].
+        """
+        base = self._to_single_channel_mask(include_mask)
+        hole = (1.0 - base).clamp(0.0, 1.0)
+        if self.ring_kernel_size <= 1:
+            return hole, torch.zeros_like(hole)
+        pad = self.ring_kernel_size // 2
+        dilated = F.max_pool2d(hole, kernel_size=self.ring_kernel_size, stride=1, padding=pad)
+        ring = (dilated - hole).clamp(0.0, 1.0)
+        return hole, ring
+
+    def _saturation_hinge(self, diffuse_rgb: torch.Tensor, hole_mask: torch.Tensor) -> torch.Tensor:
+        # diffuse_rgb: [B,3,H,W], hole_mask: [B,1,H,W]
+        sat = rgb_hsv_saturation(diffuse_rgb)
+        excess = (sat - self.diffuse_saturation_max).clamp_min(0.0)
+        eps = 1e-8
+        return (excess * hole_mask).sum() / (hole_mask.sum() + eps)
+
+    def _texture_map(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute per-channel gradient magnitude map using small finite differences."""
+        B, C, H, W = x.shape
+        # Forward finite differences with padding to preserve size
+        dx = x[:, :, :, 1:] - x[:, :, :, :-1]
+        dx = F.pad(dx, (0, 1, 0, 0))  # pad one column on the right -> [B,C,H,W]
+        dy = x[:, :, 1:, :] - x[:, :, :-1, :]
+        dy = F.pad(dy, (0, 0, 0, 1))  # pad one row at the bottom -> [B,C,H,W]
+        return torch.sqrt(dx * dx + dy * dy + 1e-8)
+
+    def _ring_consistency_loss(self, diffuse_rgb: torch.Tensor, hole_mask: torch.Tensor, ring_mask: torch.Tensor) -> torch.Tensor:
+        # Color statistics alignment (mean + variance)
+        mean_h = self._safe_mean(diffuse_rgb, hole_mask)   # [B,C,1,1]
+        mean_r = self._safe_mean(diffuse_rgb, ring_mask)   # [B,C,1,1]
+        var_h = self._safe_var(diffuse_rgb, hole_mask, mean_h)
+        var_r = self._safe_var(diffuse_rgb, ring_mask, mean_r)
+        color_term = (mean_h - mean_r).abs().mean() + self.ring_var_weight * (var_h - var_r).abs().mean()
+
+        # Texture alignment via gradient magnitude statistics
+        tex = self._texture_map(diffuse_rgb)
+        mean_tex_h = self._safe_mean(tex, hole_mask)
+        mean_tex_r = self._safe_mean(tex, ring_mask)
+        texture_term = (mean_tex_h - mean_tex_r).abs().mean()
+
+        return color_term + self.ring_texture_weight * texture_term
 
     def _single_to_rgb_highlight(self, highlight_single):
         """Convert [B,1,H,W] highlight alpha to [B,3,H,W] additive RGB."""
@@ -567,6 +682,28 @@ class UnReflectLoss(nn.Module):
 
         losses["Reconstruction"] = reconstruction_loss
 
+        # ===== Diffuse saturation + ring consistency regularizers (optional) =====
+        if "diffuse" in prediction:
+            diffuse_pred_rgb = prediction["diffuse"][:, :3]
+            include_mask = mask if mask is not None else torch.ones_like(diffuse_pred_rgb[:, :1])
+            hole_mask, ring_mask = self._hole_and_ring_masks(include_mask)
+
+            # Only compute when there is a non-empty hole
+            if self.weight_diffuse_saturation > 0.0 and hole_mask.sum() > 0:
+                sat_loss = self._saturation_hinge(diffuse_pred_rgb, hole_mask)
+                losses["Saturation"] = sat_loss
+            else:
+                losses["Saturation"] = torch.tensor(0.0, device=diffuse_pred_rgb.device, dtype=diffuse_pred_rgb.dtype)
+
+            if self.weight_diffuse_ring > 0.0 and (hole_mask.sum() > 0 and ring_mask.sum() > 0):
+                ring_loss = self._ring_consistency_loss(diffuse_pred_rgb, hole_mask, ring_mask)
+                losses["DiffuseRingConsistency"] = ring_loss
+            else:
+                losses["DiffuseRingConsistency"] = torch.tensor(0.0, device=diffuse_pred_rgb.device, dtype=diffuse_pred_rgb.dtype)
+        else:
+            losses["Saturation"] = torch.tensor(0.0)
+            losses["DiffuseRingConsistency"] = torch.tensor(0.0)
+
         # ===== Alpha Regularization =====
         alpha_reg_loss = 0.0
         if self.alpha_reg_mode != "none" and 'highlight' in prediction:
@@ -588,6 +725,8 @@ class UnReflectLoss(nn.Module):
             self.weight_component_matching * losses["Decomposition"]
             + self.weight_image_reconstruction * losses["Reconstruction"]
             + self.weight_alpha_regularization * losses["AlphaRegularization"]
+            + self.weight_diffuse_saturation * losses["Saturation"]
+            + self.weight_diffuse_ring * losses["DiffuseRingConsistency"]
         )
         
         losses["total"] = total_loss

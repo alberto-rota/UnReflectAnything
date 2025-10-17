@@ -1,4 +1,6 @@
 #  MODULES AND DATASET LOADING
+from dotenv import load_dotenv
+load_dotenv()
 import argparse
 import ast
 import os
@@ -9,7 +11,6 @@ from typing import Dict, Any, Optional, List
 import debugpy
 import torch
 import yaml
-from dotenv import load_dotenv
 from dotmap import DotMap
 from rich.traceback import install
 
@@ -21,7 +22,6 @@ from utilities import *
 import utilities.engine_initializers as initialize
 
 logger = get_logger(__name__).set_context("IMPORT")
-load_dotenv()
 
 
 def create_model_from_config(config: DotMap, device: torch.device):

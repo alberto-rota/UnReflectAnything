@@ -3,6 +3,7 @@ import os
 import shutil
 from contextlib import contextmanager, nullcontext
 from typing import Optional, Union
+import random
 
 import numpy as np
 import pandas as pd
@@ -155,6 +156,13 @@ class Engine:
             weight_image_reconstruction=self.config.IMAGE_RECONSTRUCTION_LOSS_WEIGHT,
             weight_alpha_regularization=self.config.ALPHA_REGULARIZATION_LOSS_WEIGHT,
             weight_spatial_consistency=self.config.SPATIAL_CONSISTENCY_LOSS_WEIGHT,
+            # New diffuse regularizers (optional; use defaults if missing)
+            weight_diffuse_saturation=self.config.get("DIFFUSE_SATURATION_LOSS_WEIGHT", 0.0),
+            diffuse_saturation_max=self.config.get("DIFFUSE_SATURATION_MAX", 0.35),
+            weight_diffuse_ring=self.config.get("DIFFUSE_RING_LOSS_WEIGHT", 0.0),
+            ring_kernel_size=int(self.config.get("RING_KERNEL_SIZE", 7)),
+            ring_var_weight=float(self.config.get("RING_VAR_WEIGHT", 0.5)),
+            ring_texture_weight=float(self.config.get("RING_TEXTURE_WEIGHT", 1.0)),
             # HL regression extra knobs (optional in config; keep defaults if missing)
             hlreg_balance_mode=self.config.get("HLREG_BALANCE_MODE", "none"),
             hlreg_pos_weight=self.config.get("HLREG_POS_WEIGHT", 1.0),
@@ -701,12 +709,12 @@ class Engine:
                 highlight_result = self.add_polar_highlights(
                     rgb=sample["diffuse"].to(self.device, non_blocking=True),
                     light_pos=random_light_pos,
-                    noise=0.03,
-                    noise_type=self.config.NOISE_TYPE,
-                    noise_octaves=self.config.NOISE_OCTAVES,
-                    noise_persistence=self.config.NOISE_PERSISTENCE,
-                    surface_roughness=self.config.SURFACE_ROUGHNESS,
-                    intensity=self.config.INTENSITY,
+                    noise=random.uniform(0, float(self.config.NOISE)),
+                    noise_type=self.config.NOISE_TYPE, 
+                    noise_octaves=random.randint(1, int(self.config.NOISE_OCTAVES)) if int(self.config.NOISE_OCTAVES) > 1 else 1,
+                    noise_persistence=random.uniform(0, float(self.config.NOISE_PERSISTENCE)),
+                    surface_roughness=random.uniform(4, float(self.config.SURFACE_ROUGHNESS)),
+                    intensity=random.uniform(0.5, float(self.config.INTENSITY)),
                 )
 
                 # Compute soft highlight map
@@ -1048,12 +1056,17 @@ class Engine:
             "wandb_run_id": getattr(self.wandb, 'id', None) if self.wandb else None,
         }
         
-        # Add scheduler state if available
-        if hasattr(self, 'scheduler') and self.scheduler is not None:
+        # Add scheduler states if available (save what Engine actually uses)
+        if hasattr(self, 'LRscheduler') and self.LRscheduler is not None:
             try:
-                checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
+                checkpoint["LRscheduler_state_dict"] = self.LRscheduler.state_dict()
             except Exception as e:
-                self.logger.warning(f"Could not save scheduler state: {e}")
+                self.logger.warning(f"Could not save LRscheduler state: {e}")
+        if hasattr(self, 'LRschedulerPlateau') and self.LRschedulerPlateau is not None:
+            try:
+                checkpoint["LRschedulerPlateau_state_dict"] = self.LRschedulerPlateau.state_dict()
+            except Exception as e:
+                self.logger.warning(f"Could not save LRschedulerPlateau state: {e}")
         
         # Add early stopping state if available
         if hasattr(self, 'earlystopping') and self.earlystopping is not None:
@@ -1166,7 +1179,6 @@ class Engine:
             prediction_panel_loggable = panelize(
                 prediction_row, gt_row, mode="vertical", resize_to_match=False
             )
-            visualization_dict["images/Comparison_panel"] = prediction_panel_loggable
             self._add_image_safely(
                 visualization_dict,
                 "images/Comparison_panel",
@@ -1231,7 +1243,6 @@ class Engine:
                     "masked_diffuse",
                     "Masked Diffuse Image",
                 ),
-                ("images/LossMask", "lossmask", "loss mask"),
             ]
 
             for key, tensor_key, caption in input_images:
@@ -1302,7 +1313,31 @@ class Engine:
             checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
             self.model.load_state_dict(checkpoint["model_state_dict"])
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            # Load schedulers if present (support both new and legacy keys)
+            try:
+                if "LRscheduler_state_dict" in checkpoint and hasattr(self, 'LRscheduler') and self.LRscheduler is not None:
+                    self.LRscheduler.load_state_dict(checkpoint["LRscheduler_state_dict"])
+                if "LRschedulerPlateau_state_dict" in checkpoint and hasattr(self, 'LRschedulerPlateau') and self.LRschedulerPlateau is not None:
+                    self.LRschedulerPlateau.load_state_dict(checkpoint["LRschedulerPlateau_state_dict"])
+                # Backward-compatibility: legacy single scheduler key
+                if "scheduler_state_dict" in checkpoint:
+                    loaded = False
+                    if hasattr(self, 'LRscheduler') and self.LRscheduler is not None:
+                        try:
+                            self.LRscheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+                            loaded = True
+                        except Exception:
+                            pass
+                    if not loaded and hasattr(self, 'LRschedulerPlateau') and self.LRschedulerPlateau is not None:
+                        try:
+                            self.LRschedulerPlateau.load_state_dict(checkpoint["scheduler_state_dict"])
+                            loaded = True
+                        except Exception:
+                            pass
+                    if not loaded:
+                        self.logger.warning("Found legacy scheduler_state_dict but no compatible scheduler attribute to load into", context="SAVE")
+            except Exception as e:
+                self.logger.warning(f"Could not load scheduler state(s): {e}")
             self.logger.info(
                 f"Model reinstantiated from checkpoint: {checkpoint_path}",
                 context="SAVE",
@@ -1353,6 +1388,9 @@ class Engine:
                 return {
                     "model": model,
                     "optimizer_state_dict": checkpoint.get("optimizer_state_dict"),
+                    # Expose both new and legacy scheduler keys for callers
+                    "LRscheduler_state_dict": checkpoint.get("LRscheduler_state_dict"),
+                    "LRschedulerPlateau_state_dict": checkpoint.get("LRschedulerPlateau_state_dict"),
                     "scheduler_state_dict": checkpoint.get("scheduler_state_dict"),
                     "epoch": checkpoint.get("epoch"),
                     "config": checkpoint.get("config"),
@@ -1412,13 +1450,35 @@ class Engine:
             self.logger.error(f"Failed to load optimizer state: {e}")
             return False
         
-        # Load scheduler state if available
-        if 'scheduler_state_dict' in checkpoint_data and hasattr(self, 'scheduler') and self.scheduler is not None:
-            try:
-                self.scheduler.load_state_dict(checkpoint_data['scheduler_state_dict'])
-                self.logger.info("Loaded scheduler state from checkpoint", context="RESUME")
-            except Exception as e:
-                self.logger.warning(f"Failed to load scheduler state: {e}")
+        # Load scheduler states if available (support both new and legacy keys)
+        try:
+            if 'LRscheduler_state_dict' in checkpoint_data and hasattr(self, 'LRscheduler') and self.LRscheduler is not None:
+                self.LRscheduler.load_state_dict(checkpoint_data['LRscheduler_state_dict'])
+                self.logger.info("Loaded LRscheduler state from checkpoint", context="RESUME")
+            if 'LRschedulerPlateau_state_dict' in checkpoint_data and hasattr(self, 'LRschedulerPlateau') and self.LRschedulerPlateau is not None:
+                self.LRschedulerPlateau.load_state_dict(checkpoint_data['LRschedulerPlateau_state_dict'])
+                self.logger.info("Loaded LRschedulerPlateau state from checkpoint", context="RESUME")
+            # Backward-compatibility: legacy single scheduler key
+            if 'scheduler_state_dict' in checkpoint_data:
+                loaded = False
+                if hasattr(self, 'LRscheduler') and self.LRscheduler is not None:
+                    try:
+                        self.LRscheduler.load_state_dict(checkpoint_data['scheduler_state_dict'])
+                        loaded = True
+                        self.logger.info("Loaded legacy scheduler state into LRscheduler", context="RESUME")
+                    except Exception:
+                        pass
+                if not loaded and hasattr(self, 'LRschedulerPlateau') and self.LRschedulerPlateau is not None:
+                    try:
+                        self.LRschedulerPlateau.load_state_dict(checkpoint_data['scheduler_state_dict'])
+                        loaded = True
+                        self.logger.info("Loaded legacy scheduler state into LRschedulerPlateau", context="RESUME")
+                    except Exception:
+                        pass
+                if not loaded:
+                    self.logger.warning("Found legacy scheduler_state_dict but no compatible scheduler attribute to load into", context="RESUME")
+        except Exception as e:
+            self.logger.warning(f"Failed to load scheduler state(s): {e}")
         
         # Restore early stopping state if available
         if 'earlystopping_state' in checkpoint_data and hasattr(self, 'earlystopping') and self.earlystopping is not None:
@@ -1626,12 +1686,20 @@ class Engine:
         """Safely add image to visualization dictionary"""
 
         image = wandb.Image(self._to_cpu_image(tensor))
-        # Construct logging key with required prefixing for Test phase
+        # Construct logging key with phase prefixing
         log_key = key
-        if phase == "Test" and test_idx is not None:
-            # Avoid double-prefixing if already present
-            if not key.startswith(f"Test/test_idx_{test_idx}/"):
-                log_key = f"Test/test_idx_{test_idx}/{key}"
+        if isinstance(phase, str):
+            # Highest precedence: Test with explicit index
+            if phase == "Test" and test_idx is not None:
+                if key.startswith("Test/") and not key.startswith(f"Test/test_idx_{test_idx}/"):
+                    # Upgrade existing Test/ prefix to include test_idx
+                    log_key = key.replace("Test/", f"Test/test_idx_{test_idx}/", 1)
+                elif not key.startswith(f"Test/test_idx_{test_idx}/"):
+                    log_key = f"Test/test_idx_{test_idx}/{key}"
+            else:
+                # Generic phase prefix for Training/Validation/Test
+                if not key.startswith(("Training/", "Validation/", "Test/")):
+                    log_key = f"{phase}/{key}"
         viz_dict[log_key] = image
         payload = {log_key: image}
         # Attach step index for grouping if available

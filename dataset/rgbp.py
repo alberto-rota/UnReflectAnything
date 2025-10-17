@@ -1050,6 +1050,7 @@ def from_config(
         "HOUSECAT6D": HOUSECAT6D_Dataset,
         "POLARGB": POLARGB_Dataset,
         "SCARED": SCARED_Dataset,
+        "STEREOMIS_TRACKING": STEREOMIS_TRACKING_Dataset,
         "CROMO": CROMO_Dataset,
         "SYNTHETIC": SYNTHETIC_Dataset,
         "PSD": PSD_Dataset,
@@ -1396,6 +1397,32 @@ class SCARED_Dataset(RGBP_Dataset):
             root_dir="$DATASET_DIR/SCARED/",
             rgb_ext=".png",
             pol_ext=".png",
+            **kwargs,
+        )
+        # Add any SCARED-specific initialization here
+        
+class STEREOMIS_TRACKING_Dataset(RGBP_Dataset):
+    """
+    STEREOMIS_TRACKING dataset implementation for polarization-guided RGB processing.
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with STEREOMIS_TRACKING-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+
+    The STEREOMIS_TRACKING dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize SCARED dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(
+            root_dir="$DATASET_DIR/StereoMIS_Tracking/",
+            rgb_dir_name="video_frames",
+            rgb_ext=".png",
             **kwargs,
         )
         # Add any SCARED-specific initialization here

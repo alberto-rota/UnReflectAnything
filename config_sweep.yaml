@@ -7,13 +7,11 @@ metric:
 program: sweep_agent.py
 
 project: UnReflectAnything  
+entity: unreflect-anything
 
 
 parameters:
 
-  ABLATE: 
-    values: [False, True]
-    
   ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:
@@ -42,14 +40,14 @@ parameters:
           DROPOUT: 0.1
           OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 3
-        specular:
-          FEATURE_DIM: 768
-          REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-          READOUT_TYPE: "ignore"
-          USE_BN: False
-          OUTPUT_IMAGE_SIZE: [448,448]
-          OUTPUT_CHANNELS: 4
+        # specular:
+        #   FEATURE_DIM: 768
+        #   REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
+        #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+        #   READOUT_TYPE: "ignore"
+        #   USE_BN: False
+        #   OUTPUT_IMAGE_SIZE: [448,448]
+        #   OUTPUT_CHANNELS: 4
         highlight:
           FEATURE_DIM: 768
           REASSEMBLE_OUT_CHANNELS: [48,192,384,768]
@@ -71,6 +69,7 @@ parameters:
       #   LOAD_RGB_ONLY: False
         
       # HOUSECAT6D:
+      #   TRAIN_SCENES: "none"
       #   VAL_SCENES: "val"
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "crop"
@@ -90,6 +89,13 @@ parameters:
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "resize"
       #   LOAD_RGB_ONLY: False
+    
+      # PSD:
+      #   TRAIN_SCENES: "PSD_val"
+      #   VAL_SCENES: "PSD_Test"
+      #   TARGET_SIZE: [448,448]  
+      #   RESIZE_MODE: "resize"
+      #   LOAD_RGB_ONLY: True
 
       SCARED:
         VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
@@ -100,7 +106,20 @@ parameters:
         HIGHLIGHT_ENABLE: False  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
         HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [640, 640]
+        HIGHLIGHT_RECT_SIZE: [800, 800]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
+        HIGHLIGHT_RETURN_RECT: True
+      
+      STEREOMIS_TRACKING:
+        VAL_SCENES: ["P2_2"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        LOAD_RGB_ONLY: True
+        FEW_IMAGES: False
+        # HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [800, 800]
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
 
@@ -119,29 +138,31 @@ parameters:
   BATCH_SIZE: # Max batch size with img size 448 is 64
     value: 32
   NUM_WORKERS:
-    value: 6
+    value: 8
   SHUFFLE:
     value: True
   PIN_MEMORY:
     value: true
   PREFETCH_FACTOR:
     value: 2
-
-  ### Knowledge Distillation                                                          
-  DISTILLATION_ALPHA:
-    value: 0.7
-  DISTILLATION_TEMPERATURE:
-    value: 4.0
   
-  ### POLARIZATION / HIGHLIGHTS                                                        
+  ### HIGHLIGHTS                                                        
   MOGE_MODEL:
     value: "Ruicheng/moge-2-vits-normal"
   SURFACE_ROUGHNESS:
-    value: 10
+    value: 20.0
   INTENSITY:
-    value: 2.0
+    value: 1.5
+  NOISE:
+    value: 0.05
   NOISE_TYPE:
-    values: [fbm, worley]
+    value: fbm  # fbm | worley
+  NOISE_OCTAVES:
+    value: 4
+  NOISE_PERSISTENCE:
+    value: 0.75
+  NOISE_WORLEY_CELLS:
+    value: 32
   LIGHT_DISTANCE_RANGE:
     value: [0.04, 0.2]
   LIGHT_LEFT_RIGHT_ANGLE:
@@ -162,27 +183,27 @@ parameters:
 
   ### OPTIMIZATION                                                                      
   LEARNING_RATE:
-    value: 5.0e-4
+    value: 1.0e-3
   WEIGHT_DECAY:
-    value: 0.0
+    value: 1.0e-8
   EPOCHS:
-    value: 40
+    value: 10
   GRADIENT_ACCUMULATION_STEPS:
-    value: 2
+    value: 1
   WARMUP_STEPS:
-    value: 200
+    value: 100
   GRADIENT_CLIPPING_MAX_NORM:
     value: -1
   LR_SCHEDULER: 
     value: 
       ONPLATEAU:
-        PATIENCE: 10
+        PATIENCE: 5
         FACTOR: 0.1
-      COSINE:
-        N_PERIODS: 20
-      # STEPWISE:
-      #   N_STEPS: 3
-      #   GAMMA: 0.5
+      # COSINE:
+      #   N_PERIODS: 5
+      STEPWISE:
+        N_STEPS: 2
+        GAMMA: 0.1
       # EXPONENTIAL:
       #   GAMMA: 0.5
 
@@ -203,15 +224,27 @@ parameters:
   DIFFUSE_LOSS_WEIGHT:
     value: 1.0
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 1.0
+    value: 0.5
   COMPONENT_MATCHING_LOSS_WEIGHT:
     value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
-    value: 0.0
+    value: 0.5
   ALPHA_REGULARIZATION_LOSS_WEIGHT:
     value: 0.1
   SPATIAL_CONSISTENCY_LOSS_WEIGHT:
     value: 0.3
+  DIFFUSE_SATURATION_LOSS_WEIGHT:
+    value: 0.0
+  DIFFUSE_SATURATION_MAX:
+    value: 0.35
+  DIFFUSE_RING_LOSS_WEIGHT:
+    values: [0,1]
+  RING_KERNEL_SIZE:
+    value: 7
+  RING_VAR_WEIGHT:
+    value: 0.5
+  RING_TEXTURE_WEIGHT:
+    value: 1.0
 
   ### LOGGING, RESULTS AND WANDB                                                                 
   LOG_INTERVAL:
@@ -229,4 +262,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "Masking compositing operation"
+    value: "Impact of ring loss"
+  

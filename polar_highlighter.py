@@ -7,8 +7,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
+
 # Note: transformers imports removed as they are not used
 from moge.model.v2 import MoGeModel
+
 
 def time_module(module_name):
     """
@@ -68,7 +70,7 @@ class PolarHighlighter(nn.Module):
         self.height = height
         self.width = width
         self.resizer = transforms.Resize((height, width))
-        
+
         # Material properties
         self.n_rel = n_rel
         self.F0 = F0
@@ -173,7 +175,9 @@ class PolarHighlighter(nn.Module):
         """Normalize vectors along dim=1"""
         return v / (v.norm(dim=1, keepdim=True).clamp_min(eps))
 
-    def generate_fractal_noise(self, B, H, W, device, dtype, octaves=4, persistence=0.5):
+    def generate_fractal_noise(
+        self, B, H, W, device, dtype, octaves=4, persistence=0.5
+    ):
         """
         Generate batched, smooth multi-octave noise [B,1,H,W] on the given device.
         Uses bilinear-upsampled Gaussian noise at progressively finer scales.
@@ -264,10 +268,21 @@ class PolarHighlighter(nn.Module):
         dmin = dist2.min(dim=0).values.sqrt()  # [B,H,W]
 
         # Normalize to [0,1] approximately (sqrt(2) is max in cell space)
-        noise = (dmin / (2.0 ** 0.5)).clamp(0.0, 1.0)
+        noise = (dmin / (2.0**0.5)).clamp(0.0, 1.0)
         return noise.unsqueeze(1)  # [B,1,H,W]
 
-    def generate_noise_map(self, B, H, W, device, dtype, noise_type="fbm", octaves=4, persistence=0.5, cells=32):
+    def generate_noise_map(
+        self,
+        B,
+        H,
+        W,
+        device,
+        dtype,
+        noise_type="fbm",
+        octaves=4,
+        persistence=0.5,
+        cells=32,
+    ):
         """
         Unified noise generator.
         noise_type: 'fbm' | 'worley'
@@ -275,34 +290,36 @@ class PolarHighlighter(nn.Module):
         if noise_type == "worley":
             return self.generate_worley_noise(B, H, W, device, dtype, cells=cells)
         # default fbm (fractal value noise)
-        return self.generate_fractal_noise(B, H, W, device, dtype, octaves=octaves, persistence=persistence)
+        return self.generate_fractal_noise(
+            B, H, W, device, dtype, octaves=octaves, persistence=persistence
+        )
 
     @time_module("depth_estimation")
     @time_module("geometry_estimation")
     def compute_geometry(self, image):
         """
         Compute depth and normals from RGB image using MoGe.
-    
+
         Args:
             image: [B,3,H,W] RGB image (0-1 normalized)
-    
+
         Returns:
             depth: [B,1,H,W] depth map
             normals: [B,3,H,W] surface normals
         """
         with torch.no_grad():
             mogeout = self.geometry_model.infer(image)  # image: [B,3,H,W]
-    
+
         # Extract depth [B,H,W] and normals [B,H,W,3]
         depth = mogeout["depth"]  # [B,H,W]
         normals = mogeout["normal"]  # [B,H,W,3]
         intrinsics = mogeout["intrinsics"].clone()
-        intrinsics[:,:2] = mogeout["intrinsics"][:,:2]*1000
+        intrinsics[:, :2] = mogeout["intrinsics"][:, :2] * 1000
         # Sanitize potential NaN/Inf from the geometry model
         depth = torch.nan_to_num(depth, nan=0.0, posinf=1e6, neginf=-1e6)
         normals = torch.nan_to_num(normals, nan=0.0, posinf=0.0, neginf=0.0)
         intrinsics = torch.nan_to_num(intrinsics, nan=0.0, posinf=1e6, neginf=-1e6)
-    
+
         # Resize to target dimensions if needed
         if depth.shape[-2:] != (self.height, self.width):
             depth = self.resizer(depth.unsqueeze(1)).squeeze(1)  # [B,H,W]
@@ -310,24 +327,31 @@ class PolarHighlighter(nn.Module):
             normals = normals.permute(0, 3, 1, 2)  # [B,3,H,W]
             normals = self.resizer(normals)  # [B,3,H,W]
             normals = torch.nan_to_num(normals, nan=0.0, posinf=0.0, neginf=0.0)
-            normals = F.normalize(normals, p=2, dim=1, eps=1e-6)  # Re-normalize after resize
+            normals = F.normalize(
+                normals, p=2, dim=1, eps=1e-6
+            )  # Re-normalize after resize
         else:
             normals = normals.permute(0, 3, 1, 2)  # [B,3,H,W]
             normals = torch.nan_to_num(normals, nan=0.0, posinf=0.0, neginf=0.0)
             normals = F.normalize(normals, p=2, dim=1, eps=1e-6)
-    
+
         # Add channel dimension to depth
         depth = depth.unsqueeze(1)  # [B,1,H,W]
-    
+
         return depth, -normals, intrinsics
 
     def sample_light_source(
-        self, dist_to_camera, left_right_angle=None, above_below_angle=None, batch_size=1, device="cuda"
+        self,
+        dist_to_camera,
+        left_right_angle=None,
+        above_below_angle=None,
+        batch_size=1,
+        device="cuda",
     ):
         """
         Sample random light source positions in 3D space using spherical coordinates with intuitive angle controls.
         Camera coordinate system: Z points forward, Y points down, X points right.
-        
+
         Spherical coordinates: (r, θ, φ) where:
         - r = distance from camera
         - θ = azimuth angle (left-right rotation around Y axis)
@@ -351,7 +375,7 @@ class PolarHighlighter(nn.Module):
         if left_right_angle is None:
             left_right_angle = (-180, 180)  # Full horizontal range
         if above_below_angle is None:
-            above_below_angle = (-90, 90)   # Full vertical range
+            above_below_angle = (-90, 90)  # Full vertical range
 
         # Unpack ranges
         min_dist, max_dist = dist_to_camera
@@ -366,20 +390,26 @@ class PolarHighlighter(nn.Module):
 
         # Azimuth (left-right): uniform sampling in degrees, then convert to radians
         az_deg = (
-            torch.rand(batch_size, device=device) * (max_right - min_left) + min_left -90
+            torch.rand(batch_size, device=device) * (max_right - min_left)
+            + min_left
+            - 90
         )  # [B]
         az_rad = az_deg * (np.pi / 180.0)  # [B]
 
         # Elevation (above-below): uniform sampling in degrees, then convert to radians
         elev_deg = (
-            torch.rand(batch_size, device=device) * (max_below - min_above) + min_above-90
+            torch.rand(batch_size, device=device) * (max_below - min_above)
+            + min_above
+            - 90
         )  # [B]
         elev_rad = elev_deg * (np.pi / 180.0)  # [B]
 
         # Convert spherical to Cartesian coordinates
         # Camera coordinate system: Z forward, Y down, X right
         x = dist * torch.cos(elev_rad) * torch.sin(az_rad)  # [B] left-right
-        y = -dist * torch.sin(elev_rad)  # [B] above-below (negative for upward elevation)
+        y = -dist * torch.sin(
+            elev_rad
+        )  # [B] above-below (negative for upward elevation)
         z = dist * torch.cos(elev_rad) * torch.cos(az_rad)  # [B] behind-front
 
         # Stack into position tensor
@@ -482,7 +512,21 @@ class PolarHighlighter(nn.Module):
         return v, l, n, nl, nv, light_pos, P
 
     @time_module("blinn_phong_specular")
-    def compute_blinn_phong_specular(self, v, l, n, nv, surface_roughness, intensity, F0, noise=None, noise_type="fbm", noise_octaves=4, noise_persistence=0.5, worley_cells=32):
+    def compute_blinn_phong_specular(
+        self,
+        v,
+        l,
+        n,
+        nv,
+        surface_roughness,
+        intensity,
+        F0,
+        noise=None,
+        noise_type="fbm",
+        noise_octaves=4,
+        noise_persistence=0.5,
+        worley_cells=32,
+    ):
         """
         Compute Blinn-Phong specular lobe with Schlick Fresnel approximation.
         Physics: I_spec = intensity * F(θ) * (n·h)^α, where h = (v+l)/|v+l| is the half-vector.
@@ -537,7 +581,11 @@ class PolarHighlighter(nn.Module):
             if (noise_t > 0).any():
                 B, _, H, W = nh.shape
                 noise_map = self.generate_noise_map(
-                    B, H, W, nh.device, nh.dtype,
+                    B,
+                    H,
+                    W,
+                    nh.device,
+                    nh.dtype,
                     noise_type=noise_type,
                     octaves=noise_octaves,
                     persistence=noise_persistence,
@@ -555,12 +603,16 @@ class PolarHighlighter(nn.Module):
         if torch.is_tensor(surface_roughness):
             if surface_roughness.ndim == 1:
                 # [B] -> [B,1,1,1]
-                surface_roughness = surface_roughness.view(surface_roughness.shape[0], 1, 1, 1)
+                surface_roughness = surface_roughness.view(
+                    surface_roughness.shape[0], 1, 1, 1
+                )
             elif surface_roughness.ndim == 2:
                 # [B,1] -> [B,1,1,1]
-                surface_roughness = surface_roughness.view(surface_roughness.shape[0], 1, 1, 1)
+                surface_roughness = surface_roughness.view(
+                    surface_roughness.shape[0], 1, 1, 1
+                )
             # else: assume broadcastable to [B,1,H,W]
-        spec_lobe = nh ** surface_roughness  # [B,1,H,W]
+        spec_lobe = nh**surface_roughness  # [B,1,H,W]
 
         # Apply Schlick Fresnel approximation
         F = self.schlick_fresnel(nv, F0=F0)  # [B,1,H,W]
@@ -668,37 +720,59 @@ class PolarHighlighter(nn.Module):
         worley_cells=32,
     ):
         """
-        Synthesize specular highlights and update Stokes parameters.
+        Synthesize specular highlights and build the corresponding Stokes vector.
+
+        Noise controls (very important):
+        - noise: Amplitude in [0,1] that controls two effects simultaneously. Values are
+          internally clamped to [0,1]. It can be a scalar, [B], [B,1], [B,1,1,1] or
+          a per-pixel map [B,1,H,W]. The same value(s) are used for both:
+          1) Microfacet normal perturbation (tangent-space randomization).
+          2) Spatial jitter of the (n·h)^α falloff via a procedural noise map.
+        - noise_type: Selects the procedural noise used for effect (2):
+            'fbm' (default): fractal value noise. Controlled by noise_octaves and
+            noise_persistence. worley_cells is ignored.
+            'worley': cellular (Voronoi) noise. Controlled by worley_cells only.
+            Any other value is treated as 'fbm'. Case-insensitive.
+        - noise_octaves: Integer >=1, number of frequency bands for 'fbm'. Ignored for 'worley'.
+        - noise_persistence: Float in (0,1], amplitude decay per octave for 'fbm'. Ignored for 'worley'.
+        - worley_cells: Integer >=1, number of grid cells per side for 'worley'. Ignored for 'fbm'.
 
         Args:
-            rgb_lin: [B,3,H,W] linear RGB
-            stokes: [B,3,H,W] input Stokes (S0,S1,S2)
-            depth: [B,1,H,W] depth map in meters
-            normals: [B,3,H,W] surface normals
+            rgb_lin: [B,3,H,W] linear RGB (0-1)
+            stokes: [B,3,H,W] input Stokes (S0,S1,S2); only used for shape/context
+            depth: [B,1,H,W] metric depth (meters)
+            normals: [B,3,H,W] unit surface normals
             K: [B,3,3] camera intrinsics
-            surface_roughness: base specular exponent (higher = sharper highlight)
-            intensity: specular strength
-            noise: surface noise in [0,1]; 0 preserves base shininess, 1 is very rough
-            clamp_H: whether to normalize highlight intensity
+            light_pos: Optional [B,3] light positions (camera coordinates); if None, sampled
+            surface_roughness: Base Blinn-Phong exponent α (higher = sharper peak)
+            intensity: Scalar specular scale
+            clamp_H: If True, normalizes each image's highlight to [0,1]
+            noise: See noise controls above
+            noise_type: 'fbm' | 'worley' (see above)
+            noise_octaves: See noise controls above (fbm only)
+            noise_persistence: See noise controls above (fbm only)
+            worley_cells: See noise controls above (worley only)
 
         Returns:
             H: [B,1,H,W] highlight luminance
-            S_new: [B,3,H,W] updated Stokes after adding highlight
-            H_dop: [B,1,H,W] intrinsic specular DoLP
-            H_aop: [B,1,H,W] AoLP (radians)
-            phi_spec: [B,1,H,W] AoLP (radians)
-            light_pos: [B,3] sampled light positions (camera coords)
+            H_stokes: [B,3,H,W] highlight Stokes (S0,S1,S2)
+            H_aop: [B,1,H,W] angle of polarization (radians)
+            H_dop: [B,1,H,W] degree of linear polarization [0,1]
+            light_pos: [B,3] light positions used
+            pcloud: [B,3,H,W] reconstructed 3D points
+            l: [B,3,H,W] light directions
+            v: [B,3,H,W] view directions
         """
         B, _, H, W = rgb_lin.shape
         device = rgb_lin.device
         # 0) Sample random light positions (one per image)
         if light_pos is None:
             light_pos = self.sample_light_source(
-                dist_to_camera=(0.3, 1),           # 0.3m to 1m from camera
-                left_right_angle=(-110, 110),      # 110° left to 110° right
-                above_below_angle=(-90, 90),       # 90° above to 90° below
-                batch_size=B, 
-                device=device
+                dist_to_camera=(0.3, 1),  # 0.3m to 1m from camera
+                left_right_angle=(-110, 110),  # 110° left to 110° right
+                above_below_angle=(-90, 90),  # 90° above to 90° below
+                batch_size=B,
+                device=device,
             )  # [B,3]
 
         # 1) Compute viewing and lighting geometry
@@ -714,14 +788,22 @@ class PolarHighlighter(nn.Module):
             noise_t = noise.to(device=device, dtype=rgb_lin.dtype)
         noise_t = torch.clamp(noise_t, 0.0, 1.0)
         min_surface_roughness = torch.as_tensor(1.0, device=device, dtype=rgb_lin.dtype)
-        base_surface_roughness = torch.as_tensor(surface_roughness, device=device, dtype=rgb_lin.dtype)
+        base_surface_roughness = torch.as_tensor(
+            surface_roughness, device=device, dtype=rgb_lin.dtype
+        )
         # Quadratic falloff provides perceptual smoothness control
-        surface_roughness_eff = min_surface_roughness + (base_surface_roughness - min_surface_roughness) * ((1.0 - noise_t) ** 2)
+        surface_roughness_eff = min_surface_roughness + (
+            base_surface_roughness - min_surface_roughness
+        ) * ((1.0 - noise_t) ** 2)
         # 3) Compute Blinn-Phong specular lobe with Fresnel modulation
         H = self.compute_blinn_phong_specular(
-            v, l, n, nv,
+            v,
+            l,
+            n,
+            nv,
             surface_roughness_eff,
-            intensity, self.F0,
+            intensity,
+            self.F0,
             noise=noise,
             noise_type=noise_type,
             noise_octaves=noise_octaves,
@@ -743,27 +825,69 @@ class PolarHighlighter(nn.Module):
         return H, H_stokes, H_aop, H_dop, light_pos, pcloud, l, v
 
     # @time_module("forward_pass")
-    def forward(self, rgb, pol=None, light_pos=None, intrinsic="compute", surface_roughness=80.0, intensity=10.0, noise=0.0, noise_type="fbm", noise_octaves=4, noise_persistence=0.5, worley_cells=32):
+    def forward(
+        self,
+        rgb,
+        pol=None,
+        light_pos=None,
+        intrinsic="compute",
+        surface_roughness=80.0,
+        intensity=10.0,
+        noise=0.0,
+        noise_type="fbm",
+        noise_octaves=4,
+        noise_persistence=0.5,
+        worley_cells=32,
+    ):
         """
-        Forward pass for polar highlight synthesis.
+        Forward pass for polar highlight synthesis with explicit noise controls.
+
+        Noise system overview and how to control it clearly:
+        - noise: Single knob in [0,1] (clamped) that scales BOTH
+          1) microfacet normal perturbation, and
+          2) spatial jitter of the specular falloff via a procedural noise map.
+          0.0 = perfectly smooth mirror-like lobe (uses base surface_roughness),
+          1.0 = very rough, strong perturbation and strong spatial variation.
+          Accepts scalar, [B], [B,1], [B,1,1,1] or [B,1,H,W].
+        - noise_type: Selects the procedural noise for effect (2):
+            'fbm' (default): fractal Brownian motion/value noise.
+                Controlled by noise_octaves (>=1) and noise_persistence (0,1].
+                worley_cells is ignored in this mode.
+            'worley': cellular/Voronoi noise.
+                Controlled by worley_cells (>=1). noise_octaves and noise_persistence are ignored.
+            Any other value is treated as 'fbm' (case-insensitive).
+        - noise_octaves: Number of bands for 'fbm'. Ignored for 'worley'.
+        - noise_persistence: Amplitude decay per octave for 'fbm'. Ignored for 'worley'.
+        - worley_cells: Grid resolution for 'worley'. Ignored for 'fbm'.
 
         Args:
             rgb: [B,3,H,W] RGB image (0-1 normalized)
-            pol: [B,3,H,W] input polarization Stokes parameters (S0,S1,S2), optional
-            intrinsic: [B,3,3] camera intrinsic matrix or "compute" to use MoGe intrinsics
-            surface_roughness: base specular exponent (higher = sharper highlight)
-            intensity: specular strength   
-            noise: surface noise in [0,1]; 0 preserves base shininess, 1 is very rough
+            pol: Optional [B,3,H,W] Stokes (S0,S1,S2); if provided, returns stokes_highlighted
+            light_pos: Optional [B,3] light positions; sampled if None
+            intrinsic: [B,3,3] intrinsics or "compute" to use MoGe intrinsics
+            surface_roughness: Base Blinn-Phong exponent α (higher = sharper highlight)
+            intensity: Specular strength multiplier
+            noise: See Noise system overview above (amplitude and optional map)
+            noise_type: 'fbm' | 'worley' (procedural map for spatial jitter)
+            noise_octaves: FBM-only bands (>=1); ignored for 'worley'
+            noise_persistence: FBM-only amplitude decay (0,1]; ignored for 'worley'
+            worley_cells: Worley-only grid cells per side (>=1); ignored for 'fbm'
 
         Returns:
             dict with keys:
-                'highlight': [B,1,H,W] synthesized highlight
-                'stokes_updated': [B,3,H,W] updated Stokes parameters (if pol provided)
-                'depth': [B,1,H,W] estimated depth
-                'normals': [B,3,H,W] surface normals
-                'gamma': [B,1,H,W] degree of linear polarization
-                'aop': [B,1,H,W] angle of polarization
-                'light_pos': [B,3] light positions
+                'highlight': [B,1,H,W]
+                'rgb_highlighted': [B,3,H,W]
+                'stokes_highlight': [B,3,H,W]
+                'stokes_highlighted': Optional [B,3,H,W] if pol provided
+                'depth': [B,1,H,W]
+                'normals': [B,3,H,W]
+                'H_dop': [B,1,H,W]
+                'H_aop': [B,1,H,W]
+                'intrinsic': [B,3,3]
+                'light_pos': [B,3]
+                'pcloud': [B,3,H,W]
+                'light_dir': [B,3,H,W]
+                'view_dir': [B,3,H,W]
         """
         # Ensure tensors are on GPU
         device = rgb.device
@@ -771,13 +895,15 @@ class PolarHighlighter(nn.Module):
         if pol is not None:
             pol = pol.to(device)
 
-        depth, normals, moge_intrinsics = self.compute_geometry(rgb)  # [B,1,H,W], [B,3,H,W]
+        depth, normals, moge_intrinsics = self.compute_geometry(
+            rgb
+        )  # [B,1,H,W], [B,3,H,W]
 
         if intrinsic == "compute":
             intrinsic = moge_intrinsics.to(device)
         else:
             intrinsic = intrinsic.to(device)
-            
+
         # 3) Synthesize highlights and update Stokes parameters
         # Use dummy pol if not provided for the synthesis function
         pol_input = pol if pol is not None else torch.zeros_like(rgb)
@@ -802,7 +928,9 @@ class PolarHighlighter(nn.Module):
         # 4) Update scene Stokes parameters with highlight contribution (only if pol provided)
         result = {
             "highlight": H,
-            "rgb_highlighted": self.update_rgb_with_highlight(rgb, H, intensity=intensity),
+            "rgb_highlighted": self.update_rgb_with_highlight(
+                rgb, H, intensity=intensity
+            ),
             "stokes_highlight": H_stokes,
             "depth": depth,
             "normals": normals,
@@ -814,7 +942,7 @@ class PolarHighlighter(nn.Module):
             "light_dir": light_dir,
             "view_dir": view_dir,
         }
-        
+
         # Only compute stokes_highlighted if pol was provided
         if pol is not None:
             S0_H, S1_H, S2_H = H_stokes[:, 0:1], H_stokes[:, 1:2], H_stokes[:, 2:3]
@@ -825,24 +953,29 @@ class PolarHighlighter(nn.Module):
 
         return result
 
-def get_soft_highlight_map(rgb_image: torch.Tensor, threshold: float = 0.7) -> torch.Tensor:
+
+def get_soft_highlight_map(
+    rgb_image: torch.Tensor, threshold: float = 0.7
+) -> torch.Tensor:
     """
     Create a soft map of highlights from an RGB image.
-    
+
     Args:
         rgb_image: Input RGB image tensor of shape [B, 3, H, W]
         threshold: Threshold value for highlight detection (default: 0.7)
-    
+
     Returns:
         Soft highlight map tensor of shape [B, 1, H, W]
     """
     # Create highlight mask by averaging across color channels (dim=1)
-    is_highlight = (rgb_image.mean(dim=1, keepdim=True) >= threshold)  # Shape: [B, 1, H, W]
-    
+    is_highlight = (
+        rgb_image.mean(dim=1, keepdim=True) >= threshold
+    )  # Shape: [B, 1, H, W]
+
     # Create soft highlights by subtracting threshold and masking non-highlights
     soft_highlights = rgb_image - threshold
     soft_highlights[torch.logical_not(is_highlight).repeat(1, 3, 1, 1)] = 0.0
-    
-    scaler = 1/(1-threshold)
+
+    scaler = 1 / (1 - threshold)
     # Return the mean across color channels to get single-channel highlight map
     return soft_highlights.mean(dim=1, keepdim=True) * scaler  # Shape: [B, 1, H, W]

@@ -91,8 +91,21 @@ parameters:
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
         LOAD_RGB_ONLY: True
-        FEW_IMAGES: True
-        HIGHLIGHT_ENABLE: True  
+        FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [1000, 1000]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
+        HIGHLIGHT_RETURN_RECT: True
+      
+      STEREOMIS_TRACKING:
+        VAL_SCENES: ["P2_2"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        LOAD_RGB_ONLY: True
+        FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: False  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
         HIGHLIGHT_RETURN_MASK: True
         HIGHLIGHT_RECT_SIZE: [800, 800]
@@ -121,20 +134,16 @@ parameters:
     value: true
   PREFETCH_FACTOR:
     value: 2
-
-  ### Knowledge Distillation                                                          
-  DISTILLATION_ALPHA:
-    value: 0.7
-  DISTILLATION_TEMPERATURE:
-    value: 4.0
   
-  ### POLARIZATION / HIGHLIGHTS                                                        
+  ### HIGHLIGHTS                                                        
   MOGE_MODEL:
     value: "Ruicheng/moge-2-vits-normal"
   SURFACE_ROUGHNESS:
-    value: 50.0
+    value: 20.0
   INTENSITY:
-    value: 2.0
+    value: 1.5
+  NOISE:
+    value: 0.05
   NOISE_TYPE:
     value: fbm  # fbm | worley
   NOISE_OCTAVES:
@@ -167,23 +176,23 @@ parameters:
   WEIGHT_DECAY:
     value: 1.0e-8
   EPOCHS:
-    value: 40
+    value: 20
   GRADIENT_ACCUMULATION_STEPS:
     value: 1
   WARMUP_STEPS:
-    value: 200
+    value: 100
   GRADIENT_CLIPPING_MAX_NORM:
     value: -1
   LR_SCHEDULER: 
     value: 
       ONPLATEAU:
-        PATIENCE: 10
+        PATIENCE: 5
         FACTOR: 0.1
       # COSINE:
       #   N_PERIODS: 5
       STEPWISE:
-        N_STEPS: 2
-        GAMMA: 0.1
+        N_STEPS: 3
+        GAMMA: 0.5
       # EXPONENTIAL:
       #   GAMMA: 0.5
 
@@ -204,15 +213,29 @@ parameters:
   DIFFUSE_LOSS_WEIGHT:
     value: 1.0
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 0.0
+    value: 0.5
   COMPONENT_MATCHING_LOSS_WEIGHT:
     value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
-    value: 0.0
+    value: 0.5
   ALPHA_REGULARIZATION_LOSS_WEIGHT:
     value: 0.1
   SPATIAL_CONSISTENCY_LOSS_WEIGHT:
     value: 0.3
+
+  # New diffuse regularizers (disabled by default)
+  DIFFUSE_SATURATION_LOSS_WEIGHT:
+    value: 0.5
+  DIFFUSE_SATURATION_MAX:
+    value: 0.35
+  DIFFUSE_RING_LOSS_WEIGHT:
+    value: 0.5
+  RING_KERNEL_SIZE:
+    value: 7
+  RING_VAR_WEIGHT:
+    value: 0.5
+  RING_TEXTURE_WEIGHT:
+    value: 1.0
 
   ### LOGGING, RESULTS AND WANDB                                                                 
   LOG_INTERVAL:
