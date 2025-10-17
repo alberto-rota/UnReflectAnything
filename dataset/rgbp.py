@@ -26,6 +26,7 @@ class RGBP_Dataset(Dataset):
     6. Support for both single file clockwise and separate polarization files
     7. Flexible scene filtering with include/exclude patterns
     8. RGB-only mode for datasets without polarization data
+    9. Per-scene frame subsampling via sample_every_n (load 1/N frames)
 
     Polarization formats supported:
     - "single_file_clock": Single file with 4 polarization images arranged clockwise
@@ -74,6 +75,8 @@ class RGBP_Dataset(Dataset):
         # Few images mode for quick testing
         few_images: bool = False,
         overfit_test: bool = False,
+        # Per-folder subsampling (load 1/N images per scene folder)
+        sample_every_n: int = 1,
         # RGB-only mode
         load_rgb_only: bool = False,  # Force loading only RGB data, ignore polarization
         # Deprecated parameters (for backward compatibility)
@@ -132,6 +135,12 @@ class RGBP_Dataset(Dataset):
         self.include = include
         self.exclude = exclude or []
         self.few_images = few_images
+        # Validate and store subsampling factor
+        if not isinstance(sample_every_n, int) or sample_every_n < 1:
+            raise ValueError(
+                f"sample_every_n must be an integer >= 1, got {sample_every_n}"
+            )
+        self.sample_every_n = sample_every_n
 
         self.scene_pairs = self._find_scene_pairs()
 
@@ -378,7 +387,9 @@ class RGBP_Dataset(Dataset):
             if not os.path.exists(intrinsics_path):
                 intrinsics_path = None
 
-            rgb_files = [f for f in os.listdir(rgb_dir) if f.endswith(self.rgb_ext)]
+            rgb_files = sorted(
+                [f for f in os.listdir(rgb_dir) if f.endswith(self.rgb_ext)]
+            )
 
             # Get polarization files if pol directory exists
             pol_files = []
@@ -388,6 +399,10 @@ class RGBP_Dataset(Dataset):
             diffuse_files = []
             if diffuse_dir is not None and os.path.exists(diffuse_dir):
                 diffuse_files = [f for f in os.listdir(diffuse_dir) if f.endswith(self.rgb_ext)]
+
+            # Subsample per scene folder if requested (load 1/N frames)
+            if self.sample_every_n > 1:
+                rgb_files = rgb_files[:: self.sample_every_n]
 
             for rgb_file in rgb_files:
                 raw_path = os.path.join(rgb_dir, rgb_file)
@@ -1051,6 +1066,7 @@ def from_config(
         "POLARGB": POLARGB_Dataset,
         "SCARED": SCARED_Dataset,
         "STEREOMIS_TRACKING": STEREOMIS_TRACKING_Dataset,
+        "CHOLEC80": CHOLEC80_Dataset,
         "CROMO": CROMO_Dataset,
         "SYNTHETIC": SYNTHETIC_Dataset,
         "PSD": PSD_Dataset,
@@ -1111,6 +1127,7 @@ def from_config(
             "use_cache": get_config_value("USE_CACHE", True),
             "simplify_upsampling": get_config_value("SIMPLIFY_UPSAMPLING", True),
             "few_images": get_config_value("FEW_IMAGES", False),
+            "sample_every_n": get_config_value("SAMPLE_EVERY_N", 1),
             # "polarization_format": get_config_value(
             #     "POLARIZATION_FORMAT", "single_file_clock"
             # ),
@@ -1422,6 +1439,32 @@ class STEREOMIS_TRACKING_Dataset(RGBP_Dataset):
         super().__init__(
             root_dir="$DATASET_DIR/StereoMIS_Tracking/",
             rgb_dir_name="video_frames",
+            rgb_ext=".png",
+            **kwargs,
+        )
+        # Add any SCARED-specific initialization here
+        
+class CHOLEC80_Dataset(RGBP_Dataset):
+    """
+    CHOLEC80 dataset implementation for polarization-guided RGB processing.
+    Inherits all functionality from the base RGBP_Dataset class.
+    This class can be extended with CHOLEC80-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+
+    The CHOLEC80 dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize SCARED dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent RGBP_Dataset class
+        """
+        super().__init__(
+            root_dir="$DATASET_DIR/CHOLEC80/videos/",
+            rgb_dir_name="frames",
             rgb_ext=".png",
             **kwargs,
         )

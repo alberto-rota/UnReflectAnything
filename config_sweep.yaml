@@ -116,13 +116,25 @@ parameters:
         RESIZE_MODE: "resize"
         LOAD_RGB_ONLY: True
         FEW_IMAGES: False
-        # HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_ENABLE: False  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
         HIGHLIGHT_RETURN_MASK: True
         HIGHLIGHT_RECT_SIZE: [800, 800]
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
 
+      CHOLEC80:
+        VAL_SCENES: ["video01"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        LOAD_RGB_ONLY: True
+        FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [800, 800]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
+        HIGHLIGHT_RETURN_RECT: True
       # SYNTHETIC:
       #   TRAIN_SCENES: "bedroom"
       #   TARGET_SIZE: [448,448]
