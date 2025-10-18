@@ -21,6 +21,7 @@ from polar_highlighter import PolarHighlighter, get_soft_highlight_map
 import torchvision.transforms as transforms
 from utilities.visualization import panelize, rgb
 from utilities.ablation import Ablation
+from metrics import mse_metric, psnr_metric, ssim_metric
 
 # Module-level ablation context so engine code can optionally use:
 #   with ablation:
@@ -152,14 +153,9 @@ class Engine:
             weight_specular_loss=self.config.SPECULAR_LOSS_WEIGHT,
             weight_diffuse_loss=self.config.DIFFUSE_LOSS_WEIGHT,
             weight_highlight_loss=self.config.HIGHLIGHT_LOSS_WEIGHT,
-            weight_component_matching=self.config.COMPONENT_MATCHING_LOSS_WEIGHT,
             weight_image_reconstruction=self.config.IMAGE_RECONSTRUCTION_LOSS_WEIGHT,
-            weight_alpha_regularization=self.config.ALPHA_REGULARIZATION_LOSS_WEIGHT,
-            weight_spatial_consistency=self.config.SPATIAL_CONSISTENCY_LOSS_WEIGHT,
             # New diffuse regularizers (optional; use defaults if missing)
-            weight_diffuse_saturation=self.config.get("DIFFUSE_SATURATION_LOSS_WEIGHT", 0.0),
-            diffuse_saturation_max=self.config.get("DIFFUSE_SATURATION_MAX", 0.35),
-            weight_diffuse_ring=self.config.get("DIFFUSE_RING_LOSS_WEIGHT", 0.0),
+            weight_saturation_ring=self.config.get("SATURATION_RING_LOSS_WEIGHT", 0.0),
             ring_kernel_size=int(self.config.get("RING_KERNEL_SIZE", 7)),
             ring_var_weight=float(self.config.get("RING_VAR_WEIGHT", 0.5)),
             ring_texture_weight=float(self.config.get("RING_TEXTURE_WEIGHT", 1.0)),
@@ -709,12 +705,12 @@ class Engine:
                 highlight_result = self.add_polar_highlights(
                     rgb=sample["diffuse"].to(self.device, non_blocking=True),
                     light_pos=random_light_pos,
-                    noise=random.uniform(0, float(self.config.NOISE)),
+                    noise=self.config.NOISE,
                     noise_type=self.config.NOISE_TYPE, 
-                    noise_octaves=random.randint(1, int(self.config.NOISE_OCTAVES)) if int(self.config.NOISE_OCTAVES) > 1 else 1,
-                    noise_persistence=random.uniform(0, float(self.config.NOISE_PERSISTENCE)),
-                    surface_roughness=random.uniform(4, float(self.config.SURFACE_ROUGHNESS)),
-                    intensity=random.uniform(0.5, float(self.config.INTENSITY)),
+                    noise_octaves=self.config.NOISE_OCTAVES,
+                    noise_persistence=self.config.NOISE_PERSISTENCE,
+                    surface_roughness=self.config.SURFACE_ROUGHNESS,
+                    intensity=self.config.INTENSITY,
                 )
 
                 # Compute soft highlight map
@@ -887,6 +883,34 @@ class Engine:
                             metrics[f"Gradients/{submodule_name}_WeightNorm"] = norms[
                                 "weight_norm"
                             ]
+
+                # Compute evaluation metrics (vectorized over batch)
+                try:
+                    # Use same mask as loss for diffuse comparisons during Training; None otherwise
+                    eval_mask = lossmask if phase == "Training" else None
+                    if "diffuse" in pred_decomposition and "diffuse" in gt_decomposition:
+                        pdiff = pred_decomposition["diffuse"].detach()
+                        gt = gt_decomposition["diffuse"].detach()
+                        # Shapes: [B, C, H, W]
+                        metrics["PSNR/diffuse"] = float(psnr_metric(pdiff, gt, mask=eval_mask, reduction="mean").item())
+                        metrics["SSIM/diffuse"] = float(ssim_metric(pdiff, gt, mask=eval_mask, reduction="mean").item())
+                        metrics["MSE/diffuse"] = float(mse_metric(pdiff, gt, mask=eval_mask, reduction="mean").item())
+                    if "specular" in pred_decomposition and "specular" in gt_decomposition:
+                        ps = pred_decomposition["specular"].detach()
+                        gs = gt_decomposition["specular"].detach()
+                        metrics["PSNR/specular"] = float(psnr_metric(ps, gs, reduction="mean").item())
+                        metrics["SSIM/specular"] = float(ssim_metric(ps, gs, reduction="mean").item())
+                        metrics["MSE/specular"] = float(mse_metric(ps, gs, reduction="mean").item())
+                    # Reconstructed image metric if available
+                    if "rgb_highlighted" in pred_decomposition and "rgb_highlighted" in gt_decomposition:
+                        pr = pred_decomposition["rgb_highlighted"].detach()
+                        gr = gt_decomposition["rgb_highlighted"].detach()
+                        metrics["PSNR/recon"] = float(psnr_metric(pr, gr, reduction="mean").item())
+                        metrics["SSIM/recon"] = float(ssim_metric(pr, gr, reduction="mean").item())
+                        metrics["MSE/recon"] = float(mse_metric(pr, gr, reduction="mean").item())
+                except Exception as _metrics_e:
+                    # Do not fail the step if metrics fail; continue logging losses
+                    pass
 
                 # Update the metrics dataframe
                 self.metrics[phase] = pd.concat(

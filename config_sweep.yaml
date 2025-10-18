@@ -10,6 +10,7 @@ project: UnReflectAnything
 entity: unreflect-anything
 
 
+
 parameters:
 
   ### MODEL ARCHITECTURE                                                       
@@ -102,18 +103,33 @@ parameters:
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
         LOAD_RGB_ONLY: True
+        SAMPLE_EVERY_N: 4
         FEW_IMAGES: False
         HIGHLIGHT_ENABLE: False  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
         HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [800, 800]
+        HIGHLIGHT_RECT_SIZE: [1000, 1000]
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
       
-      STEREOMIS_TRACKING:
-        VAL_SCENES: ["P2_2"]
+      # STEREOMIS_TRACKING:
+      #   VAL_SCENES: ["P2_2"]
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "resize"
+      #   LOAD_RGB_ONLY: True
+      #   FEW_IMAGES: False
+      #   HIGHLIGHT_ENABLE: False  
+      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+      #   HIGHLIGHT_RETURN_MASK: True
+      #   HIGHLIGHT_RECT_SIZE: [800, 800]
+      #   HIGHLIGHT_RETURN_RECT_AS_RGB: False
+      #   HIGHLIGHT_RETURN_RECT: True
+
+      CHOLEC80:
+        VAL_SCENES: ["video02"]
         TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
+        RESIZE_MODE: "crop"
+        SAMPLE_EVERY_N: 20
         LOAD_RGB_ONLY: True
         FEW_IMAGES: False
         HIGHLIGHT_ENABLE: False  
@@ -123,18 +139,6 @@ parameters:
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
 
-      CHOLEC80:
-        VAL_SCENES: ["video01"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
-        LOAD_RGB_ONLY: True
-        FEW_IMAGES: False
-        HIGHLIGHT_ENABLE: False  
-        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-        HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [800, 800]
-        HIGHLIGHT_RETURN_RECT_AS_RGB: False
-        HIGHLIGHT_RETURN_RECT: True
       # SYNTHETIC:
       #   TRAIN_SCENES: "bedroom"
       #   TARGET_SIZE: [448,448]
@@ -148,15 +152,15 @@ parameters:
       #   LOAD_RGB_ONLY: False
 
   BATCH_SIZE: # Max batch size with img size 448 is 64
-    value: 32
+    value: 1
   NUM_WORKERS:
-    value: 8
+    value: 6
   SHUFFLE:
     value: True
   PIN_MEMORY:
     value: true
   PREFETCH_FACTOR:
-    value: 2
+    value: 1
   
   ### HIGHLIGHTS                                                        
   MOGE_MODEL:
@@ -176,7 +180,7 @@ parameters:
   NOISE_WORLEY_CELLS:
     value: 32
   LIGHT_DISTANCE_RANGE:
-    value: [0.04, 0.2]
+    value: [0.004, 0.01]
   LIGHT_LEFT_RIGHT_ANGLE:
     value: [0, 360]
   LIGHT_ABOVE_BELOW_ANGLE:
@@ -199,7 +203,7 @@ parameters:
   WEIGHT_DECAY:
     value: 1.0e-8
   EPOCHS:
-    value: 10
+    value: 20
   GRADIENT_ACCUMULATION_STEPS:
     value: 1
   WARMUP_STEPS:
@@ -214,8 +218,8 @@ parameters:
       # COSINE:
       #   N_PERIODS: 5
       STEPWISE:
-        N_STEPS: 2
-        GAMMA: 0.1
+        N_STEPS: 3
+        GAMMA: 0.5
       # EXPONENTIAL:
       #   GAMMA: 0.5
 
@@ -236,23 +240,13 @@ parameters:
   DIFFUSE_LOSS_WEIGHT:
     value: 1.0
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 0.5
-  COMPONENT_MATCHING_LOSS_WEIGHT:
     value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
     value: 0.5
-  ALPHA_REGULARIZATION_LOSS_WEIGHT:
-    value: 0.1
-  SPATIAL_CONSISTENCY_LOSS_WEIGHT:
-    value: 0.3
-  DIFFUSE_SATURATION_LOSS_WEIGHT:
-    value: 0.0
-  DIFFUSE_SATURATION_MAX:
-    value: 0.35
-  DIFFUSE_RING_LOSS_WEIGHT:
-    values: [0,1]
+  SATURATION_RING_LOSS_WEIGHT:
+    value: 1.0
   RING_KERNEL_SIZE:
-    value: 7
+    value: 21
   RING_VAR_WEIGHT:
     value: 0.5
   RING_TEXTURE_WEIGHT:
@@ -274,5 +268,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "Impact of ring loss"
+    value: "Including CHOLEC80"
   

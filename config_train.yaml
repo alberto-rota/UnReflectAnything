@@ -113,20 +113,19 @@ parameters:
       #   HIGHLIGHT_RETURN_RECT_AS_RGB: False
       #   HIGHLIGHT_RETURN_RECT: True
 
-      # CHOLEC80:
-      #   TRAIN_SCENES: ["video01"]
-      #   VAL_SCENES: ["video02"]
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "crop"
-      #   SAMPLE_EVERY_N: 4
-      #   LOAD_RGB_ONLY: True
-      #   FEW_IMAGES: False
-      #   HIGHLIGHT_ENABLE: False  
-      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-      #   HIGHLIGHT_RETURN_MASK: True
-      #   HIGHLIGHT_RECT_SIZE: [800, 800]
-      #   HIGHLIGHT_RETURN_RECT_AS_RGB: False
-      #   HIGHLIGHT_RETURN_RECT: True
+      CHOLEC80:
+        VAL_SCENES: ["video02"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "crop"
+        SAMPLE_EVERY_N: 20
+        LOAD_RGB_ONLY: True
+        FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [800, 800]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
+        HIGHLIGHT_RETURN_RECT: True
 
       # SYNTHETIC:
       #   TRAIN_SCENES: "bedroom"
@@ -141,15 +140,15 @@ parameters:
       #   LOAD_RGB_ONLY: False
 
   BATCH_SIZE: # Max batch size with img size 448 is 64
-    value: 32
+    value: 1
   NUM_WORKERS:
-    value: 8
+    value: 6
   SHUFFLE:
     value: True
   PIN_MEMORY:
     value: true
   PREFETCH_FACTOR:
-    value: 2
+    value: 1
   
   ### HIGHLIGHTS                                                        
   MOGE_MODEL:
@@ -229,25 +228,13 @@ parameters:
   DIFFUSE_LOSS_WEIGHT:
     value: 1.0
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 0.5
-  COMPONENT_MATCHING_LOSS_WEIGHT:
     value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
     value: 0.5
-  ALPHA_REGULARIZATION_LOSS_WEIGHT:
-    value: 0.1
-  SPATIAL_CONSISTENCY_LOSS_WEIGHT:
-    value: 0.3
-
-  # New diffuse regularizers (disabled by default)
-  DIFFUSE_SATURATION_LOSS_WEIGHT:
-    value: 0.5
-  DIFFUSE_SATURATION_MAX:
-    value: 0.35
-  DIFFUSE_RING_LOSS_WEIGHT:
-    value: 0.5
+  SATURATION_RING_LOSS_WEIGHT:
+    value: 1.0
   RING_KERNEL_SIZE:
-    value: 7
+    value: 21
   RING_VAR_WEIGHT:
     value: 0.5
   RING_TEXTURE_WEIGHT:
@@ -269,5 +256,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "Adds noise to virtual highlights"
+    value: "Including CHOLEC80"
   

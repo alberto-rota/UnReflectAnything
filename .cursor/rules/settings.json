@@ -1,0 +1,35 @@
+{
+    // Disable Pylance/Pyright completely
+    "python.languageServer": "None",
+    
+    // Disable Python analysis
+    "python.analysis.disabled": true,
+    "python.analysis.typeCheckingMode": "off",
+    
+    // Use Ruff for linting
+    "ruff.enable": true,
+    "ruff.lint.enable": true,
+    "ruff.format.enable": true,
+    "ruff.organizeImports": true,
+    
+    // Set Ruff as the default formatter
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll.ruff": "explicit"
+        }
+    },
+    
+    // Disable other Python linters
+    "python.linting.enabled": false,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": false,
+    "python.linting.mypyEnabled": false,
+    "python.linting.pycodestyleEnabled": false,
+    "python.linting.prospectorEnabled": false,
+    "python.linting.pydocstyleEnabled": false,
+    "python.linting.pylamaEnabled": false,
+    "python.linting.banditEnabled": false
+}
