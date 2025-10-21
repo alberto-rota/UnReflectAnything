@@ -23,10 +23,6 @@ from utilities.visualization import panelize, rgb
 from utilities.ablation import Ablation
 from metrics import mse_metric, psnr_metric, ssim_metric
 
-# Module-level ablation context so engine code can optionally use:
-#   with ablation:
-# or instance-specific via:
-#   with self.ablation:
 ablation = Ablation(False)
 
 

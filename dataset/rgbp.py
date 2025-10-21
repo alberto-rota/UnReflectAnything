@@ -1492,8 +1492,8 @@ class PSD_Dataset(RGBP_Dataset):
         super().__init__(
             root_dir="$DATASET_DIR/PSD_Dataset/",
             rgb_ext=".png",
-            rgb_dir_name="PSD_val_specular",
-            diffuse_dir_name="PSD_val_diffuse",
+            rgb_dir_name="specular",
+            diffuse_dir_name="diffuse",
             **kwargs,
         )
         # Add any SYNTHETIC-specific initialization here

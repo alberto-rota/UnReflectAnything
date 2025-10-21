@@ -31,10 +31,12 @@ def rgb(
     colormap: Optional[str] = "magma",
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
-    border: Optional[Union[
-        dict,
-        Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int],
-    ]] = None,
+    border: Optional[
+        Union[
+            dict,
+            Tuple[Union[list, tuple, torch.Tensor, np.ndarray, str], int],
+        ]
+    ] = None,
     label: Optional[Union[Tuple[str, int, str], Tuple[str, int, int, str]]] = None,
     **kwargs: Any,
 ) -> Union[None, torch.Tensor, Image.Image]:
@@ -322,7 +324,7 @@ def rgb(
             else:
                 chosen_path = regular_path
             # Binary search font size to fit height
-            target_h = max(1, rect_height - 2*pad)
+            target_h = max(1, rect_height - 2 * pad)
             lo, hi = 4, 400
             for _ in range(10):
                 mid = (lo + hi) // 2
@@ -354,15 +356,18 @@ def rgb(
         if is_latex:
             try:
                 from matplotlib import rcParams
+
                 rcParams.setdefault("mathtext.fontset", "cm")
                 from matplotlib.mathtext import MathTextParser
 
-                target_h = max(1, rect_height - 2*pad)
+                target_h = max(1, rect_height - 2 * pad)
                 parser = MathTextParser("agg")
-                rgba, _ = parser.to_rgba(str(label_text), dpi=200, color='black')
+                rgba, _ = parser.to_rgba(str(label_text), dpi=200, color="black")
                 latex_pil = Image.fromarray((rgba * 255).astype(np.uint8))
                 if latex_pil.height > 0:
-                    new_w = max(1, int(round(latex_pil.width * (target_h / latex_pil.height))))
+                    new_w = max(
+                        1, int(round(latex_pil.width * (target_h / latex_pil.height)))
+                    )
                     latex_pil = latex_pil.resize((new_w, int(target_h)), Image.LANCZOS)
                 latex_img = latex_pil
                 text_w, text_h = latex_img.size
@@ -375,11 +380,15 @@ def rgb(
             bbox = dummy_draw.textbbox((0, 0), str(label_text), font=pil_font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
-        rect_w = text_w + 2*pad
+        rect_w = text_w + 2 * pad
         rect_h = rect_height
 
         # Parse position string
-        tokens = pos_str.lower().replace("_", "-").split("-") if isinstance(pos_str, str) else ["top"]
+        tokens = (
+            pos_str.lower().replace("_", "-").split("-")
+            if isinstance(pos_str, str)
+            else ["top"]
+        )
         vpos = None
         if "top" in tokens:
             vpos = "top"
@@ -410,7 +419,12 @@ def rgb(
                 dummy_draw2 = ImageDraw.Draw(dummy_img2)
                 bb2 = dummy_draw2.textbbox((0, 0), str(label_text), font=pil_font)
                 base_adj = bb2[1]
-                draw.text((int(text_x), int(text_y - base_adj)), str(label_text), font=pil_font, fill=(0, 0, 0))
+                draw.text(
+                    (int(text_x), int(text_y - base_adj)),
+                    str(label_text),
+                    font=pil_font,
+                    fill=(0, 0, 0),
+                )
 
         if inside:
             # Vertical placement
@@ -465,7 +479,10 @@ def rgb(
             H, W = np_img.shape[:2]
 
         # Convert back to tensor
-        t = torch.from_numpy(np_img).to(device=t.device, dtype=t.dtype).permute(2, 0, 1) / 255.0
+        t = (
+            torch.from_numpy(np_img).to(device=t.device, dtype=t.dtype).permute(2, 0, 1)
+            / 255.0
+        )
 
     # Handle return types
     if as_tensor is True:
@@ -2980,3 +2997,166 @@ def blackout_pca(tensor: torch.Tensor) -> torch.Tensor:
         torch.zeros_like(tensor),
         tensor,
     )
+
+
+def highlights_rerun_show(
+    highlight_result,
+    batch,
+    resolution=(448, 448),
+    width=800,
+    height=800,
+    show_normals=False,
+    show_light_dir=False,
+    show_view_dir=False,
+):
+    """
+    Visualize highlight and geometry info with rerun, including highlight 3D points.
+
+    Args:
+        highlight_result (dict): Outputs from PolarHighlighter.
+        batch (dict): Associated batch. Uses batch["diffuse"] for colors.
+        resolution (tuple): Output resolution (height, width) for camera.
+        width (int): Width of rerun viewer.
+        height (int): Height of rerun viewer.
+        show_normals (bool): Whether to plot surface normals as 3D arrows.
+        show_light_dir (bool): Whether to plot light direction arrows.
+        show_view_dir (bool): Whether to plot view direction arrows.
+    """
+    import rerun as rr
+    import torch
+
+    rr.init("polar_highlighter")
+    rr.log("/", rr.ViewCoordinates.RDF)
+    rr.log(
+        "/cam",
+        rr.Pinhole(
+            image_from_camera=highlight_result["intrinsic"][0].cpu().numpy(),  # (3, 3)
+            resolution=resolution,  # (2,)
+            camera_xyz=rr.components.ViewCoordinates.RDF,  # Default: X=Right, Y=Down, Z=Forward
+        ),
+    )
+    # Light position and color (white)
+    light_camera_rf = highlight_result["light_pos"][0] * torch.tensor(
+        [-1, -1, 1]
+    ).to(highlight_result["light_pos"].device)
+    rr.log(
+        "/light",
+        rr.Points3D(
+            positions=light_camera_rf.cpu().numpy().reshape(1, 3),
+            colors=torch.tensor([1.0, 1.0, 1.0]).cpu().numpy().reshape(1, 3),
+            radii=0.005,
+        ),
+    )
+    # Point cloud of (x, y, z) points colored by diffuse RGB
+    rr.log(
+        "/pcloud",
+        rr.Points3D(
+            positions=highlight_result["pcloud"]
+            .view(1, 3, -1)[0]
+            .permute(1, 0)
+            .cpu()
+            .numpy(),
+            colors=batch["diffuse"].view(1, 3, -1)[0].permute(1, 0).cpu().numpy(),
+        ),
+    )
+    # Constants for visualization clarity
+    CLOUD_DOWNS = 1
+    ARROW_LENGTH = 0.1
+    ARROW_RADIUS = 0.005
+
+    cloud = highlight_result["pcloud"][:, :, ::CLOUD_DOWNS, ::CLOUD_DOWNS]
+
+    # ---- Add highlight as white 3D points ----
+    # Assume highlight_result["highlight"] is [B, 1, H, W] or [B, H, W]
+    highlight = highlight_result["highlight"]
+    pcloud = highlight_result["pcloud"]
+
+    # Get pcloud and highlight at full resolution, batch 0 only
+    if highlight.dim() == 4:
+        # [B, 1, H, W] --> [1, H, W]
+        highlight_map = highlight[0, 0] if highlight.shape[1] == 1 else highlight[0]
+    elif highlight.dim() == 3:
+        highlight_map = highlight[
+            0
+        ]  # [H, W] (or [C, H, W], but not likely for highlight)
+    else:
+        raise ValueError("Unexpected highlight shape")
+
+    # Downsample to match cloud (for visualization) if needed
+    # (Optional, but if visualizing only downsampled pcloud, use same here)
+    pcloud_vis = pcloud[0, :, ::CLOUD_DOWNS, ::CLOUD_DOWNS]
+    highlight_vis = highlight_map[::CLOUD_DOWNS, ::CLOUD_DOWNS]
+
+    # Find points where highlight is at least 0.5
+    mask = highlight_vis >= 0.5
+    if mask.sum() > 0:
+        # Get 3D positions at those indices: [3, H, W] -> [mask.sum(), 3]
+        pos = pcloud_vis[:, mask].T.cpu().numpy()
+        # White color for all highlight points
+        colors = torch.ones((pos.shape[0], 3), dtype=torch.float32).cpu().numpy()
+        # Use intensity to set radius: 0.05 ... 0.10 (twice normal size)
+        highlight_val = highlight_vis[mask].cpu().numpy()
+        radii = 0.005 + 0.005 * ((highlight_val - 0.5) / 0.5).clip(
+            0, 1
+        )  # [0.05, 0.10] for [0.5, 1]
+
+        rr.log(
+            "/highlights_points",
+            rr.Points3D(
+                positions=pos,
+                colors=colors,
+                radii=radii,
+            ),
+        )
+
+    if show_normals:
+        # Normals as arrows, colored using HSV-like mapping for direction
+        normals = highlight_result["normals"][:, :, ::CLOUD_DOWNS, ::CLOUD_DOWNS]
+        rr.log(
+            "/normals",
+            rr.Arrows3D(
+                origins=cloud.reshape(1, 3, -1)[0].permute(1, 0).cpu().numpy(),
+                vectors=-normals.reshape(1, 3, -1)[0].permute(1, 0).cpu().numpy()
+                * ARROW_LENGTH,
+                colors=torch.nn.functional.normalize(
+                    normals.reshape(1, 3, -1)[0].permute(1, 0), dim=1
+                )
+                .cpu()
+                .numpy()
+                * 0.5
+                + 0.5,  # HSV-like coloring
+                radii=ARROW_RADIUS,
+            ),
+        )
+    if show_light_dir:
+        # Light direction arrows (white)
+        light_dir = highlight_result["light_dir"][:, :, ::CLOUD_DOWNS, ::CLOUD_DOWNS]
+        rr.log(
+            "/light_dir",
+            rr.Arrows3D(
+                origins=cloud.reshape(1, 3, -1)[0].permute(1, 0).cpu().numpy(),
+                vectors=light_dir.reshape(1, 3, -1)[0].permute(1, 0).cpu().numpy()
+                * ARROW_LENGTH,
+                colors=torch.ones_like(light_dir.reshape(1, 3, -1)[0].permute(1, 0))
+                .cpu()
+                .numpy(),
+                radii=ARROW_RADIUS,
+            ),
+        )
+    if show_view_dir:
+        # View direction arrows (red)
+        view_dir = highlight_result["view_dir"][:, :, ::CLOUD_DOWNS, ::CLOUD_DOWNS]
+        rr.log(
+            "/view_dir",
+            rr.Arrows3D(
+                origins=cloud.reshape(1, 3, -1)[0].permute(1, 0).cpu().numpy(),
+                vectors=-view_dir.reshape(1, 3, -1)[0].permute(1, 0).cpu().numpy()
+                * ARROW_LENGTH,
+                colors=torch.tensor([1.0, 0.0, 0.0])
+                .expand_as(view_dir.reshape(1, 3, -1)[0].permute(1, 0))
+                .cpu()
+                .numpy(),
+                radii=ARROW_RADIUS,
+            ),
+        )
+    rr.notebook_show(width=width, height=height)

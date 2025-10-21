@@ -2,14 +2,12 @@
 method: grid
 metric:
   goal: minimize
-  name: Validation/epoch/Loss
+  name: Validation/epoch/Diffuse
 
 program: sweep_agent.py
 
 project: UnReflectAnything  
 entity: unreflect-anything
-
-
 
 parameters:
 
@@ -112,21 +110,22 @@ parameters:
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
       
-      # STEREOMIS_TRACKING:
-      #   VAL_SCENES: ["P2_2"]
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: True
-      #   FEW_IMAGES: False
-      #   HIGHLIGHT_ENABLE: False  
-      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-      #   HIGHLIGHT_RETURN_MASK: True
-      #   HIGHLIGHT_RECT_SIZE: [800, 800]
-      #   HIGHLIGHT_RETURN_RECT_AS_RGB: False
-      #   HIGHLIGHT_RETURN_RECT: True
+      STEREOMIS_TRACKING:
+        VAL_SCENES: ["P2_2"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        LOAD_RGB_ONLY: True
+        SAMPLE_EVERY_N: 4
+        FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [800, 800]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
+        HIGHLIGHT_RETURN_RECT: True
 
       CHOLEC80:
-        VAL_SCENES: ["video02"]
+        VAL_SCENES: ["val"]
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "crop"
         SAMPLE_EVERY_N: 20
@@ -152,7 +151,7 @@ parameters:
       #   LOAD_RGB_ONLY: False
 
   BATCH_SIZE: # Max batch size with img size 448 is 64
-    value: 1
+    value: 28
   NUM_WORKERS:
     value: 6
   SHUFFLE:
@@ -160,17 +159,17 @@ parameters:
   PIN_MEMORY:
     value: true
   PREFETCH_FACTOR:
-    value: 1
+    value: 2
   
   ### HIGHLIGHTS                                                        
   MOGE_MODEL:
     value: "Ruicheng/moge-2-vits-normal"
   SURFACE_ROUGHNESS:
-    value: 20.0
+    values: [10.0,20.0,40.0]
   INTENSITY:
-    value: 1.5
+    values: [1.5,2.0]
   NOISE:
-    value: 0.05
+    values: [0.05,0.1]
   NOISE_TYPE:
     value: fbm  # fbm | worley
   NOISE_OCTAVES:
@@ -201,9 +200,9 @@ parameters:
   LEARNING_RATE:
     value: 1.0e-3
   WEIGHT_DECAY:
-    value: 1.0e-8
+    values: [1.0e-8,1.0e-7,0.0]
   EPOCHS:
-    value: 20
+    value: 25
   GRADIENT_ACCUMULATION_STEPS:
     value: 1
   WARMUP_STEPS:
@@ -236,17 +235,17 @@ parameters:
   
   ### LOSS WEIGHTS (relative to the total loss, NOT NORMALIZED LATER)                                                                              
   SPECULAR_LOSS_WEIGHT:
-    value: 1.0
+    value: 0.0
   DIFFUSE_LOSS_WEIGHT:
     value: 1.0
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 1.0
+    values: [1.0,0.0]
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
-    value: 0.5
+    values: [1.0,0.0]
   SATURATION_RING_LOSS_WEIGHT:
-    value: 1.0
+    values: [1.0,0.0]
   RING_KERNEL_SIZE:
-    value: 21
+    value: 15
   RING_VAR_WEIGHT:
     value: 0.5
   RING_TEXTURE_WEIGHT:

@@ -50,48 +50,51 @@ parameters:
   ### DATA                                                                      
   DATASETS:
     value:
-      # SCRREAM:
-      #   VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   FEW_IMAGES: False
-      #   LOAD_RGB_ONLY: False
+      SCRREAM:
+        VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        FEW_IMAGES: False
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
         
-      # HOUSECAT6D:
-      #   TRAIN_SCENES: "none"
-      #   VAL_SCENES: "val"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "crop"
-      #   FEW_IMAGES: False
-      #   LOAD_RGB_ONLY: False
+      HOUSECAT6D:
+        VAL_SCENES: "val"
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "crop"
+        FEW_IMAGES: False
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
 
-      # POLARGB:
-      #   TRAIN_SCENES: "train"
-      #   VAL_SCENES: "test"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: False
+      POLARGB:
+        TRAIN_SCENES: "train"
+        VAL_SCENES: "test"
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
 
-      # CROMO:
-      #   TRAIN_SCENES: "kitchen"
-      #   VAL_SCENES: "test"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: False
+      CROMO:
+        TRAIN_SCENES: "kitchen"
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
     
-      # PSD:
-      #   TRAIN_SCENES: "PSD_val"
-      #   VAL_SCENES: "PSD_Test"
-      #   TARGET_SIZE: [448,448]  
-      #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: True
+      PSD:
+        TRAIN_SCENES: "PSD_Train"
+        VAL_SCENES: "PSD_Val"
+        TARGET_SIZE: [448,448]  
+        RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
 
       SCARED:
         VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 1
         LOAD_RGB_ONLY: True
-        SAMPLE_EVERY_N: 4
         FEW_IMAGES: False
         HIGHLIGHT_ENABLE: False  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
@@ -100,24 +103,11 @@ parameters:
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
       
-      # STEREOMIS_TRACKING:
-      #   VAL_SCENES: ["P2_2"]
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: True
-      #   FEW_IMAGES: False
-      #   HIGHLIGHT_ENABLE: False  
-      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-      #   HIGHLIGHT_RETURN_MASK: True
-      #   HIGHLIGHT_RECT_SIZE: [800, 800]
-      #   HIGHLIGHT_RETURN_RECT_AS_RGB: False
-      #   HIGHLIGHT_RETURN_RECT: True
-
-      CHOLEC80:
-        VAL_SCENES: ["video02"]
+      STEREOMIS_TRACKING:
+        VAL_SCENES: ["P2_2"]
         TARGET_SIZE: [448,448]
-        RESIZE_MODE: "crop"
-        SAMPLE_EVERY_N: 20
+        RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 1
         LOAD_RGB_ONLY: True
         FEW_IMAGES: False
         HIGHLIGHT_ENABLE: False  
@@ -127,20 +117,22 @@ parameters:
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
 
-      # SYNTHETIC:
-      #   TRAIN_SCENES: "bedroom"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   HIGHLIGHT_ENABLE: False  
-      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
-      #   HIGHLIGHT_RETURN_MASK: True
-      #   HIGHLIGHT_RECT_SIZE: [640, 640]
-      #   HIGHLIGHT_RETURN_RECT_AS_RGB: True
-      #   HIGHLIGHT_RETURN_RECT: True
-      #   LOAD_RGB_ONLY: False
+      CHOLEC80:
+        VAL_SCENES: ["val"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "crop"
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
+        FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [800, 800]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
+        HIGHLIGHT_RETURN_RECT: True
 
-  BATCH_SIZE: # Max batch size with img size 448 is 64
-    value: 1
+  BATCH_SIZE: # Max batch size with img size 448 is 32
+    value: 32
   NUM_WORKERS:
     value: 6
   SHUFFLE:
@@ -152,23 +144,23 @@ parameters:
   
   ### HIGHLIGHTS                                                        
   MOGE_MODEL:
-    value: "Ruicheng/moge-2-vits-normal"
+    value: "Ruicheng/moge-2-vitb-normal"
   SURFACE_ROUGHNESS:
     value: 20.0
   INTENSITY:
-    value: 1.5
+    value: 2.5
   NOISE:
-    value: 0.05
+    value: 0.0
   NOISE_TYPE:
     value: fbm  # fbm | worley
   NOISE_OCTAVES:
-    value: 4
+    value: 10
   NOISE_PERSISTENCE:
-    value: 0.75
+    value: 0.3
   NOISE_WORLEY_CELLS:
-    value: 32
+    value: 5
   LIGHT_DISTANCE_RANGE:
-    value: [0.004, 0.01]
+    value: [0.04, 0.1]
   LIGHT_LEFT_RIGHT_ANGLE:
     value: [0, 360]
   LIGHT_ABOVE_BELOW_ANGLE:

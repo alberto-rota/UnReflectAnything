@@ -50,66 +50,88 @@ parameters:
   ### DATA                                                                      
   DATASETS:
     value:
-      # SCRREAM:
-      #   VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   FEW_IMAGES: False
-      #   LOAD_RGB_ONLY: False
+      SCRREAM:
+        VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        FEW_IMAGES: False
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
         
-      # HOUSECAT6D:
-      #   TRAIN_SCENES: "none"
-      #   VAL_SCENES: "val"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "crop"
-      #   FEW_IMAGES: False
-      #   LOAD_RGB_ONLY: False
+      HOUSECAT6D:
+        TRAIN_SCENES: "none"
+        VAL_SCENES: "val"
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "crop"
+        FEW_IMAGES: False
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
 
-      # POLARGB:
-      #   TRAIN_SCENES: "train"
-      #   VAL_SCENES: "test"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: False
+      POLARGB:
+        TRAIN_SCENES: "train"
+        VAL_SCENES: "test"
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
 
-      # CROMO:
-      #   TRAIN_SCENES: "kitchen"
-      #   VAL_SCENES: "test"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: False
+      CROMO:
+        TRAIN_SCENES: "kitchen"
+        VAL_SCENES: "test"
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
     
-      # PSD:
-      #   TRAIN_SCENES: "PSD_val"
-      #   VAL_SCENES: "PSD_Test"
-      #   TARGET_SIZE: [448,448]  
-      #   RESIZE_MODE: "resize"
-      #   LOAD_RGB_ONLY: True
+      PSD:
+        TRAIN_SCENES: "PSD_Train"
+        VAL_SCENES: "PSD_Val"
+        TARGET_SIZE: [448,448]  
+        RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
 
       SCARED:
         VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 1
         LOAD_RGB_ONLY: True
         FEW_IMAGES: False
-        HIGHLIGHT_ENABLE: True  
+        HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [1000, 1000]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
+        HIGHLIGHT_RETURN_RECT: True
+      
+      STEREOMIS_TRACKING:
+        VAL_SCENES: ["P2_2"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
+        FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: False  
         HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
         HIGHLIGHT_RETURN_MASK: True
         HIGHLIGHT_RECT_SIZE: [800, 800]
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
 
-      # SYNTHETIC:
-      #   TRAIN_SCENES: "bedroom"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize"
-      #   HIGHLIGHT_ENABLE: False  
-      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.93
-      #   HIGHLIGHT_RETURN_MASK: True
-      #   HIGHLIGHT_RECT_SIZE: [640, 640]
-      #   HIGHLIGHT_RETURN_RECT_AS_RGB: True
-      #   HIGHLIGHT_RETURN_RECT: True
-      #   LOAD_RGB_ONLY: False
+      CHOLEC80:
+        VAL_SCENES: ["val"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "crop"
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
+        FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [800, 800]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
+        HIGHLIGHT_RETURN_RECT: True
 
   BATCH_SIZE: # Max batch size with img size 448 is 64
     value: 32
