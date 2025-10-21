@@ -47,6 +47,9 @@ parameters:
           OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 1
 
+  USE_TORCH_COMPILE:
+    value: True
+
   ### DATA                                                                      
   DATASETS:
     value:

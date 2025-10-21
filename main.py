@@ -161,6 +161,16 @@ def create_model_from_config(config: DotMap, device: torch.device):
         })
     
     model = model_class(**model_kwargs).to(device)
+    if config.get("USE_TORCH_COMPILE", True):
+        start_time = time.time()
+        model = torch.compile(
+            model,
+            mode=config.get("COMPILE_MODE", "default"),  # "default", "reduce-overhead", "max-autotune"
+            fullgraph=config.get("COMPILE_FULLGRAPH", False),
+            dynamic=config.get("COMPILE_DYNAMIC", None)
+        )
+        end_time = time.time()
+        logger.info(f"Torch Compile time: {end_time - start_time:.2f} seconds")
     torch.cuda.empty_cache()
     # from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
     # from models import DINOv3
@@ -582,7 +592,10 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
                     return
                 
                 # Train the model (will start from the correct epoch)
+                start_time = time.time()
                 engine.trainloop()
+                end_time = time.time()
+                logger.info(f"Training time: {end_time - start_time:.2f} seconds")
 
                 # Load best model and test
                 engine.reinstantiate_model_from_checkpoint()

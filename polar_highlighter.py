@@ -314,7 +314,8 @@ class PolarHighlighter(nn.Module):
         depth = mogeout["depth"]   # [B,H,W]
         normals = mogeout["normal"]  # [B,H,W,3]
         intrinsics = mogeout["intrinsics"].clone()
-        intrinsics[:, :2, 2] = torch.tensor([image.shape[2]/2, image.shape[3]/2]).repeat(intrinsics.shape[0], 1, 1).to(intrinsics.device)
+        intrinsics[:, 0, 2] = image.shape[3] / 2  # cx (width/2)
+        intrinsics[:, 1, 2] = image.shape[2] / 2  # cy (height/2)
         intrinsics[:, :2, :2] = intrinsics[:, :2, :2] * 200
         # Sanitize potential NaN/Inf from the geometry model
         depth = torch.nan_to_num(depth, nan=0.0, posinf=1e6, neginf=-1e6)
