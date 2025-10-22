@@ -58,7 +58,7 @@ class RGBP_Dataset(Dataset):
         # Image sizing parameters
         transform=None,
         target_size: Optional[Tuple[int, int]] = (874, 1132),  # Default size (H, W)
-        resize_mode: str = "crop",  # "crop", "resize", or "pad"
+        resize_mode: str = "crop",  # "crop", "resize", "pad", or "resize+crop"
         # Performance optimizations
         use_cache: bool = True,
         cache_size: int = 100,
@@ -116,9 +116,9 @@ class RGBP_Dataset(Dataset):
         # Image sizing parameters
         self.target_size = target_size
         self.resize_mode = resize_mode.lower()
-        if self.resize_mode not in ["crop", "resize", "pad"]:
+        if self.resize_mode not in ["crop", "resize", "pad", "resize+crop"]:
             raise ValueError(
-                f"resize_mode must be one of ['crop', 'resize', 'pad'], got {resize_mode}"
+                f"resize_mode must be one of ['crop', 'resize', 'pad', 'resize+crop'], got {resize_mode}"
             )
 
         self.use_cache = use_cache
@@ -198,6 +198,12 @@ class RGBP_Dataset(Dataset):
 
         Returns:
             Resized tensor of shape [C, target_H, target_W] or [target_H, target_W]
+            
+        Resize modes:
+            - "crop": Center crop to target size (no resizing)
+            - "resize": Resize to target size (may distort aspect ratio)
+            - "pad": Pad to target size with zeros (no resizing)
+            - "resize+crop": Resize to fit target size while maintaining aspect ratio, then center crop
         """
         if tensor.dim() == 2:
             # Single channel tensor [H, W]
@@ -227,6 +233,36 @@ class RGBP_Dataset(Dataset):
                 mode="bilinear",
                 align_corners=False,
             ).squeeze(0)  # Remove batch dimension
+
+        elif self.resize_mode == "resize+crop":
+            # Resize to fit target size while maintaining aspect ratio, then center crop
+            target_h, target_w = target_size
+            current_h, current_w = current_size
+            
+            # Calculate scale factor to fit the image into target size
+            scale_h = target_h / current_h
+            scale_w = target_w / current_w
+            scale = max(scale_h, scale_w)  # Use max to ensure we can crop to target size
+            
+            # Calculate intermediate size after scaling
+            intermediate_h = int(current_h * scale)
+            intermediate_w = int(current_w * scale)
+            
+            # Resize to intermediate size
+            tensor = F.interpolate(
+                tensor.unsqueeze(0),  # Add batch dimension
+                size=(intermediate_h, intermediate_w),
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(0)  # Remove batch dimension
+            
+            # Center crop to target size
+            start_h = (intermediate_h - target_h) // 2
+            end_h = start_h + target_h
+            start_w = (intermediate_w - target_w) // 2
+            end_w = start_w + target_w
+            
+            tensor = tensor[..., start_h:end_h, start_w:end_w]
 
         elif self.resize_mode == "pad":
             # Pad to target size with zeros

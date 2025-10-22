@@ -363,6 +363,7 @@ def load_and_process_config(
         config.BATCH_SIZE = 1
         config.EPOCHS = 1
         config.NO_WANDB = True
+        config.USE_TORCH_COMPILE = False
         # Set FEW_IMAGES to True for all datasets in boot mode
         for dataset_name, dataset_config in config.DATASETS.items():
             if isinstance(dataset_config, dict):

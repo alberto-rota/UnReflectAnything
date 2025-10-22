@@ -7,7 +7,7 @@ parameters:
       MODEL_CLASS: "RGBDistillDecomposer"
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vitb16-pretrain-lvd1689m"
-        IMAGE_SIZE: 448
+        IMAGE_SIZE: 896
         RETURN_SELECTED_LAYERS: [3, 6, 9,12]
       POL_ENCODER:
         EMBED_DIM: 768
@@ -27,7 +27,7 @@ parameters:
           READOUT_TYPE: "ignore"
           USE_BN: False
           DROPOUT: 0.1
-          OUTPUT_IMAGE_SIZE: [448,448]
+          OUTPUT_IMAGE_SIZE: [896,896]
           OUTPUT_CHANNELS: 3
         # specular:
         #   FEATURE_DIM: 768
@@ -35,7 +35,7 @@ parameters:
         #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
         #   READOUT_TYPE: "ignore"
         #   USE_BN: False
-        #   OUTPUT_IMAGE_SIZE: [448,448]
+        #   OUTPUT_IMAGE_SIZE: [896,896]
         #   OUTPUT_CHANNELS: 4
         highlight:
           FEATURE_DIM: 768
@@ -44,59 +44,59 @@ parameters:
           READOUT_TYPE: "ignore"
           USE_BN: False
           DROPOUT: 0.1
-          OUTPUT_IMAGE_SIZE: [448,448]
+          OUTPUT_IMAGE_SIZE: [896,896]
           OUTPUT_CHANNELS: 1
 
   USE_TORCH_COMPILE:
-    value: True
+    value: False
 
   ### DATA                                                                      
   DATASETS:
     value:
       SCRREAM:
         VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
+        TARGET_SIZE: [896,896]
+        RESIZE_MODE: "resize+crop"
         FEW_IMAGES: False
-        SAMPLE_EVERY_N: 1
+        SAMPLE_EVERY_N: 10
         LOAD_RGB_ONLY: True
         
       HOUSECAT6D:
         VAL_SCENES: "val"
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "crop"
+        TARGET_SIZE: [896,896]
+        RESIZE_MODE: "resize+crop"
         FEW_IMAGES: False
-        SAMPLE_EVERY_N: 1
+        SAMPLE_EVERY_N: 10
         LOAD_RGB_ONLY: True
 
-      POLARGB:
-        TRAIN_SCENES: "train"
-        VAL_SCENES: "test"
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
-        SAMPLE_EVERY_N: 1
-        LOAD_RGB_ONLY: True
+      # POLARGB:
+      #   TRAIN_SCENES: "train"
+      #   VAL_SCENES: "test"
+      #   TARGET_SIZE: [896,896]
+      #   RESIZE_MODE: "resize+crop"
+      #   SAMPLE_EVERY_N: 1
+      #   LOAD_RGB_ONLY: True
 
       CROMO:
         TRAIN_SCENES: "kitchen"
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
-        SAMPLE_EVERY_N: 1
+        TARGET_SIZE: [896,896]
+        RESIZE_MODE: "resize+crop"
+        SAMPLE_EVERY_N: 10
         LOAD_RGB_ONLY: True
     
       PSD:
         TRAIN_SCENES: "PSD_Train"
         VAL_SCENES: "PSD_Val"
-        TARGET_SIZE: [448,448]  
-        RESIZE_MODE: "resize"
+        TARGET_SIZE: [896,896]  
+        RESIZE_MODE: "resize+crop"
         SAMPLE_EVERY_N: 1
         LOAD_RGB_ONLY: True
 
       SCARED:
         VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
-        SAMPLE_EVERY_N: 1
+        TARGET_SIZE: [896,896]
+        RESIZE_MODE: "resize+crop"
+        SAMPLE_EVERY_N: 10
         LOAD_RGB_ONLY: True
         FEW_IMAGES: False
         HIGHLIGHT_ENABLE: False  
@@ -108,9 +108,9 @@ parameters:
       
       STEREOMIS_TRACKING:
         VAL_SCENES: ["P2_2"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
-        SAMPLE_EVERY_N: 1
+        TARGET_SIZE: [896,896]
+        RESIZE_MODE: "resize+crop"
+        SAMPLE_EVERY_N: 10
         LOAD_RGB_ONLY: True
         FEW_IMAGES: False
         HIGHLIGHT_ENABLE: False  
@@ -122,9 +122,9 @@ parameters:
 
       CHOLEC80:
         VAL_SCENES: ["val"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "crop"
-        SAMPLE_EVERY_N: 1
+        TARGET_SIZE: [896,896]
+        RESIZE_MODE: "resize+crop"
+        SAMPLE_EVERY_N: 50
         LOAD_RGB_ONLY: True
         FEW_IMAGES: False
         HIGHLIGHT_ENABLE: False  
@@ -134,10 +134,10 @@ parameters:
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
 
-  BATCH_SIZE: # Max batch size with img size 448 is 32
-    value: 32
+  BATCH_SIZE: # Max batch size with img size 896 is 32
+    value: 16
   NUM_WORKERS:
-    value: 6
+    value: 4
   SHUFFLE:
     value: True
   PIN_MEMORY:
@@ -151,17 +151,17 @@ parameters:
   SURFACE_ROUGHNESS:
     value: 20.0
   INTENSITY:
-    value: 2.5
+    value: 1.5
   NOISE:
-    value: 0.0
+    value: 0.05
   NOISE_TYPE:
     value: fbm  # fbm | worley
   NOISE_OCTAVES:
-    value: 10
+    value: 4
   NOISE_PERSISTENCE:
-    value: 0.3
+    value: 0.75
   NOISE_WORLEY_CELLS:
-    value: 5
+    value: 32 
   LIGHT_DISTANCE_RANGE:
     value: [0.04, 0.1]
   LIGHT_LEFT_RIGHT_ANGLE:
@@ -225,7 +225,7 @@ parameters:
   HIGHLIGHT_LOSS_WEIGHT:
     value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
-    value: 0.5
+    value: 1.0
   SATURATION_RING_LOSS_WEIGHT:
     value: 1.0
   RING_KERNEL_SIZE:
@@ -251,5 +251,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "Including CHOLEC80"
+    value: "Running on all datasets"
   

@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # --- User knobs ---
-REPO_DIR="${REPO_DIR:-$HOME/UnReflectAnything}"
-WS_DIR="${HOME:-/anvme/workspace/v120bb18-unreflectanything}"
-SNAP_ROOT="${SNAP_ROOT:-$HOME/snapshots}"     # snapshots live here
+REPO_DIR="${REPO_DIR:-$WORK/UnReflectAnything}"
+WS_DIR="${WORK:-/anvme/workspace/v120bb18-unreflectanything}"
+SNAP_ROOT="${SNAP_ROOT:-$WORK/snapshots}"     # snapshots live here
 SBATCH_FILE="${1:-train_a100_40_asap.sbatch}"   # pass sbatch filename or defaults
 EXCLUDES=(
   ".git"
