@@ -722,16 +722,25 @@ class PolarHighlighter(nn.Module):
 
     def update_rgb_with_highlight(self, rgb, H, intensity=1.0):
         """
-        Add highlight contribution to existing RGB image.
-        Physics: Incoherent addition R_total = R_scene + R_highlight for independent sources.
-        Each RGB channel adds linearly for incoherent superposition.
-        Values are clamped to [0,1] to prevent overflow in standard RGB representation.
+        Compose highlight over existing RGB image using H as both intensity and alpha.
+
+        Args:
+            rgb: [B,3,H,W] input RGB image, all values in [0,1]
+            H: [B,1,H,W] single-channel highlight map; both highlight intensity and blending alpha, in [0,1]
+            intensity: scales highlight strength (usually 1.0).
+
+        Returns:
+            [B,3,H,W]: RGB result with highlights composed, values clamped to [0,1].
         """
-        # H is [B,1,H,W], expand to match RGB channels [B,3,H,W]
+        # Expand H to RGB channels
         H_rgb = H.expand(-1, 3, -1, -1)  # [B,3,H,W]
-        R = rgb + intensity * H_rgb  # [B,3,H,W] - additive highlight contribution
-        R = torch.clamp(R, 0.0, 1.0)  # Clamp to valid RGB range [0,1]
-        return R
+        # Use H as an alpha map to blend pure white highlight over input rgb, modulated by intensity
+        alpha = (H * intensity).clamp(0, 1)  # [B,1,H,W]
+        alpha_rgb = alpha.expand_as(rgb)     # [B,3,H,W]
+        # Traditional "over" operator: composed = (1-a)*rgb + a*white
+        composed = rgb * (1.0 - alpha_rgb) + alpha_rgb * 1.0
+        composed = composed.clamp(0, 1)
+        return composed
 
     @time_module("highlight_synthesis")
     def synthesize_highlight_with_stokes(
@@ -826,16 +835,16 @@ class PolarHighlighter(nn.Module):
         size_unit="fraction",
         size_spread=0.6,
         elongation_bias=0.6,
-        falloff_mean=10,
+        falloff_mean=100,
         falloff_jitter=10,
-        edge_wobble=0.6,
-        warp_scale=20,
+        edge_wobble=1,
+        warp_scale=18,
         min_separation=0.06,
-        wavelength_px=12.0,
+        wavelength_px=1.0,
         wavelength_jitter=0.5,
         orientation_anisotropy=0.4,
         octaves=2,
-        roughness_strength=10,
+        roughness_strength=1.5,
         seed=0,
     ):
         """

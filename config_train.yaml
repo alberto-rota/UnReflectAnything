@@ -53,21 +53,21 @@ parameters:
   ### DATA                                                                      
   DATASETS:
     value:
-      SCRREAM:
-        VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
-        TARGET_SIZE: [896,896]
-        RESIZE_MODE: "resize+crop"
-        FEW_IMAGES: False
-        SAMPLE_EVERY_N: 10
-        LOAD_RGB_ONLY: True
+      # SCRREAM:
+      #   VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
+      #   TARGET_SIZE: [896,896]
+      #   RESIZE_MODE: "resize+crop"
+      #   FEW_IMAGES: False
+      #   SAMPLE_EVERY_N: 10
+      #   LOAD_RGB_ONLY: True
         
-      HOUSECAT6D:
-        VAL_SCENES: "val"
-        TARGET_SIZE: [896,896]
-        RESIZE_MODE: "resize+crop"
-        FEW_IMAGES: False
-        SAMPLE_EVERY_N: 10
-        LOAD_RGB_ONLY: True
+      # HOUSECAT6D:
+      #   VAL_SCENES: "val"
+      #   TARGET_SIZE: [896,896]
+      #   RESIZE_MODE: "resize+crop"
+      #   FEW_IMAGES: False
+      #   SAMPLE_EVERY_N: 10
+      #   LOAD_RGB_ONLY: True
 
       # POLARGB:
       #   TRAIN_SCENES: "train"
@@ -77,20 +77,20 @@ parameters:
       #   SAMPLE_EVERY_N: 1
       #   LOAD_RGB_ONLY: True
 
-      CROMO:
-        TRAIN_SCENES: "kitchen"
-        TARGET_SIZE: [896,896]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 10
-        LOAD_RGB_ONLY: True
+      # CROMO:
+      #   TRAIN_SCENES: "kitchen"
+      #   TARGET_SIZE: [896,896]
+      #   RESIZE_MODE: "resize+crop"
+      #   SAMPLE_EVERY_N: 10
+      #   LOAD_RGB_ONLY: True
     
-      PSD:
-        TRAIN_SCENES: "PSD_Train"
-        VAL_SCENES: "PSD_Val"
-        TARGET_SIZE: [896,896]  
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 1
-        LOAD_RGB_ONLY: True
+      # PSD:
+      #   TRAIN_SCENES: "PSD_Train"
+      #   VAL_SCENES: "PSD_Val"
+      #   TARGET_SIZE: [896,896]  
+      #   RESIZE_MODE: "resize+crop"
+      #   SAMPLE_EVERY_N: 1
+      #   LOAD_RGB_ONLY: True
 
       SCARED:
         VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
@@ -147,11 +147,11 @@ parameters:
   
   ### HIGHLIGHTS                                                        
   MOGE_MODEL:
-    value: "Ruicheng/moge-2-vitl-normal"
+    value: "Ruicheng/moge-2-vitb-normal"
   SURFACE_ROUGHNESS:
-    value: 6.0
+    value: 20.0
   INTENSITY:
-    value: 1.5
+    value: 2.0
   # NORMAL_NOISE:
   #   value: 1
   # NORMAL_NOISE_CELLS:
@@ -161,7 +161,7 @@ parameters:
   # NORMAL_NOISE_FALLOFF:
   #   value: 4
   LIGHT_DISTANCE_RANGE:
-    value: [0.0, 0.5]
+    value: [0.0, 0.2]
   LIGHT_LEFT_RIGHT_ANGLE:
     value: [0, 360]
   LIGHT_ABOVE_BELOW_ANGLE:
