@@ -1,0 +1,52 @@
+# Evaluation configuration for UnReflectAnything comparisons
+
+# Absolute path to the benchmark root containing `input/`, optional `diffuse_gt/`,
+# and one folder per method like `MethodName_output/`.
+benchmark_dir: "/anvme/workspace/v120bb18-unreflectanything/comparisons/benchmark"
+
+# Methods to evaluate. The folder name must exist under `benchmark_dir`.
+methods:
+  - name: "MethodA"
+    output_dir_name: "MethodA_output"
+    enabled: true
+  # - name: "MethodB"
+  #   output_dir_name: "MethodB_output"
+  #   enabled: true
+
+# Image I/O
+images:
+  extensions: ["png", "jpg", "jpeg", "tif", "tiff", "bmp"]
+  recursive: false  # set true if subdatasets contain nested folders
+
+# Optional masks. If disabled or not found, mask-dependent metrics are skipped.
+masks:
+  enabled: false
+  # You may provide either a fixed base_dir or a glob pattern with placeholders.
+  # base_dir: "/anvme/workspace/.../comparisons/benchmark/masks"
+  # glob_pattern: "{benchmark_dir}/masks/{subdataset}/{stem}.png"
+  base_dir: null
+  glob_pattern: null
+
+# Compute
+batch:
+  size: 8
+  device: "cuda"  # "cuda" | "cpu" | "cuda:0" etc.
+  num_workers: 2   # for image decoding when using the dataloader path (unused by default)
+
+# Metrics toggle. Full-reference metrics require `diffuse_gt` to be present per image.
+metrics:
+  full_reference: ["mse", "psnr", "ssim", "lpips_vgg", "dists", "gmsd", "deltaE2000"]
+  no_reference: ["brisque", "niqe", "piqe"]
+  mask_dependent: ["boundary_gmsd_band3", "luminance_suppression_ratio", "chroma_consistency_deltaE_ring3"]
+  enabled: true
+
+# Override automatic data range inference (null means auto per metrics.py)
+data_range_override: null  # e.g., 1.0 or 255.0
+
+# Policy for missing data
+policy:
+  strict_filename_match: true  # match by base filename (stem)
+  skip_missing_pred: true      # skip rows where method prediction is missing
+  allow_missing_gt: true       # evaluate no-ref metrics even if GT is missing
+
+

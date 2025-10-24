@@ -1,6 +1,8 @@
+import random
 import time
 from collections import defaultdict
 from functools import wraps
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -10,6 +12,177 @@ import torchvision.transforms as transforms
 
 # Note: transformers imports removed as they are not used
 from moge.model.v2 import MoGeModel
+
+
+# ---------------------------
+# helper: smoothstep
+def _smoothstep(x, e0, e1):
+    t = ((x - e0) / (e1 - e0)).clamp(0, 1)
+    return t * t * (3 - 2 * t)
+
+
+@torch.no_grad()
+def add_geometric_roughness_torch(
+    normals: torch.Tensor,                         # [B,3,H,W], in [-1,1] or [0,1]
+    # --- blob controls ---
+    n_blobs: int = 16,                             # number of blobs
+    avg_blob_size: float = 0.10,                   # avg diameter (fraction of min(H,W) or pixels)
+    size_unit: str = "fraction",
+    size_spread: float = 0.6,                      # lognormal spread; >0 => many small blobs
+    elongation_bias: float = 0.6,                  # 0: circular, 1: very elongated on avg
+    falloff_mean: float = 10,                    # mean softness (0=hard edge, 0.5=soft halo)
+    falloff_jitter: float = 10,                   # variation of falloff per blob
+    edge_wobble: float = 0.6,                      # amplitude of border perturbation (0..1)
+    warp_scale: int = 20,                          # spatial scale (px) of border perturbation
+    min_separation: float = 0.06,                  # keep centers apart (fraction of min(H,W))
+    # --- micro-geometry controls (unchanged) ---
+    wavelength_px: float = 12.0,
+    wavelength_jitter: float = 0.5,
+    orientation_anisotropy: float = 0.4,
+    octaves: int = 2,
+    roughness_strength: float = 10,              # average angular deviation (radians)
+    # misc
+    seed = None,
+    return_mask: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor | None]:
+
+    B, C, H, W = normals.shape
+    assert C == 3
+    dev = normals.device
+
+    g = torch.Generator(device=dev)
+    # if seed is None:
+    g.manual_seed(random.randint(0, 1000000))
+    # else:
+        # g.manual_seed(seed)
+    # normalize input to [-1,1]
+    n = normals.clone()
+    if n.min() >= 0:
+        n = n * 2 - 1.0
+    n = F.normalize(n, dim=1)
+
+    # base grids
+    yy, xx = torch.meshgrid(
+        torch.arange(H, device=dev, dtype=torch.float32),
+        torch.arange(W, device=dev, dtype=torch.float32),
+        indexing="ij"
+    )
+
+    # fbm-like noise field for warping (edge perturbations)
+    def _smooth_noise(scale=28):
+        h0, w0 = max(2, H // scale), max(2, W // scale)
+        base = torch.randn(1, 2, h0, w0, generator=g, device=dev)  # 2 channels -> 2D warp
+        field = F.interpolate(base, size=(H, W), mode="bicubic", align_corners=False)
+        return field  # [1,2,H,W]
+
+    warp_field = _smooth_noise(scale=max(6, warp_scale))  # shared statistics
+    warp_field = warp_field / (warp_field.std(dim=(-2, -1), keepdim=True) + 1e-8)  # normalize
+
+    # ---------- soft, perturbed super-ellipse blobs ----------
+    def make_soft_blob_mask() -> torch.Tensor:
+        mask = torch.zeros(1, H, W, device=dev)
+        d_mean = (avg_blob_size * min(H, W)) if size_unit == "fraction" else float(avg_blob_size)
+        d_mean = max(4.0, d_mean)
+        min_sep_px = max(4.0, min_separation * min(H, W))
+
+        centers = []
+        tries = 0
+        while len(centers) < n_blobs and tries < 6000:
+            tries += 1
+            cx = torch.empty((), device=dev).uniform_(0, W, generator=g).item()
+            cy = torch.empty((), device=dev).uniform_(0, H, generator=g).item()
+            if all(((cx-px)**2 + (cy-py)**2)**0.5 >= min_sep_px for px,py in centers):
+                centers.append((cx, cy))
+
+        for (cx, cy) in centers:
+            # sample size from lognormal (many small, some large)
+            ln_sigma = size_spread * 0.5  # softer control
+            s = torch.exp(torch.empty((), device=dev).normal_(0, ln_sigma, generator=g))  # ~lognormal
+            D = d_mean * s
+            # elongation: sample axis ratio biased to small values
+            r = torch.clamp(1.0 - torch.empty((), device=dev).uniform_(0, elongation_bias, generator=g), 0.15, 1.0)
+            a = D * 0.5                      # major semi-axis
+            b = D * 0.5 * r                  # minor semi-axis
+            theta = torch.empty((), device=dev).uniform_(0, 3.1416, generator=g)
+            p = torch.empty((), device=dev).uniform_(1.8, 3.2, generator=g)  # super-ellipse exponent
+
+            # coordinate warp for irregularity
+            wob_amp = edge_wobble * 0.35 * D  # scale by size so small blobs aren't shredded
+            X = xx + wob_amp * warp_field[:, 0] - cx
+            Y = yy + wob_amp * warp_field[:, 1] - cy
+
+            ct, st = torch.cos(theta), torch.sin(theta)
+            xr =  ct * X + st * Y
+            yr = -st * X + ct * Y
+
+            # super-ellipse implicit metric f= (|xr/a|^p + |yr/b|^p)
+            f = torch.pow(torch.abs(xr) / (a + 1e-8), p) + torch.pow(torch.abs(yr) / (b + 1e-8), p)
+
+            # soft falloff via smoothstep around f=1 with randomized width
+            soft = (falloff_mean * (1.0 + torch.empty((), device=dev).uniform_(-falloff_jitter, falloff_jitter, generator=g))).clamp(0.05, 0.7)
+            edge0 = 1.0 - soft   # inside value to start softening
+            edge1 = 1.0 + soft   # outside value where it goes to 0
+            blob = (1.0 - _smoothstep(f, edge0, edge1)).clamp(0, 1)  # 1 at core -> 0 outside
+            blob = blob.unsqueeze(0)
+
+            mask = (mask + blob).clamp(0, 1)
+
+        # mild blur to merge micro-holes but keep shapes
+        mask = F.gaussian_blur(mask, (5, 5), sigma=(1.2, 1.2)) if hasattr(F, "gaussian_blur") else mask
+        return mask  # [1,H,W]
+
+    mask = torch.cat([make_soft_blob_mask() for _ in range(B)], dim=0)  # [B,1,H,W]
+
+    # ---------- micro-geometry (same as before) ----------
+    # band-limited Gabor-like height
+    yyn, xxn = torch.meshgrid(
+        torch.linspace(-1, 1, H, device=dev),
+        torch.linspace(-1, 1, W, device=dev),
+        indexing="ij",
+    )
+    height = torch.zeros(B, 1, H, W, device=dev)
+    for o in range(octaves):
+        lam = wavelength_px * (0.5 ** o)
+        base_freq = 1.0 / max(lam, 1.0)
+        dom = torch.empty(B, device=dev).uniform_(0, 3.1416, generator=g)
+        theta = dom + torch.empty(B, device=dev).uniform_(-3.1416*orientation_anisotropy*0.25,
+                                                          3.1416*orientation_anisotropy*0.25, generator=g)
+        freq = base_freq * torch.clamp(1.0 + torch.empty(B, device=dev).uniform_(-wavelength_jitter, wavelength_jitter, generator=g), 0.25, 4.0)
+        phase = torch.empty(B, device=dev).uniform_(0, 6.2832, generator=g)
+        for b in range(B):
+            ct, st = torch.cos(theta[b]), torch.sin(theta[b])
+            u = ct * xxn + st * yyn
+            height[b:b+1] += torch.sin(2*3.1416*freq[b] * u + phase[b]) * (1.0 / (2**o))
+    height = height - height.mean(dim=(-2,-1), keepdim=True)
+    height = F.gaussian_blur(height, (5,5), sigma=(1.0,1.0)) if hasattr(F,"gaussian_blur") else height
+    height = height * mask
+
+    # slopes
+    kx = torch.tensor([[1,0,-1],[2,0,-2],[1,0,-1]], device=dev, dtype=torch.float32).view(1,1,3,3)/8.0
+    ky = torch.tensor([[1,2,1],[0,0,0],[-1,-2,-1]], device=dev, dtype=torch.float32).view(1,1,3,3)/8.0
+    dhdx = F.conv2d(height, kx, padding=1)
+    dhdy = F.conv2d(height, ky, padding=1)
+
+    # TBN from n
+    ref = torch.tensor([0.0,0.0,1.0], device=dev).view(1,3,1,1).expand(B,-1,H,W)
+    parallel = (torch.abs((n*ref).sum(1,keepdim=True)) > 0.99)
+    ref = torch.where(parallel, torch.tensor([0.0,1.0,0.0], device=dev).view(1,3,1,1), ref)
+    t = F.normalize(torch.cross(ref, n, dim=1), dim=1)
+    b = F.normalize(torch.cross(n, t, dim=1), dim=1)
+
+    # unscaled perturbation from slopes
+    offset = (-dhdx) * t + (-dhdy) * b
+
+    # scale so average deviation ≈ roughness_strength (radians)
+    test = F.normalize(n + offset, dim=1)
+    cosang = (n * test).sum(1).clamp(-1, 1)
+    mean_angle = torch.acos(cosang).mean().detach().item() + 1e-8
+    scale = roughness_strength / mean_angle
+    n_pert = F.normalize(n + offset * scale, dim=1)
+
+    # blend by soft mask
+    noisy = F.normalize(torch.lerp(n, n_pert, mask), dim=1)
+    return (noisy, mask) if return_mask else (noisy, None)
 
 
 def time_module(module_name):
@@ -56,7 +229,7 @@ def time_module(module_name):
 class PolarHighlighter(nn.Module):
     def __init__(
         self,
-        geometry_model_name="Ruicheng/moge-2-vitb-normal",  # Changed parameter name
+        geometry_model_name="Ruicheng/moge-2-vits-normal",  # Changed parameter name
         height=852,
         width=1096,
         enable_timing=False,
@@ -175,124 +348,35 @@ class PolarHighlighter(nn.Module):
         """Normalize vectors along dim=1"""
         return v / (v.norm(dim=1, keepdim=True).clamp_min(eps))
 
-    def generate_fractal_noise(
-        self, B, H, W, device, dtype, octaves=4, persistence=0.5
-    ):
+
+
+
+
+
+
+    def _gaussian_kernel1d(self, sigma: float, dtype, device):
+        radius = max(int(3.0 * sigma + 0.5), 1)
+        x = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
+        w = torch.exp(-(x * x) / (2.0 * sigma * sigma))
+        w = w / (w.sum() + 1e-12)
+        return w.view(1, 1, -1)
+
+    def gaussian_blur(self, x: torch.Tensor, sigma: float) -> torch.Tensor:
         """
-        Generate batched, smooth multi-octave noise [B,1,H,W] on the given device.
-        Uses bilinear-upsampled Gaussian noise at progressively finer scales.
-
-        Args:
-            B: batch size
-            H, W: spatial size
-            device: torch device
-            dtype: tensor dtype
-            octaves: number of frequency bands
-            persistence: amplitude decay per octave (in (0,1])
-
-        Returns:
-            noise: tensor in [0,1], shape [B,1,H,W]
+        Separable Gaussian blur for [B,C,H,W]. If sigma<=0, returns x.
         """
-        noise_accum = None
-        amplitude = 1.0
-        total_amp = 0.0
-        for o in range(octaves):
-            # Coarse resolution decreases with octave depth (start from H/8, W/8)
-            div = 2 ** (o + 3)
-            h_low = max(1, H // div)
-            w_low = max(1, W // div)
-            low = torch.randn(B, 1, h_low, w_low, device=device, dtype=dtype)
-            up = F.interpolate(low, size=(H, W), mode="bilinear", align_corners=False)
-            if noise_accum is None:
-                noise_accum = amplitude * up
-            else:
-                noise_accum = noise_accum + amplitude * up
-            total_amp += amplitude
-            amplitude *= persistence
-
-        # Normalize to [0,1]
-        noise = noise_accum / max(total_amp, 1e-6)
-        # Per-sample min-max normalization for stable range
-        minv = noise.amin(dim=(2, 3), keepdim=True)
-        maxv = noise.amax(dim=(2, 3), keepdim=True)
-        noise = (noise - minv) / (maxv - minv + 1e-6)
-        return noise
-
-    def generate_worley_noise(self, B, H, W, device, dtype, cells=32):
-        """
-        Batched 2D Worley (cellular) noise in [0,1], shape [B,1,H,W].
-        Uses a single random feature point per cell and 3x3 neighbor search (with wrap).
-        """
-        # Pixel coordinates normalized to cell grid space
-        ys = torch.linspace(0, cells, steps=H, device=device, dtype=dtype)
-        xs = torch.linspace(0, cells, steps=W, device=device, dtype=dtype)
-        v, u = torch.meshgrid(ys, xs, indexing="ij")  # [H,W]
-        u = u.unsqueeze(0).expand(B, -1, -1)  # [B,H,W]
-        v = v.unsqueeze(0).expand(B, -1, -1)  # [B,H,W]
-
-        # Integer cell indices
-        cell_x0 = torch.floor(u).to(torch.long).clamp(min=0, max=cells - 1)  # [B,H,W]
-        cell_y0 = torch.floor(v).to(torch.long).clamp(min=0, max=cells - 1)  # [B,H,W]
-
-        # Random feature offsets per cell
-        feats = torch.rand(B, cells, cells, 2, device=device, dtype=dtype)  # in [0,1)
-
-        # 3x3 neighbor offsets
-        d = torch.tensor([-1, 0, 1], device=device)
-        dx, dy = torch.meshgrid(d, d, indexing="ij")  # [3,3]
-        dx = dx.reshape(9, 1, 1)
-        dy = dy.reshape(9, 1, 1)
-
-        # Broadcast indices for neighbor cells with wrap-around
-        x_idx = (cell_x0.unsqueeze(0) + dx) % cells  # [9,B,H,W]
-        y_idx = (cell_y0.unsqueeze(0) + dy) % cells  # [9,B,H,W]
-
-        # Batch indices for advanced indexing
-        b_idx = torch.arange(B, device=device).view(1, B, 1, 1).expand(9, B, H, W)
-
-        # Gather feature offsets for neighbors
-        neighbor_feats = feats[b_idx, y_idx, x_idx]  # [9,B,H,W,2]
-
-        # Neighbor feature absolute positions in grid space
-        fx = x_idx.to(dtype) + neighbor_feats[..., 0]  # [9,B,H,W]
-        fy = y_idx.to(dtype) + neighbor_feats[..., 1]  # [9,B,H,W]
-
-        # Pixel positions
-        uu = u.unsqueeze(0)  # [1,B,H,W] -> [9,B,H,W] by broadcast
-        vv = v.unsqueeze(0)
-
-        # Distances to neighbor features (Euclidean)
-        du = uu - fx
-        dv = vv - fy
-        dist2 = du * du + dv * dv  # [9,B,H,W]
-        dmin = dist2.min(dim=0).values.sqrt()  # [B,H,W]
-
-        # Normalize to [0,1] approximately (sqrt(2) is max in cell space)
-        noise = (dmin / (2.0**0.5)).clamp(0.0, 1.0)
-        return noise.unsqueeze(1)  # [B,1,H,W]
-
-    def generate_noise_map(
-        self,
-        B,
-        H,
-        W,
-        device,
-        dtype,
-        noise_type="fbm",
-        octaves=4,
-        persistence=0.5,
-        cells=32,
-    ):
-        """
-        Unified noise generator.
-        noise_type: 'fbm' | 'worley'
-        """
-        if noise_type == "worley":
-            return self.generate_worley_noise(B, H, W, device, dtype, cells=cells)
-        # default fbm (fractal value noise)
-        return self.generate_fractal_noise(
-            B, H, W, device, dtype, octaves=octaves, persistence=persistence
-        )
+        if sigma is None or sigma <= 0:
+            return x
+        B, C, H, W = x.shape
+        k1d = self._gaussian_kernel1d(float(sigma), x.dtype, x.device)  # [1,1,K]
+        # Horizontal
+        pad = (k1d.shape[-1] // 2)
+        w_h = k1d.view(1, 1, 1, -1).repeat(C, 1, 1, 1)
+        x = F.conv2d(F.pad(x, (pad, pad, 0, 0), mode='reflect'), w_h, groups=C)
+        # Vertical
+        w_v = k1d.view(1, 1, -1, 1).repeat(C, 1, 1, 1)
+        x = F.conv2d(F.pad(x, (0, 0, pad, pad), mode='reflect'), w_v, groups=C)
+        return x
 
     @time_module("depth_estimation")
     @time_module("geometry_estimation")
@@ -523,11 +607,6 @@ class PolarHighlighter(nn.Module):
         surface_roughness,
         intensity,
         F0,
-        noise=None,
-        noise_type="fbm",
-        noise_octaves=4,
-        noise_persistence=0.5,
-        worley_cells=32,
     ):
         """
         Compute Blinn-Phong specular lobe with Schlick Fresnel approximation.
@@ -542,64 +621,15 @@ class PolarHighlighter(nn.Module):
             surface_roughness: specular exponent α
             intensity: specular strength
             F0: Fresnel reflectance at normal incidence
-            noise: optional noise in [0,1]; if provided, adds spatial jitter to falloff
-            noise_octaves: number of noise octaves when jittering
-            noise_persistence: amplitude falloff across octaves
 
         Returns:
             H: [B,1,H,W] highlight luminance
         """
         # Compute half-vector
         h = self.normalize_vector(l + v)  # [B,3,H,W] half-vector
-        # Optional noise-driven microfacet normal perturbation to break smoothness
-        n_eff = n
-        if noise is not None:
-            if not torch.is_tensor(noise):
-                noise_t = torch.tensor(noise, device=n.device, dtype=n.dtype)
-            else:
-                noise_t = noise.to(device=n.device, dtype=n.dtype)
-            noise_t = torch.clamp(noise_t, 0.0, 1.0)
-            if (noise_t > 0).any():
-                B, _, H, W = v.shape
-                # Tangent random direction per-pixel
-                r = torch.randn_like(n)
-                r = r - (r * n).sum(1, keepdim=True) * n  # project to tangent
-                r = self.normalize_vector(r.clamp(min=-1e6, max=1e6))
-                # Blend original normal with tangent noise; beta scales with noise
-                beta = 0.8 * noise_t  # stronger effect
-                if beta.ndim == 1:
-                    beta = beta.view(B, 1, 1, 1)
-                n_eff = self.normalize_vector((1.0 - beta) * n + beta * r)
-
-        # Compute n·h with possibly perturbed normals
-        nh = (n_eff * h).sum(1, keepdim=True).clamp(0.0, 1.0)
-        # Optional noise-driven spatial jitter to reduce smoothness of falloff
-        if noise is not None:
-            if not torch.is_tensor(noise):
-                noise_t = torch.tensor(noise, device=nh.device, dtype=nh.dtype)
-            else:
-                noise_t = noise.to(device=nh.device, dtype=nh.dtype)
-            noise_t = torch.clamp(noise_t, 0.0, 1.0)
-            if (noise_t > 0).any():
-                B, _, H, W = nh.shape
-                noise_map = self.generate_noise_map(
-                    B,
-                    H,
-                    W,
-                    nh.device,
-                    nh.dtype,
-                    noise_type=noise_type,
-                    octaves=noise_octaves,
-                    persistence=noise_persistence,
-                    cells=worley_cells,
-                )
-                # Map noise in [0,1] to multiplicative jitter around 1.0
-                # amplitude scales with noise (max +/-100%)
-                jitter_ampl = 1.0 * noise_t
-                if jitter_ampl.ndim == 1:
-                    jitter_ampl = jitter_ampl.view(B, 1, 1, 1)
-                nh = nh * (1.0 + (noise_map - 0.5) * 2.0 * jitter_ampl)
-                nh = nh.clamp(0.0, 1.0)
+        
+        # Compute n·h
+        nh = (n * h).sum(1, keepdim=True).clamp(0.0, 1.0)
 
         # Allow surface_roughness to be scalar or broadcastable tensor
         if torch.is_tensor(surface_roughness):
@@ -715,29 +745,9 @@ class PolarHighlighter(nn.Module):
         surface_roughness=64.0,
         intensity=1.0,
         clamp_H=True,
-        noise=0.0,
-        noise_type="fbm",
-        noise_octaves=4,
-        noise_persistence=0.5,
-        worley_cells=32,
     ):
         """
         Synthesize specular highlights and build the corresponding Stokes vector.
-
-        Noise controls (very important):
-        - noise: Amplitude in [0,1] that controls two effects simultaneously. Values are
-          internally clamped to [0,1]. It can be a scalar, [B], [B,1], [B,1,1,1] or
-          a per-pixel map [B,1,H,W]. The same value(s) are used for both:
-          1) Microfacet normal perturbation (tangent-space randomization).
-          2) Spatial jitter of the (n·h)^α falloff via a procedural noise map.
-        - noise_type: Selects the procedural noise used for effect (2):
-            'fbm' (default): fractal value noise. Controlled by noise_octaves and
-            noise_persistence. worley_cells is ignored.
-            'worley': cellular (Voronoi) noise. Controlled by worley_cells only.
-            Any other value is treated as 'fbm'. Case-insensitive.
-        - noise_octaves: Integer >=1, number of frequency bands for 'fbm'. Ignored for 'worley'.
-        - noise_persistence: Float in (0,1], amplitude decay per octave for 'fbm'. Ignored for 'worley'.
-        - worley_cells: Integer >=1, number of grid cells per side for 'worley'. Ignored for 'fbm'.
 
         Args:
             rgb_lin: [B,3,H,W] linear RGB (0-1)
@@ -746,14 +756,9 @@ class PolarHighlighter(nn.Module):
             normals: [B,3,H,W] unit surface normals
             K: [B,3,3] camera intrinsics
             light_pos: Optional [B,3] light positions (camera coordinates); if None, sampled
-            surface_roughness: Base Blinn-Phong exponent α (higher = sharper peak)
+            surface_roughness: Base Blinn-Phong exponent α (higher = sharper highlight)
             intensity: Scalar specular scale
             clamp_H: If True, normalizes each image's highlight to [0,1]
-            noise: See noise controls above
-            noise_type: 'fbm' | 'worley' (see above)
-            noise_octaves: See noise controls above (fbm only)
-            noise_persistence: See noise controls above (fbm only)
-            worley_cells: See noise controls above (worley only)
 
         Returns:
             H: [B,1,H,W] highlight luminance
@@ -782,35 +787,15 @@ class PolarHighlighter(nn.Module):
             depth, normals, K, light_pos
         )
 
-        # 2) Compute effective surface_roughness from noise
-        # noise in [0,1]: 0 -> base surface_roughness (sharp), 1 -> min_surface_roughness (broad)
-        if not torch.is_tensor(noise):
-            noise_t = torch.tensor(noise, device=device, dtype=rgb_lin.dtype)
-        else:
-            noise_t = noise.to(device=device, dtype=rgb_lin.dtype)
-        noise_t = torch.clamp(noise_t, 0.0, 1.0)
-        min_surface_roughness = torch.as_tensor(1.0, device=device, dtype=rgb_lin.dtype)
-        base_surface_roughness = torch.as_tensor(
-            surface_roughness, device=device, dtype=rgb_lin.dtype
-        )
-        # Quadratic falloff provides perceptual smoothness control
-        surface_roughness_eff = min_surface_roughness + (
-            base_surface_roughness - min_surface_roughness
-        ) * ((1.0 - noise_t) ** 2)
-        # 3) Compute Blinn-Phong specular lobe with Fresnel modulation
+        # 2) Compute Blinn-Phong specular lobe with Fresnel modulation
         H = self.compute_blinn_phong_specular(
             v,
             l,
             n,
             nv,
-            surface_roughness_eff,
+            surface_roughness,
             intensity,
             self.F0,
-            noise=noise,
-            noise_type=noise_type,
-            noise_octaves=noise_octaves,
-            noise_persistence=noise_persistence,
-            worley_cells=worley_cells,
         )
         if clamp_H:
             H = H / (
@@ -835,32 +820,26 @@ class PolarHighlighter(nn.Module):
         intrinsic="compute",
         surface_roughness=80.0,
         intensity=10.0,
-        noise=0.0,
-        noise_type="fbm",
-        noise_octaves=4,
-        noise_persistence=0.5,
-        worley_cells=32,
+        # Geometric roughness parameters
+        n_blobs=16,
+        avg_blob_size=0.10,
+        size_unit="fraction",
+        size_spread=0.6,
+        elongation_bias=0.6,
+        falloff_mean=10,
+        falloff_jitter=10,
+        edge_wobble=0.6,
+        warp_scale=20,
+        min_separation=0.06,
+        wavelength_px=12.0,
+        wavelength_jitter=0.5,
+        orientation_anisotropy=0.4,
+        octaves=2,
+        roughness_strength=10,
+        seed=0,
     ):
         """
-        Forward pass for polar highlight synthesis with explicit noise controls.
-
-        Noise system overview and how to control it clearly:
-        - noise: Single knob in [0,1] (clamped) that scales BOTH
-          1) microfacet normal perturbation, and
-          2) spatial jitter of the specular falloff via a procedural noise map.
-          0.0 = perfectly smooth mirror-like lobe (uses base surface_roughness),
-          1.0 = very rough, strong perturbation and strong spatial variation.
-          Accepts scalar, [B], [B,1], [B,1,1,1] or [B,1,H,W].
-        - noise_type: Selects the procedural noise for effect (2):
-            'fbm' (default): fractal Brownian motion/value noise.
-                Controlled by noise_octaves (>=1) and noise_persistence (0,1].
-                worley_cells is ignored in this mode.
-            'worley': cellular/Voronoi noise.
-                Controlled by worley_cells (>=1). noise_octaves and noise_persistence are ignored.
-            Any other value is treated as 'fbm' (case-insensitive).
-        - noise_octaves: Number of bands for 'fbm'. Ignored for 'worley'.
-        - noise_persistence: Amplitude decay per octave for 'fbm'. Ignored for 'worley'.
-        - worley_cells: Grid resolution for 'worley'. Ignored for 'fbm'.
+        Forward pass for polar highlight synthesis with geometric roughness.
 
         Args:
             rgb: [B,3,H,W] RGB image (0-1 normalized)
@@ -869,11 +848,23 @@ class PolarHighlighter(nn.Module):
             intrinsic: [B,3,3] intrinsics or "compute" to use MoGe intrinsics
             surface_roughness: Base Blinn-Phong exponent α (higher = sharper highlight)
             intensity: Specular strength multiplier
-            noise: See Noise system overview above (amplitude and optional map)
-            noise_type: 'fbm' | 'worley' (procedural map for spatial jitter)
-            noise_octaves: FBM-only bands (>=1); ignored for 'worley'
-            noise_persistence: FBM-only amplitude decay (0,1]; ignored for 'worley'
-            worley_cells: Worley-only grid cells per side (>=1); ignored for 'fbm'
+            # Geometric roughness parameters
+            n_blobs: number of blobs
+            avg_blob_size: avg diameter (fraction of min(H,W) or pixels)
+            size_unit: "fraction" or "pixels"
+            size_spread: lognormal spread; >0 => many small blobs
+            elongation_bias: 0: circular, 1: very elongated on avg
+            falloff_mean: mean softness (0=hard edge, 0.5=soft halo)
+            falloff_jitter: variation of falloff per blob
+            edge_wobble: amplitude of border perturbation (0..1)
+            warp_scale: spatial scale (px) of border perturbation
+            min_separation: keep centers apart (fraction of min(H,W))
+            wavelength_px: wavelength in pixels
+            wavelength_jitter: variation in wavelength
+            orientation_anisotropy: anisotropy factor
+            octaves: number of octaves for micro-geometry
+            roughness_strength: average angular deviation (radians)
+            seed: random seed
 
         Returns:
             dict with keys:
@@ -901,6 +892,28 @@ class PolarHighlighter(nn.Module):
             rgb
         )  # [B,1,H,W], [B,3,H,W]
 
+        # Apply geometric roughness to normals
+        normals, _ = add_geometric_roughness_torch(
+            normals,
+            n_blobs=n_blobs,
+            avg_blob_size=avg_blob_size,
+            size_unit=size_unit,
+            size_spread=size_spread,
+            elongation_bias=elongation_bias,
+            falloff_mean=falloff_mean,
+            falloff_jitter=falloff_jitter,
+            edge_wobble=edge_wobble,
+            warp_scale=warp_scale,
+            min_separation=min_separation,
+            wavelength_px=wavelength_px,
+            wavelength_jitter=wavelength_jitter,
+            orientation_anisotropy=orientation_anisotropy,
+            octaves=octaves,
+            roughness_strength=roughness_strength,
+            seed=seed,
+            return_mask=False,
+        )
+
         if intrinsic == "compute":
             intrinsic = moge_intrinsics.to(device)
         else:
@@ -919,11 +932,6 @@ class PolarHighlighter(nn.Module):
                 light_pos=light_pos,
                 surface_roughness=surface_roughness,
                 intensity=intensity,
-                noise=noise,
-                noise_type=noise_type,
-                noise_octaves=noise_octaves,
-                noise_persistence=noise_persistence,
-                worley_cells=worley_cells,
             )
         )
 

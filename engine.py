@@ -701,12 +701,12 @@ class Engine:
                 highlight_result = self.add_polar_highlights(
                     rgb=sample["diffuse"].to(self.device, non_blocking=True),
                     light_pos=random_light_pos,
-                    noise=self.config.NOISE,
-                    noise_type=self.config.NOISE_TYPE, 
-                    noise_octaves=self.config.NOISE_OCTAVES,
-                    noise_persistence=self.config.NOISE_PERSISTENCE,
                     surface_roughness=self.config.SURFACE_ROUGHNESS,
                     intensity=self.config.INTENSITY,
+                    # normal_noise=self.config.NORMAL_NOISE,  # overall amplitude
+                    # normal_noise_cells=self.config.NORMAL_NOISE_CELLS,
+                    # normal_noise_octaves=self.config.NORMAL_NOISE_OCTAVES,
+                    # normal_noise_falloff=self.config.NORMAL_NOISE_FALLOFF,
                 )
 
                 # Compute soft highlight map
