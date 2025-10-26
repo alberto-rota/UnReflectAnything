@@ -400,7 +400,7 @@ class PolarHighlighter(nn.Module):
         intrinsics = mogeout["intrinsics"].clone()
         intrinsics[:, 0, 2] = image.shape[3] / 2  # cx (width/2)
         intrinsics[:, 1, 2] = image.shape[2] / 2  # cy (height/2)
-        intrinsics[:, :2, :2] = intrinsics[:, :2, :2] * 200
+        intrinsics[:, :2, :2] = intrinsics[:, :2, :2] * 500
         # Sanitize potential NaN/Inf from the geometry model
         depth = torch.nan_to_num(depth, nan=0.0, posinf=1e6, neginf=-1e6)
         normals = torch.nan_to_num(normals, nan=0.0, posinf=0.0, neginf=0.0)
@@ -790,10 +790,9 @@ class PolarHighlighter(nn.Module):
                 batch_size=B,
                 device=device,
             )  # [B,3]
-
         # 1) Compute viewing and lighting geometry
         v, l, n, nl, nv, light_pos, pcloud = self.compute_viewing_lighting_geometry(
-            depth, normals, K, light_pos
+            depth, normals, K, light_pos*torch.tensor([-1, -1, 1]).to(device)
         )
 
         # 2) Compute Blinn-Phong specular lobe with Fresnel modulation
