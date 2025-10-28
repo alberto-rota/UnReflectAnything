@@ -1,0 +1,5 @@
+# Interactive allocation for A40 GPU
+# This file contains the salloc command for interactive sessions
+
+salloc --gres=gpu:a40:1 --partition=a40 --time=4:00:00 --job-name=interactive_a40 --mail-user=alberto1.rota@polimi.it --mail-type=ALL
+

@@ -6,110 +6,101 @@ parameters:
     value:
       MODEL_CLASS: "RGBDistillDecomposer"
       RGB_ENCODER:
-        ENCODER: "facebook/dinov3-vitb16-pretrain-lvd1689m"
-        IMAGE_SIZE: 896
+        ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"
+        IMAGE_SIZE: 448
         RETURN_SELECTED_LAYERS: [3, 6, 9,12]
-      POL_ENCODER:
-        EMBED_DIM: 768
-        DEPTH: 4
-        N_HEADS: 12
-        PATCH_SIZE: 16
-      CROSS_ATTN:
-        EMBED_DIM: 768
-        N_HEADS: 12
-        DROPOUT: 0.1  
-        BI_DIRECTIONAL: False
       DECODERS:
         diffuse:
-          FEATURE_DIM: 768
-          REASSEMBLE_OUT_CHANNELS: [48,192,768,1024]
+          FEATURE_DIM: 1024
+          REASSEMBLE_OUT_CHANNELS: [192,384,768,1024]
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
           READOUT_TYPE: "ignore"
           USE_BN: False
           DROPOUT: 0.1
-          OUTPUT_IMAGE_SIZE: [896,896]
+          OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 3
-        # specular:
-        #   FEATURE_DIM: 768
-        #   REASSEMBLE_OUT_CHANNELS: [48,192,784,1024]
-        #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-        #   READOUT_TYPE: "ignore"
-        #   USE_BN: False
-        #   OUTPUT_IMAGE_SIZE: [896,896]
-        #   OUTPUT_CHANNELS: 4
+        specular:
+          FEATURE_DIM: 1024
+          REASSEMBLE_OUT_CHANNELS: [192,384,768,1024]
+          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+          READOUT_TYPE: "ignore"
+          USE_BN: False
+          OUTPUT_IMAGE_SIZE: [448,448]
+          OUTPUT_CHANNELS: 4
         highlight:
-          FEATURE_DIM: 768
-          REASSEMBLE_OUT_CHANNELS: [48,192,784,1024]
+          FEATURE_DIM: 1024
+          REASSEMBLE_OUT_CHANNELS: [192,384,768,1024]
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
           READOUT_TYPE: "ignore"
           USE_BN: False
           DROPOUT: 0.1
-          OUTPUT_IMAGE_SIZE: [896,896]
+          OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 1
 
   USE_TORCH_COMPILE:
-    value: False
+    value: True
 
   ### DATA                                                                      
   DATASETS:
     value:
-      # SCRREAM:
-      #   VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
-      #   TARGET_SIZE: [896,896]
-      #   RESIZE_MODE: "resize+crop"
-      #   FEW_IMAGES: False
-      #   SAMPLE_EVERY_N: 10
-      #   LOAD_RGB_ONLY: True
+      SCRREAM:
+        VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize+crop"
+        FEW_IMAGES: False
+        SAMPLE_EVERY_N: 4
+        LOAD_RGB_ONLY: False
         
-      # HOUSECAT6D:
-      #   VAL_SCENES: "val"
-      #   TARGET_SIZE: [896,896]
-      #   RESIZE_MODE: "resize+crop"
-      #   FEW_IMAGES: False
-      #   SAMPLE_EVERY_N: 10
-      #   LOAD_RGB_ONLY: True
+      HOUSECAT6D:
+        VAL_SCENES: ["val_scene1","val_scene2"] #,"scene33","scene34"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize+crop"
+        FEW_IMAGES: False
+        SAMPLE_EVERY_N: 4
+        LOAD_RGB_ONLY: False
 
       # POLARGB:
       #   TRAIN_SCENES: "train"
       #   VAL_SCENES: "test"
-      #   TARGET_SIZE: [896,896]
+      #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "resize+crop"
       #   SAMPLE_EVERY_N: 1
-      #   LOAD_RGB_ONLY: True
+      #   LOAD_RGB_ONLY: False
 
-      # CROMO:
-      #   TRAIN_SCENES: "kitchen"
-      #   TARGET_SIZE: [896,896]
-      #   RESIZE_MODE: "resize+crop"
-      #   SAMPLE_EVERY_N: 10
-      #   LOAD_RGB_ONLY: True
+      CROMO:
+        VAL_SCENES: ["park","facades"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize"
+        SAMPLE_EVERY_N: 4
+        LOAD_RGB_ONLY: False
     
       # PSD:
       #   TRAIN_SCENES: "PSD_Train"
       #   VAL_SCENES: "PSD_Val"
-      #   TARGET_SIZE: [896,896]  
+      #   TARGET_SIZE: [448,448]  
       #   RESIZE_MODE: "resize+crop"
       #   SAMPLE_EVERY_N: 1
-      #   LOAD_RGB_ONLY: True
+      #   LOAD_RGB_ONLY: False
 
-      SCARED:
-        VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
-        # TRAIN_SCENES: ["---"]
-        TARGET_SIZE: [896,896]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 20
-        LOAD_RGB_ONLY: True
-        FEW_IMAGES: False
-        HIGHLIGHT_ENABLE: False  
-        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-        HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [1000, 1000]
-        HIGHLIGHT_RETURN_RECT_AS_RGB: False
-        HIGHLIGHT_RETURN_RECT: True
+      # SCARED:
+      #   VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
+      #   # TRAIN_SCENES: ["---"]
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "resize+crop"
+      #   SAMPLE_EVERY_N: 20
+      #   LOAD_RGB_ONLY: True
+      #   FEW_IMAGES: False
+      #   HIGHLIGHT_ENABLE: False  
+      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+      #   HIGHLIGHT_RETURN_MASK: True
+      #   HIGHLIGHT_RECT_SIZE: [1000, 1000]
+      #   HIGHLIGHT_RETURN_RECT_AS_RGB: False
+      #   HIGHLIGHT_RETURN_RECT: True
       
       STEREOMIS_TRACKING:
         VAL_SCENES: ["P2_2"]
-        TARGET_SIZE: [896,896]
+        TRAIN_SCENES: ["----"]
+        TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize+crop"
         SAMPLE_EVERY_N: 10
         LOAD_RGB_ONLY: True
@@ -121,28 +112,28 @@ parameters:
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
 
-      CHOLEC80:
-        VAL_SCENES: ["val"]
-        TARGET_SIZE: [896,896]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 50
-        LOAD_RGB_ONLY: True
-        FEW_IMAGES: False
-        HIGHLIGHT_ENABLE: False  
-        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-        HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [800, 800]
-        HIGHLIGHT_RETURN_RECT_AS_RGB: False
-        HIGHLIGHT_RETURN_RECT: True
+      # CHOLEC80:
+      #   VAL_SCENES: ["val"]
+      #   TARGET_SIZE: [448,448]
+      #   RESIZE_MODE: "resize+crop"
+      #   SAMPLE_EVERY_N: 50
+      #   LOAD_RGB_ONLY: True
+      #   FEW_IMAGES: False
+      #   HIGHLIGHT_ENABLE: False  
+      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+      #   HIGHLIGHT_RETURN_MASK: True
+      #   HIGHLIGHT_RECT_SIZE: [800, 800]
+      #   HIGHLIGHT_RETURN_RECT_AS_RGB: False
+      #   HIGHLIGHT_RETURN_RECT: True
 
-  BATCH_SIZE: # Max batch size with img size 896 is 32
-    value: 8
+  BATCH_SIZE: # Max batch size with img size 448 is 32
+    value: 32
   NUM_WORKERS:
-    value: 4
+    value: 2
   SHUFFLE:
     value: True
   PIN_MEMORY:
-    value: true
+    value: True
   PREFETCH_FACTOR:
     value: 1
   
@@ -183,9 +174,9 @@ parameters:
   LEARNING_RATE:
     value: 1.0e-3
   WEIGHT_DECAY:
-    value: 1.0e-7
+    value: 1.0e-8
   EPOCHS:
-    value: 50
+    value: 100
   GRADIENT_ACCUMULATION_STEPS:
     value: 1
   WARMUP_STEPS:
@@ -250,5 +241,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "Beefier Model"
+    value: "Large polarization-grounded pretrain. Small surgical data in val"
   

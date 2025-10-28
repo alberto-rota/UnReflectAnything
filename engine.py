@@ -89,6 +89,8 @@ class Engine:
 
         # Initialize all components using engine_initializers
         init(initialize.dataloaders, dataset, config)
+        # for i in range(len(dataset["Training"])):
+        #     print(dataset["Training"][i]["raw"].shape)
         init(initialize.dimensions, self.training_dl, config)
         init(initialize.hyperparameters, config)
         init(initialize.optimizers, self.model, config)
@@ -752,26 +754,10 @@ class Engine:
                     "specular": specular,
                     "highlight": real_and_virtual_highlights,  # BOTH real and virtual
                 }
-                # Polarization data is added only if available.
-                if "AoP" in sample:
-                    gt_decomposition["AoP"] = sample["AoP"].to(
-                        self.device, non_blocking=True
-                    )
-                if "DoP" in sample:
-                    gt_decomposition["DoP"] = sample["DoP"].to(
-                        self.device, non_blocking=True
-                    )
-                if "f_spec" in sample:
-                    gt_decomposition["f_spec"] = sample["f_spec"].to(
-                        self.device, non_blocking=True
-                    )
                 del sample  # Clean up. All necessary data is already on GPU.
 
                 # Constructing model input dict
                 model_input = {"rgb": gt_decomposition["rgb_highlighted"]}
-                if self.config.MODEL.MODEL_CLASS == "RGBPOLDecomposer":
-                    model_input["AoP"] = gt_decomposition["AoP"]
-                    model_input["DoP"] = gt_decomposition["DoP"]
 
                 # Log memory usage before forward pass if monitoring
                 if self.memory_monitoring and batch_idx % 10 == 0:
@@ -922,12 +908,6 @@ class Engine:
                             "rgb": gt_decomposition["rgb_highlighted"].cpu(),
                         }
                         # Add optional polarization data if available
-                        if "AoP" in gt_decomposition:
-                            gt_data["AoP"] = gt_decomposition["AoP"].cpu()
-                        if "DoP" in gt_decomposition:
-                            gt_data["DoP"] = gt_decomposition["DoP"].cpu()
-                        if "f_spec" in gt_decomposition:
-                            gt_data["f_spec"] = gt_decomposition["f_spec"].cpu()
                         if "highlight" in gt_decomposition:
                             gt_data["highlight"] = gt_decomposition["highlight"].cpu()
                         if "rgb_highlighted" in gt_decomposition:
@@ -1257,7 +1237,6 @@ class Engine:
                     "Input RGB Highlighted Image",
                 ),
                 ("images/GT_Highlight", "highlight", "Input RGB Highlighted Image"),
-                ("images/GT_FSpec", "f_spec", "Specular Fraction"),
                 (
                     "images/GT_MaskedDiffuse",
                     "masked_diffuse",
@@ -1287,11 +1266,10 @@ class Engine:
                     # Skip non-component keys
                     if comp_name in [
                         "rgb",
-                        "AoP",
-                        "DoP",
                         "f_spec",
                         "rgb_highlighted",
                         "intrinsics",
+                        "lossmask"
                     ] or not isinstance(comp_tensor, torch.Tensor):
                         continue
 

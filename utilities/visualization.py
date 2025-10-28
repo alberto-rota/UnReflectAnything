@@ -41,15 +41,16 @@ def rgb(
     **kwargs: Any,
 ) -> Union[None, torch.Tensor, Image.Image]:
     r"""
-    Display tensor as RGB image using lovely_tensors with robust input handling.
+    Display tensor as RGB/RGBA image using lovely_tensors with robust input handling.
 
     Args:
         t (torch.Tensor):
             The tensor to display. Supports various shapes:
                 - HxW (grayscale)
-                - HxWx1 or HxWxC (grayscale or RGB)
-                - 1xHxW or CxHxW (grayscale or RGB)
+                - HxWx1 or HxWxC (grayscale, RGB, or RGBA)
+                - 1xHxW or CxHxW (grayscale, RGB, or RGBA)
                 - 1x1xHxW, 1xCxHxW, 1xHxWx1, 1xHxWxC (batched)
+                - 4-channel tensors are treated as RGBA
         as_tensor (Union[bool, str]):
             - False: Display image (default)
             - True: Return torch.Tensor
@@ -128,8 +129,13 @@ def rgb(
     # Convert tensor to standard format
     t = normalize_tensor_shape(t)
 
-    # Handle high-dimensional tensors with PCA
-    if t.shape[0] > 3:
+    # Handle 4-channel images as RGBA
+    if t.shape[0] == 4:
+        # Keep as RGBA - no conversion needed
+        pass
+    
+    # Handle high-dimensional tensors with PCA (>4 channels)
+    elif t.shape[0] > 4:
         if pca is None:
             # Compute new PCA
             t, pca = embedding2color(
@@ -202,8 +208,25 @@ def rgb(
         ).squeeze(0)  # Remove batch dimension
 
     # Normalize to [0, 1] range (only if not already normalized by colormap)
-    if colormap is None or t.shape[0] != 1:
+    # Skip normalization for RGBA images to preserve alpha channel values
+    if (colormap is None or t.shape[0] != 1) and t.shape[0] != 4:
         t = (t - t.min()) / (t.max() - t.min() + 1e-8)
+    elif t.shape[0] == 4:
+        # For RGBA, normalize RGB channels but preserve alpha channel
+        rgb_channels = t[:3]  # Shape: (3, H, W)
+        alpha_channel = t[3:4]  # Shape: (1, H, W)
+        
+        # Normalize RGB channels
+        rgb_normalized = (rgb_channels - rgb_channels.min()) / (rgb_channels.max() - rgb_channels.min() + 1e-8)
+        
+        # Keep alpha channel as is (assuming it's already in [0, 1] range)
+        # If alpha is not in [0, 1], normalize it too
+        if alpha_channel.max() > 1.0:
+            alpha_normalized = (alpha_channel - alpha_channel.min()) / (alpha_channel.max() - alpha_channel.min() + 1e-8)
+        else:
+            alpha_normalized = alpha_channel
+            
+        t = torch.cat([rgb_normalized, alpha_normalized], dim=0)
 
     # Apply border if specified
     if border is not None:
@@ -492,7 +515,12 @@ def rgb(
         # Tensor is in CxHxW format, convert to HxWxC for PIL
         t_pil = t.permute(1, 2, 0).cpu().numpy()  # Shape: (H, W, C)
         t_pil = (t_pil * 255).astype(np.uint8)
-        return Image.fromarray(t_pil)
+        
+        # Handle RGBA images
+        if t_pil.shape[2] == 4:
+            return Image.fromarray(t_pil, 'RGBA')
+        else:
+            return Image.fromarray(t_pil)
     else:
         # Display the tensor
         display(lt.rgb(t, **kwargs))

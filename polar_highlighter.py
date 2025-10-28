@@ -829,7 +829,7 @@ class PolarHighlighter(nn.Module):
         surface_roughness=80.0,
         intensity=10.0,
         # Geometric roughness parameters
-        n_blobs=16,
+        n_blobs=0,
         avg_blob_size=0.10,
         size_unit="fraction",
         size_spread=0.6,
@@ -901,26 +901,27 @@ class PolarHighlighter(nn.Module):
         )  # [B,1,H,W], [B,3,H,W]
 
         # Apply geometric roughness to normals
-        normals, _ = add_geometric_roughness_torch(
-            normals,
-            n_blobs=n_blobs,
-            avg_blob_size=avg_blob_size,
-            size_unit=size_unit,
-            size_spread=size_spread,
-            elongation_bias=elongation_bias,
-            falloff_mean=falloff_mean,
-            falloff_jitter=falloff_jitter,
-            edge_wobble=edge_wobble,
-            warp_scale=warp_scale,
-            min_separation=min_separation,
-            wavelength_px=wavelength_px,
-            wavelength_jitter=wavelength_jitter,
-            orientation_anisotropy=orientation_anisotropy,
-            octaves=octaves,
-            roughness_strength=roughness_strength,
-            seed=seed,
-            return_mask=False,
-        )
+        if n_blobs > 0:
+            normals, _ = add_geometric_roughness_torch(
+                normals,
+                n_blobs=n_blobs,
+                avg_blob_size=avg_blob_size,
+                size_unit=size_unit,
+                size_spread=size_spread,
+                elongation_bias=elongation_bias,
+                falloff_mean=falloff_mean,
+                falloff_jitter=falloff_jitter,
+                edge_wobble=edge_wobble,
+                warp_scale=warp_scale,
+                min_separation=min_separation,
+                wavelength_px=wavelength_px,
+                wavelength_jitter=wavelength_jitter,
+                orientation_anisotropy=orientation_anisotropy,
+                octaves=octaves,
+                roughness_strength=roughness_strength,
+                seed=seed,
+                return_mask=False,
+           )
 
         if intrinsic == "compute":
             intrinsic = moge_intrinsics.to(device)

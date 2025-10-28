@@ -71,6 +71,7 @@ def dataloaders(dataset, config):
 def dimensions(training_dl, config):
     """Extract dimensions from the training data"""
     # Extract frame dimensions
+    
     input_shape = next(iter(training_dl))[
         "raw"
     ].shape  # [batch_size, channels, height, width]
