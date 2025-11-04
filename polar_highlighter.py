@@ -733,7 +733,6 @@ class PolarHighlighter(nn.Module):
             [B,3,H,W]: RGB result with highlights composed, values clamped to [0,1].
         """
         # Expand H to RGB channels
-        H_rgb = H.expand(-1, 3, -1, -1)  # [B,3,H,W]
         # Use H as an alpha map to blend pure white highlight over input rgb, modulated by intensity
         alpha = (H * intensity).clamp(0, 1)  # [B,1,H,W]
         alpha_rgb = alpha.expand_as(rgb)     # [B,3,H,W]
@@ -896,6 +895,30 @@ class PolarHighlighter(nn.Module):
         if pol is not None:
             pol = pol.to(device)
 
+        B, C, H, W = rgb.shape
+
+        # If intensity is zero, skip all highlight and geometry computations
+        if intensity == 0:
+            zeros_1hw = lambda ch: torch.zeros((B, ch, H, W), device=device, dtype=rgb.dtype)
+            zeros_b3 = lambda: torch.zeros((B, 3), device=device, dtype=rgb.dtype)
+            zeros_b33 = lambda: torch.zeros((B, 3, 3), device=device, dtype=rgb.dtype)
+            result = {
+                "highlight": zeros_1hw(1),
+                "rgb_highlighted": rgb,
+                "stokes_highlight": zeros_1hw(3),
+                "depth": zeros_1hw(1),
+                "normals": zeros_1hw(3),
+                "H_dop": zeros_1hw(1),
+                "H_aop": zeros_1hw(1),
+                "intrinsic": zeros_b33(),
+                "light_pos": zeros_b3(),
+                "pcloud": zeros_1hw(3),
+                "light_dir": zeros_1hw(3),
+                "view_dir": zeros_1hw(3),
+                "stokes_highlighted": zeros_1hw(3) if pol is not None else None,
+            }
+            return result
+
         depth, normals, moge_intrinsics = self.compute_geometry(
             rgb
         )  # [B,1,H,W], [B,3,H,W]
@@ -921,7 +944,7 @@ class PolarHighlighter(nn.Module):
                 roughness_strength=roughness_strength,
                 seed=seed,
                 return_mask=False,
-           )
+            )
 
         if intrinsic == "compute":
             intrinsic = moge_intrinsics.to(device)

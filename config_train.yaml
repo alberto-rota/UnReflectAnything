@@ -4,32 +4,35 @@ parameters:
   ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:
-      MODEL_CLASS: "RGBDistillDecomposer"
+      MODEL_CLASS: "UnReflect_Model_TokenInpainter"
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"
         IMAGE_SIZE: 448
-        RETURN_SELECTED_LAYERS: [3, 6, 9,12]
+        RETURN_SELECTED_LAYERS: [3, 6, 9, 12]
       DECODERS:
         diffuse:
+          USE_FILM: False
           FEATURE_DIM: 1024
-          REASSEMBLE_OUT_CHANNELS: [192,384,768,1024]
+          REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
           READOUT_TYPE: "ignore"
+          FROM_PRETRAINED: "weights/rgb_decoder.pth"
           USE_BN: False
           DROPOUT: 0.1
           OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 3
-        specular:
-          FEATURE_DIM: 1024
-          REASSEMBLE_OUT_CHANNELS: [192,384,768,1024]
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-          READOUT_TYPE: "ignore"
-          USE_BN: False
-          OUTPUT_IMAGE_SIZE: [448,448]
-          OUTPUT_CHANNELS: 4
+        # specular:
+        #   FEATURE_DIM: 1024
+        #   REASSEMBLE_OUT_CHANNELS: [384,768,1024,1536]
+        #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+        #   READOUT_TYPE: "ignore"
+        #   USE_BN: False
+        #   OUTPUT_IMAGE_SIZE: [448,448]
+        #   OUTPUT_CHANNELS: 4
         highlight:
+          USE_FILM: False
           FEATURE_DIM: 1024
-          REASSEMBLE_OUT_CHANNELS: [192,384,768,1024]
+          REASSEMBLE_OUT_CHANNELS: [384,768,1024,1536]
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
           READOUT_TYPE: "ignore"
           USE_BN: False
@@ -38,68 +41,59 @@ parameters:
           OUTPUT_CHANNELS: 1
 
   USE_TORCH_COMPILE:
-    value: True
+    value: False
 
   ### DATA                                                                      
   DATASETS:
     value:
       SCRREAM:
-        VAL_SCENES: ["scene09_full_00", "scene09_reduced_00"]
+        VAL_SCENES: ["scene10_full_00","scene11_full_00","scene044_full_00","scene04_reduced_00","scene04_reduced_01","scene04_reduced_02"]
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize+crop"
         FEW_IMAGES: False
         SAMPLE_EVERY_N: 4
-        LOAD_RGB_ONLY: False
+        LOAD_RGB_ONLY: True
         
       HOUSECAT6D:
         VAL_SCENES: ["val_scene1","val_scene2"] #,"scene33","scene34"]
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize+crop"
         FEW_IMAGES: False
-        SAMPLE_EVERY_N: 4
-        LOAD_RGB_ONLY: False
-
-      # POLARGB:
-      #   TRAIN_SCENES: "train"
-      #   VAL_SCENES: "test"
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize+crop"
-      #   SAMPLE_EVERY_N: 1
-      #   LOAD_RGB_ONLY: False
+        SAMPLE_EVERY_N: 2
+        LOAD_RGB_ONLY: True
 
       CROMO:
-        VAL_SCENES: ["park","facades"]
+        TRAIN_SCENES: ["kitchen"]
+        VAL_SCENES: "station"
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
-        SAMPLE_EVERY_N: 4
-        LOAD_RGB_ONLY: False
+        SAMPLE_EVERY_N: 8
+        LOAD_RGB_ONLY: True
     
-      # PSD:
-      #   TRAIN_SCENES: "PSD_Train"
-      #   VAL_SCENES: "PSD_Val"
-      #   TARGET_SIZE: [448,448]  
-      #   RESIZE_MODE: "resize+crop"
-      #   SAMPLE_EVERY_N: 1
-      #   LOAD_RGB_ONLY: False
+      PSD:
+        TRAIN_SCENES: "PSD_Train"
+        VAL_SCENES: "PSD_Val"
+        TARGET_SIZE: [448,448]  
+        RESIZE_MODE: "resize+crop"
+        SAMPLE_EVERY_N: 1
+        LOAD_RGB_ONLY: True
 
-      # SCARED:
-      #   VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
-      #   # TRAIN_SCENES: ["---"]
-      #   TARGET_SIZE: [448,448]
-      #   RESIZE_MODE: "resize+crop"
-      #   SAMPLE_EVERY_N: 20
-      #   LOAD_RGB_ONLY: True
-      #   FEW_IMAGES: False
-      #   HIGHLIGHT_ENABLE: False  
-      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-      #   HIGHLIGHT_RETURN_MASK: True
-      #   HIGHLIGHT_RECT_SIZE: [1000, 1000]
-      #   HIGHLIGHT_RETURN_RECT_AS_RGB: False
-      #   HIGHLIGHT_RETURN_RECT: True
+      SCARED:
+        VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize+crop"
+        SAMPLE_EVERY_N: 4
+        LOAD_RGB_ONLY: True
+        FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [1000, 1000]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
+        HIGHLIGHT_RETURN_RECT: True
       
       STEREOMIS_TRACKING:
         VAL_SCENES: ["P2_2"]
-        TRAIN_SCENES: ["----"]
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize+crop"
         SAMPLE_EVERY_N: 10
@@ -112,30 +106,39 @@ parameters:
         HIGHLIGHT_RETURN_RECT_AS_RGB: False
         HIGHLIGHT_RETURN_RECT: True
 
-      # CHOLEC80:
-      #   VAL_SCENES: ["val"]
+      CHOLEC80:
+        VAL_SCENES: ["val"]
+        TARGET_SIZE: [448,448]
+        RESIZE_MODE: "resize+crop"
+        SAMPLE_EVERY_N: 50
+        LOAD_RGB_ONLY: True
+        FEW_IMAGES: False
+        HIGHLIGHT_ENABLE: False  
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
+        HIGHLIGHT_RETURN_MASK: True
+        HIGHLIGHT_RECT_SIZE: [800, 800]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False
+        HIGHLIGHT_RETURN_RECT: True
+
+      # POLARGB:
+      #   TRAIN_SCENES: "train"
+      #   VAL_SCENES: "test"
       #   TARGET_SIZE: [448,448]
       #   RESIZE_MODE: "resize+crop"
-      #   SAMPLE_EVERY_N: 50
+      #   SAMPLE_EVERY_N: 1
       #   LOAD_RGB_ONLY: True
-      #   FEW_IMAGES: False
-      #   HIGHLIGHT_ENABLE: False  
-      #   HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-      #   HIGHLIGHT_RETURN_MASK: True
-      #   HIGHLIGHT_RECT_SIZE: [800, 800]
-      #   HIGHLIGHT_RETURN_RECT_AS_RGB: False
-      #   HIGHLIGHT_RETURN_RECT: True
+
 
   BATCH_SIZE: # Max batch size with img size 448 is 32
     value: 32
   NUM_WORKERS:
-    value: 2
+    value: 12
   SHUFFLE:
     value: True
   PIN_MEMORY:
     value: True
   PREFETCH_FACTOR:
-    value: 1
+    value: 2
   
   ### HIGHLIGHTS                                                        
   MOGE_MODEL:
@@ -153,36 +156,29 @@ parameters:
   # NORMAL_NOISE_FALLOFF:
   #   value: 4
   LIGHT_DISTANCE_RANGE:
-    value: [0.0, 0.5]
+    value: [0.0, 1]
   LIGHT_LEFT_RIGHT_ANGLE:
     value: [0, 360]
   LIGHT_ABOVE_BELOW_ANGLE:
     value: [0, 360]
   SOFT_HIGHLIGHT_THRESHOLD:
-    value: 0.85
+    value: 0.875
   REAL_HIGHLIGHT_DILATION:
-    value: 11
-  # Highlight regression stabilization (optional)
-  HLREG_BALANCE_MODE:
-    value: "auto"   # 'none' | 'auto' | 'pos_weight'
-  HLREG_POS_WEIGHT:
-    value: 1.0      # used only if BALANCE_MODE == 'pos_weight'
-  HLREG_FOCAL_GAMMA:
-    value: 2.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
+    value: 25
 
   ### OPTIMIZATION                                                                      
   LEARNING_RATE:
-    value: 1.0e-3
+    value: 5.0e-4
   WEIGHT_DECAY:
     value: 1.0e-8
   EPOCHS:
-    value: 100
+    value: 20
   GRADIENT_ACCUMULATION_STEPS:
     value: 1
   WARMUP_STEPS:
     value: 100
   GRADIENT_CLIPPING_MAX_NORM:
-    value: -1
+    value: 8
   LR_SCHEDULER: 
     value: 
       ONPLATEAU:
@@ -191,7 +187,7 @@ parameters:
       # COSINE:
       #   N_PERIODS: 5
       STEPWISE:
-        N_STEPS: 3
+        N_STEPS: 4
         GAMMA: 0.5
       # EXPONENTIAL:
       #   GAMMA: 0.5
@@ -215,15 +211,58 @@ parameters:
   HIGHLIGHT_LOSS_WEIGHT:
     value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
-    value: 1.0
+    value: 0.0
   SATURATION_RING_LOSS_WEIGHT:
-    value: 0.5
+    value: 0.0
   RING_KERNEL_SIZE:
-    value: 21
+    value: 11
   RING_VAR_WEIGHT:
     value: 0.5
   RING_TEXTURE_WEIGHT:
     value: 1.0
+  
+  ### LOSS PARAMETERS
+  # Highlight regression loss parameters
+  HLREG_W_L1:
+    value: 1.0
+  HLREG_USE_CHARB:
+    value: True
+  HLREG_W_DICE:
+    value: 0.2
+  HLREG_W_SSIM:
+    value: 0.0
+  HLREG_W_GRAD:
+    value: 0.0
+  HLREG_W_TV:
+    value: 0.0  
+  # Highlight regression stabilization (optional)
+  HLREG_BALANCE_MODE:
+    value: "auto"   # 'none' | 'auto' | 'pos_weight'
+  HLREG_POS_WEIGHT:
+    value: 1.0      # used only if BALANCE_MODE == 'pos_weight'
+  HLREG_FOCAL_GAMMA:
+    value: 2.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
+  # Highlight rendering parameters
+  HIGHLIGHT_COLOR:
+    value: [1.0, 1.0, 1.0]
+  CLAMP_RECONSTRUCTION:
+    value: True
+  
+  # Context and regularization weights
+  WEIGHT_CONTEXT_IDENTITY:
+    value: 1.0
+  WEIGHT_RING_GRAD:
+    value: 0.5
+  WEIGHT_TV_IN_HOLE:
+    value: 0.001
+  RING_DILATE_KERNEL:
+    value: 15
+  
+  # Token-space loss parameters
+  WEIGHT_TOKEN_INPAINT:
+    value: 0.01
+  TOKEN_FEAT_ALPHA:
+    value: 0.5
 
   ### LOGGING, RESULTS AND WANDB                                                                 
   LOG_INTERVAL:
@@ -241,5 +280,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "Large polarization-grounded pretrain. Small surgical data in val"
+    value: "FiLM decoder. Increasing highlight thresholds"
   

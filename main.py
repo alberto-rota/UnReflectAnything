@@ -118,6 +118,10 @@ def create_model_from_config(config: DotMap, device: torch.device):
                 "dropout": decoder_params.get("DROPOUT", 0.0),
                 "output_image_size": decoder_params.get("OUTPUT_IMAGE_SIZE", [min(target_size), min(target_size)]),
                 "output_channels": decoder_params.get("OUTPUT_CHANNELS", 3),
+                # Controls whether a FiLM-conditioned decoder is instantiated
+                "use_film": decoder_params.get("USE_FILM", False),
+                # Path to pretrained weights - if set and not empty, decoder will be loaded and frozen
+                "from_pretrained": decoder_params.get("FROM_PRETRAINED", ""),
             }
             decoders[decoder_name] = decoder_cfg
         

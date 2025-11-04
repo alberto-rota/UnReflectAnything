@@ -11,9 +11,24 @@ import pandas as pd
 import torch
 from PIL import Image
 import sys
+import re
+import itertools
+from scipy import stats
 
-# Ensure project root on sys.path to import metrics.py reliably
-ROOT = Path(__file__).resolve().parents[3]
+# Ensure project root on sys.path to import metrics.py reliably.
+# Robustly walk up until a folder containing metrics.py is found.
+def _find_repo_root_with_metrics(start: Path, max_hops: int = 8) -> Path:
+    cur = start.resolve()
+    for _ in range(max_hops):
+        if (cur / "metrics.py").exists():
+            return cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    # Fallback to historical assumption: 3 levels up from this script
+    return start.resolve().parents[3]
+
+ROOT = _find_repo_root_with_metrics(Path(__file__).parent)
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 import metrics as ua_metrics
@@ -42,10 +57,17 @@ def list_subdatasets(root: Path) -> List[str]:
     return sorted([p.name for p in root.iterdir() if p.is_dir()])
 
 
-def list_images_in_subdataset(folder: Path, exts: List[str]) -> List[Path]:
+def list_images_in_subdataset(folder: Path, exts: List[str], recursive: bool = False) -> List[Path]:
     if not folder.exists():
         return []
+    if recursive:
+        # Collect all files under folder matching extensions
+        return sorted([p for p in folder.rglob("*") if p.is_file() and is_image_file(p, exts)])
     return sorted([p for p in folder.iterdir() if p.is_file() and is_image_file(p, exts)])
+
+
+def _natural_key(s: str):
+    return [int(text) if text.isdigit() else text.lower() for text in re.split(r"(\d+)", s)]
 
 
 def pil_to_torch_chw_uint8(img: Image.Image) -> torch.Tensor:
@@ -64,16 +86,29 @@ def load_image_tensor(path: Path) -> torch.Tensor:
     return pil_to_torch_chw_uint8(img)
 
 
-def locate_mask_for(stem: str, subdataset: str, cfg_masks: dict, benchmark_dir: Path) -> Optional[Path]:
+def locate_mask_for(
+    stem: str,
+    subdataset: str,
+    cfg_masks: dict,
+    benchmark_dir: Path,
+    relative_path_under_sub: Optional[Path] = None,
+) -> Optional[Path]:
     if not cfg_masks.get("enabled", False):
         return None
     base_dir = cfg_masks.get("base_dir")
     glob_pattern = cfg_masks.get("glob_pattern")
     if base_dir:
-        candidate = Path(base_dir) / subdataset / f"{stem}.png"
+        if relative_path_under_sub is not None:
+            # Mirror the input tree; default mask extension to .png
+            candidate = Path(base_dir) / subdataset / relative_path_under_sub.with_suffix(".png")
+        else:
+            candidate = Path(base_dir) / subdataset / f"{stem}.png"
         return candidate if candidate.exists() else None
     if glob_pattern:
-        pat = glob_pattern.format(benchmark_dir=str(benchmark_dir), subdataset=subdataset, stem=stem)
+        rel_str = str(relative_path_under_sub) if relative_path_under_sub is not None else ""
+        pat = glob_pattern.format(
+            benchmark_dir=str(benchmark_dir), subdataset=subdataset, stem=stem, relative_path=rel_str
+        )
         matches = list(Path(benchmark_dir).glob(pat))
         return matches[0] if matches else None
     return None
@@ -84,13 +119,205 @@ def ensure_dirs(paths: List[Path]) -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _resolve_results_root(cfg: dict, benchmark_dir: Path) -> Path:
+    # Prefer cfg["results_dir"], fallback to cfg["output_dir"], else benchmark_dir/results
+    cfg_out = cfg.get("results_dir") or cfg.get("output_dir")
+    if cfg_out is None or str(cfg_out).strip() == "":
+        return benchmark_dir / "results"
+    p = Path(cfg_out)
+    if not p.is_absolute():
+        p = (benchmark_dir / p).resolve()
+    return p
+
+
+def _benjamini_hochberg(pvals: np.ndarray) -> np.ndarray:
+    m = len(pvals)
+    order = np.argsort(pvals)
+    ranks = np.empty(m, dtype=int)
+    ranks[order] = np.arange(1, m + 1)
+    adj = pvals * m / ranks
+    for i in range(m - 2, -1, -1):
+        adj[order[i]] = min(adj[order[i]], adj[order[i + 1]])
+    return np.clip(adj, 0, 1)
+
+
+def _cliff_delta(a: np.ndarray, b: np.ndarray) -> float:
+    a_sorted = np.sort(a)
+    b_sorted = np.sort(b)
+    i = j = more = less = 0
+    na, nb = len(a_sorted), len(b_sorted)
+    while i < na and j < nb:
+        if a_sorted[i] > b_sorted[j]:
+            more += na - i
+            j += 1
+        elif a_sorted[i] < b_sorted[j]:
+            less += nb - j
+            i += 1
+        else:
+            i += 1
+            j += 1
+    return (more - less) / (na * nb)
+
+
+def _run_stat_tests(per_df: pd.DataFrame, out_root: Path) -> pd.DataFrame:
+    exclude = {"subdataset", "image_id", "global_image_key", "method", "has_gt", "has_mask", "device", "data_range_override", "compute_time_ms", "status", "status_reason"}
+    metric_cols = [c for c in per_df.columns if c not in exclude]
+    frames = []
+    scopes = [(name, g) for name, g in per_df.groupby("subdataset")]
+    scopes.append(("overall", per_df))
+    for scope_name, g in scopes:
+        methods = sorted(g["method"].unique())
+        for metric in metric_cols:
+            pivot = g.pivot_table(index="global_image_key", columns="method", values=metric, aggfunc="mean")
+            if pivot.empty:
+                continue
+            present_methods = [m for m in methods if m in pivot.columns]
+            if len(present_methods) < 2:
+                continue
+            for a, b in itertools.combinations(present_methods, 2):
+                ab = pivot[[a, b]].dropna()
+                n = len(ab)
+                if n < 3:
+                    continue
+                x = ab[a].to_numpy()
+                y = ab[b].to_numpy()
+                try:
+                    w = stats.wilcoxon(x, y, zero_method="wilcox", alternative="two-sided")
+                    t = stats.ttest_rel(x, y, nan_policy="omit")
+                    effect = _cliff_delta(x, y)
+                    frames.append({
+                        "scope": scope_name,
+                        "metric": metric,
+                        "method_a": a,
+                        "method_b": b,
+                        "n": int(n),
+                        "p_wilcoxon": float(w.pvalue),
+                        "p_ttest": float(t.pvalue),
+                        "effect_size": float(effect),
+                    })
+                except Exception:
+                    continue
+    out = pd.DataFrame(frames)
+    if not out.empty:
+        out["p_min"] = out[["p_wilcoxon", "p_ttest"]].min(axis=1)
+        out["p_adj"] = _benjamini_hochberg(out["p_min"].to_numpy())
+        out["significant"] = out["p_adj"] < 0.05
+    stats_dir = out_root / "stats"
+    stats_dir.mkdir(parents=True, exist_ok=True)
+    out.to_parquet(stats_dir / "pairwise_tests.parquet", index=False)
+    return out
+
+
+def _write_summary(per_df: pd.DataFrame, stats_df: pd.DataFrame, out_root: Path) -> None:
+    exclude = {"subdataset", "image_id", "global_image_key", "method", "has_gt", "has_mask", "device", "data_range_override", "compute_time_ms", "status", "status_reason"}
+    metric_cols = [c for c in per_df.columns if c not in exclude]
+    greater_is_better = {
+        "psnr": True, "ssim": True,
+        "mse": False, "dists": False, "gmsd": False, "deltaE2000": False,
+        "brisque": False, "niqe": False, "piqe": False,
+        "boundary_gmsd_band3": False, "luminance_suppression_ratio": False, "chroma_consistency_deltaE_ring3": False,
+    }
+    # Overall means per method
+    overall = per_df.groupby("method")[metric_cols].mean(numeric_only=True)
+    # Determine best per metric
+    best_map = {}
+    for m in metric_cols:
+        if m not in overall.columns:
+            continue
+        if greater_is_better.get(m, False):
+            best = overall[m].idxmax()
+        else:
+            best = overall[m].idxmin()
+        best_map[m] = best
+
+    lines = []
+    lines.append(f"# Evaluation Summary\n")
+    lines.append(f"Methods: {', '.join(sorted(per_df['method'].unique()))}\n")
+    lines.append(f"Num images: {per_df[['global_image_key']].drop_duplicates().shape[0]}\n")
+    lines.append(f"Num rows: {len(per_df)}\n")
+    lines.append("\n## Overall means by method\n")
+    lines.append("| Metric | " + " | ".join(overall.index.tolist()) + " | Best |\n")
+    lines.append("|---|" + "|".join(["---"] * (len(overall.index) + 1)) + "|\n")
+    for m in metric_cols:
+        if m not in overall.columns:
+            continue
+        vals = [f"{overall.loc[method, m]:.4f}" if m in overall.columns else "-" for method in overall.index]
+        best_method = best_map.get(m, "-")
+        lines.append("| " + m + " | " + " | ".join(vals) + f" | {best_method} |\n")
+
+    # Per-subdataset means
+    lines.append("\n## Per-subdataset means (by method)\n")
+    for sub, g in per_df.groupby("subdataset"):
+        sub_means = g.groupby("method")[metric_cols].mean(numeric_only=True)
+        lines.append(f"\n### {sub}\n")
+        lines.append("| Metric | " + " | ".join(sub_means.index.tolist()) + " |\n")
+        lines.append("|---|" + "|".join(["---"] * (len(sub_means.index))) + "|\n")
+        for m in metric_cols:
+            if m not in sub_means.columns:
+                continue
+            vals = [f"{sub_means.loc[method, m]:.4f}" if m in sub_means.columns else "-" for method in sub_means.index]
+            lines.append("| " + m + " | " + " | ".join(vals) + " |\n")
+
+    # Statistical tests summary
+    lines.append("\n## Statistical tests (Wilcoxon/paired t-test with BH correction)\n")
+    if stats_df is not None and not stats_df.empty:
+        sig = stats_df[stats_df["significant"]]
+        lines.append(f"Significant pairs (adj p < 0.05): {len(sig)} / {len(stats_df)}\n")
+        head = sig.sort_values(["p_adj"]).head(50)
+        for _, r in head.iterrows():
+            lines.append(
+                f"- [{r['scope']}] {r['metric']}: {r['method_a']} vs {r['method_b']} (n={int(r['n'])}), p_adj={r['p_adj']:.3e}, effect={r['effect_size']:.3f}\n"
+            )
+    else:
+        lines.append("No significant differences detected or insufficient data.\n")
+
+    report_dir = out_root / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    (report_dir / "summary.md").write_text("".join(lines))
+
+
 def build_manifest(cfg: dict) -> pd.DataFrame:
+    """Build the evaluation manifest from the benchmark directory.
+
+    Parameters
+    ----------
+    cfg : dict
+        Parsed YAML configuration. Expected keys: `benchmark_dir`, `methods`,
+        `images`, optional `masks`, and `policy`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A DataFrame with one row per (method, subdataset, image). Columns:
+        - `subdataset`
+        - `image_id`
+        - `global_image_key`
+        - `input_path`
+        - `gt_path`
+        - `mask_path`
+        - `method`
+        - `pred_path`
+        - `has_input`
+        - `has_gt`
+        - `has_mask`
+        - `has_pred`
+
+        The DataFrame may be empty, but these columns will always exist to
+        allow downstream sorting and grouping without KeyError.
+    """
     benchmark_dir = Path(cfg["benchmark_dir"]).resolve()
     input_root = benchmark_dir / "input"
     gt_root = benchmark_dir / "diffuse_gt"
 
     methods_cfg = [MethodConfig(**m) for m in cfg["methods"] if m.get("enabled", True)]
+    print(f"Methods to evaluate: {[m.name for m in methods_cfg]}")
+    print(f"Benchmark directory: {benchmark_dir}")
+    print(f"Input root: {input_root}")
+    print(f"GT root: {gt_root}")
+    print(f"Extensions: {cfg['images']['extensions']}")
+    print(f"Subdatasets: {list_subdatasets(input_root)}")
     exts = cfg["images"]["extensions"]
+    recursive = bool(cfg["images"].get("recursive", False))
 
     subdatasets = list_subdatasets(input_root)
 
@@ -98,19 +325,51 @@ def build_manifest(cfg: dict) -> pd.DataFrame:
     for sub in subdatasets:
         input_sub = input_root / sub
         gt_sub = gt_root / sub
-        input_images = list_images_in_subdataset(input_sub, exts)
+        input_images = list_images_in_subdataset(input_sub, exts, recursive=recursive)
+        # Auto-fallback: if nothing found with non-recursive, try recursive search
+        if not input_images and not recursive:
+            input_images = list_images_in_subdataset(input_sub, exts, recursive=True)
+        # Natural sort by relative path (for stability across OS)
+        input_images = sorted(
+            input_images,
+            key=lambda p: _natural_key(str(p.relative_to(input_sub)) if p.is_relative_to(input_sub) else str(p)),
+        )
+
+        # Prepare GT/mask paths per input image
+        per_input_meta: List[Tuple[Path, Optional[Path], Optional[Path], str, Optional[Path]]] = []
         for inp_path in input_images:
             stem = inp_path.stem
-            gt_path = (gt_sub / f"{stem}{inp_path.suffix}") if gt_sub.exists() else None
+            try:
+                rel_under_sub = inp_path.relative_to(input_sub)
+            except Exception:
+                rel_under_sub = None
+
+            if gt_sub.exists():
+                if rel_under_sub is not None:
+                    gt_path = gt_sub / rel_under_sub
+                else:
+                    gt_path = gt_sub / f"{stem}{inp_path.suffix}"
+            else:
+                gt_path = None
             gt_path = gt_path if (gt_path and gt_path.exists()) else None
-            mask_path = locate_mask_for(stem, sub, cfg.get("masks", {}), benchmark_dir)
-            has_gt = gt_path is not None
-            has_mask = mask_path is not None
-            for m in methods_cfg:
-                pred_path = benchmark_dir / m.output_dir_name / sub / f"{stem}{inp_path.suffix}"
-                has_pred = pred_path.exists()
-                if not has_pred and cfg["policy"].get("skip_missing_pred", True):
-                    continue
+            mask_path = locate_mask_for(stem, sub, cfg.get("masks", {}), benchmark_dir, rel_under_sub)
+            per_input_meta.append((inp_path, gt_path, mask_path, stem, rel_under_sub))
+
+        # For each method, collect its predictions and pair by natural-sorted order
+        for m in methods_cfg:
+            pred_root = benchmark_dir / m.output_dir_name / sub
+            pred_images = list_images_in_subdataset(pred_root, exts, recursive=recursive)
+            if not pred_images and not recursive:
+                pred_images = list_images_in_subdataset(pred_root, exts, recursive=True)
+            pred_images = sorted(
+                pred_images,
+                key=lambda p: _natural_key(str(p.relative_to(pred_root)) if p.is_relative_to(pred_root) else str(p)),
+            )
+
+            pair_count = min(len(per_input_meta), len(pred_images))
+            for i in range(pair_count):
+                inp_path, gt_path, mask_path, stem, rel_under_sub = per_input_meta[i]
+                pred_path = pred_images[i]
                 rows.append(
                     {
                         "subdataset": sub,
@@ -118,15 +377,32 @@ def build_manifest(cfg: dict) -> pd.DataFrame:
                         "global_image_key": f"{sub}/{stem}",
                         "input_path": str(inp_path),
                         "gt_path": str(gt_path) if gt_path else None,
-                        "mask_path": str(mask_path) if has_mask else None,
+                        "mask_path": str(mask_path) if mask_path else None,
                         "method": m.name,
-                        "pred_path": str(pred_path) if has_pred else None,
+                        "pred_path": str(pred_path),
                         "has_input": True,
-                        "has_gt": has_gt,
-                        "has_mask": has_mask,
-                        "has_pred": has_pred,
+                        "has_gt": gt_path is not None,
+                        "has_mask": mask_path is not None,
+                        "has_pred": True,
                     }
                 )
+    # Ensure required columns exist even when there are no rows
+    expected_columns = [
+        "subdataset",
+        "image_id",
+        "global_image_key",
+        "input_path",
+        "gt_path",
+        "mask_path",
+        "method",
+        "pred_path",
+        "has_input",
+        "has_gt",
+        "has_mask",
+        "has_pred",
+    ]
+    if len(rows) == 0:
+        return pd.DataFrame(columns=expected_columns)
 
     manifest = pd.DataFrame(rows)
     manifest.sort_values(["subdataset", "image_id", "method"], inplace=True)
@@ -155,6 +431,10 @@ def compute_metrics_for_batch(
     device: torch.device,
 ) -> Dict[str, torch.Tensor]:
     data_range = cfg.get("data_range_override")
+    metrics_cfg = cfg.get("metrics", {})
+    fr_list = metrics_cfg.get("full_reference", []) or []
+    compute_lpips = any(m.lower() == "lpips_vgg" for m in fr_list)
+    lpips_net = str(metrics_cfg.get("lpips_net", "alex"))
 
     B = batch_preds.shape[0]
     # Initialize all outputs as NaN (on device for assignment, move to cpu later)
@@ -162,12 +442,14 @@ def compute_metrics_for_batch(
         return torch.full((B,), float("nan"), device=device, dtype=torch.float32)
 
     out: Dict[str, torch.Tensor] = {
-        "mse": nan_vec(), "psnr": nan_vec(), "ssim": nan_vec(), "lpips_vgg": nan_vec(),
+        "mse": nan_vec(), "psnr": nan_vec(), "ssim": nan_vec(),
         "dists": nan_vec(), "gmsd": nan_vec(), "deltaE2000": nan_vec(),
         "brisque": nan_vec(), "niqe": nan_vec(), "piqe": nan_vec(),
         "boundary_gmsd_band3": nan_vec(), "luminance_suppression_ratio": nan_vec(),
         "chroma_consistency_deltaE_ring3": nan_vec(),
     }
+    if compute_lpips:
+        out["lpips_vgg"] = nan_vec()
 
     idx_all = torch.arange(B, device=device)
     idx_gt = idx_all[torch.tensor(have_gt_flags, device=device)] if any(have_gt_flags) else None
@@ -206,8 +488,11 @@ def compute_metrics_for_batch(
         out["mse"][idx_gt] = ua_metrics.mse_metric(pr, gt, mask=None, reduction="none")
         out["psnr"][idx_gt] = ua_metrics.psnr_metric(pr, gt, mask=None, data_range=data_range, reduction="none")
         out["ssim"][idx_gt] = ua_metrics.ssim_metric(pr, gt, mask=None, data_range=data_range, reduction="none")
-        out["lpips_vgg"][idx_gt] = ua_metrics.lpips_metric(pr, gt, mask=None, net="vgg", reduction="none", data_range=data_range)
-        out["dists"][idx_gt] = ua_metrics.dists_metric(pr, gt, mask=None, reduction="none", data_range=data_range)
+        # if compute_lpips:
+        #     # LPIPS backbone selectable via config: metrics.lpips_net (default 'alex')
+        #     out["lpips_vgg"][idx_gt] = ua_metrics.lpips_metric(pr, gt, mask=None, net=lpips_net, reduction="none", data_range=data_range)
+        # print("DISTS")
+        # out["dists"][idx_gt] = ua_metrics.dists_metric(pr, gt, mask=None, reduction="none", data_range=data_range)
         out["gmsd"][idx_gt] = ua_metrics.gmsd_metric(pr, gt, mask=None, reduction="none", data_range=data_range)
         out["deltaE2000"][idx_gt] = ua_metrics.deltaE2000_metric(pr, gt, mask=None, reduction="none", data_range=data_range)
 
@@ -235,8 +520,8 @@ def main():
     cfg = read_yaml(args.config)
 
     benchmark_dir = Path(cfg["benchmark_dir"]).resolve()
-    results_root = benchmark_dir / "results"
-    manifest_path = benchmark_dir / "manifests" / "dataset_manifest.parquet"
+    results_root = _resolve_results_root(cfg, benchmark_dir)
+    manifest_path = results_root / "manifests" / "dataset_manifest.parquet"
     per_image_out = results_root / "raw" / "per_image.parquet"
     meta_out = results_root / "meta" / "run_metadata.json"
     ensure_dirs([manifest_path, per_image_out, meta_out])
@@ -250,9 +535,10 @@ def main():
     rows: List[Dict] = []
     batch_size = int(cfg["batch"].get("size", 8))
     exts = cfg["images"]["extensions"]
-
+    print(f"Manifest: {manifest}")
     # Iterate method-subdataset pairs for locality
     for (method, subdataset), df_grp in manifest.groupby(["method", "subdataset"], sort=True):
+        print(f"Evaluating {method} on {subdataset}")
         df_grp = df_grp.reset_index(drop=True)
         indices = df_grp.index.tolist()
         for idx_batch in batch(indices, batch_size):
@@ -275,7 +561,6 @@ def main():
                 pred_p = Path(r["pred_path"]) if pd.notna(r["pred_path"]) else None
                 gt_p = Path(r["gt_path"]) if pd.notna(r["gt_path"]) else None
                 mask_p = Path(r["mask_path"]) if pd.notna(r["mask_path"]) else None
-
                 # Skip if pred missing and policy says so
                 if pred_p is None or not pred_p.exists():
                     continue
@@ -376,6 +661,10 @@ def main():
     per_df = pd.DataFrame(rows)
     per_df.sort_values(["subdataset", "image_id", "method"], inplace=True)
     per_df.to_parquet(per_image_out, index=False)
+
+    # Run statistical tests and write summary report
+    stats_df = _run_stat_tests(per_df, results_root)
+    _write_summary(per_df, stats_df, results_root)
 
     # Meta
     meta = {

@@ -1,5 +1,6 @@
 import math
-from typing import Literal, Optional
+import warnings
+from typing import Literal, Optional, Dict, Tuple
 import torch
 import torch.nn.functional as F
 
@@ -111,6 +112,47 @@ def _ring_mask(mask01: torch.Tensor, ring: int = 3) -> torch.Tensor:
         ero = 1.0 - inv_dil
         band = (dil - ero).clamp(0, 1)
         return band
+
+# =========================
+# LPIPS cache
+# =========================
+_lpips_cache: Dict[Tuple[str, str], torch.nn.Module] = {}
+
+def _get_cached_lpips(net: Literal["alex", "vgg", "squeeze"], device: torch.device) -> torch.nn.Module:
+    pass
+    try:
+        import lpips  # type: ignore
+    except Exception as e:
+        raise ImportError("lpips package is required for lpips_metric. Install via `pip install lpips`.") from e
+
+    key = (str(net), str(device))
+    loss_fn = _lpips_cache.get(key)
+    if loss_fn is None:
+        # Suppress torchvision deprecation spam during LPIPS backbone init
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="The parameter 'pretrained' is deprecated since 0.13",
+                category=UserWarning,
+            )
+            warnings.filterwarnings(
+                "ignore",
+                message="Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13",
+                category=UserWarning,
+            )
+            warnings.filterwarnings(
+                "ignore",
+                category=UserWarning,
+                module=r".*torchvision\.models\._utils",
+            )
+            loss_fn = lpips.LPIPS(net=net, spatial=True)
+        loss_fn = loss_fn.to(device)
+        # Ensure inference-only
+        for p in loss_fn.parameters():
+            p.requires_grad_(False)
+        loss_fn.eval()
+        _lpips_cache[key] = loss_fn
+    return loss_fn
 
 # =========================
 # 1) MSE (masked)
@@ -251,39 +293,42 @@ def ssim_metric(
 # =========================
 # 4) LPIPS (masked via spatial map)
 # =========================
-def lpips_metric(
-    pred_image: torch.Tensor,
-    target_image: torch.Tensor,
-    mask: Optional[torch.Tensor] = None,
-    net: Literal["alex", "vgg", "squeeze"] = "vgg",
-    reduction: Literal["mean", "none"] = "mean",
-    data_range: Optional[float] = None,
-) -> torch.Tensor:
-    """
-    LPIPS with spatial=True + masked reduction.
-    Requires 'lpips' package.
-    """
-    _validate_pair(pred_image, target_image)
-    x01 = _to_01(_to_float_tensor(pred_image), data_range)
-    y01 = _to_01(_to_float_tensor(target_image, device=x01.device), data_range)
-    m = _prepare_mask(x01, mask)
+# def lpips_metric(
+#     pred_image: torch.Tensor,
+#     target_image: torch.Tensor,
+#     mask: Optional[torch.Tensor] = None,
+#     net: Literal["alex", "vgg", "squeeze"] = "vgg",
+#     reduction: Literal["mean", "none"] = "mean",
+#     data_range: Optional[float] = None,
+# ) -> torch.Tensor:
+#     return torch.zeros(1, device=pred_image.device)
+#     """
+#     LPIPS with spatial=True + masked reduction.
+#     Requires 'lpips' package.
+#     Optimized for speed: avoids slow per-sample forward pass if B>1.
+#     """
+#     _validate_pair(pred_image, target_image)
+#     x01 = _to_01(_to_float_tensor(pred_image), data_range)
+#     y01 = _to_01(_to_float_tensor(target_image, device=x01.device), data_range)
+#     m = _prepare_mask(x01, mask)
 
-    try:
-        import lpips  # type: ignore
-    except Exception as e:
-        raise ImportError("lpips package is required for lpips_metric. Install via `pip install lpips`.") from e
-
-    loss_fn = lpips.LPIPS(net=net, spatial=True).to(x01.device)
-    x_m11 = _to_m11(x01)
-    y_m11 = _to_m11(y01)
-    with torch.no_grad():
-        # lpips returns [B,1,H',W']; upsample to H,W if needed
-        lp_map = loss_fn(x_m11, y_m11)  # [B,1,h,w]
-        if lp_map.shape[-2:] != x01.shape[-2:]:
-            lp_map = F.interpolate(lp_map, size=x01.shape[-2:], mode="bilinear", align_corners=False)
-
-    per_image = _masked_reduce_per_image(lp_map, m)
-    return per_image.mean() if reduction == "mean" else per_image
+#     loss_fn = _get_cached_lpips(net=net, device=x01.device)
+#     x_m11 = _to_m11(x01)
+#     y_m11 = _to_m11(y01)
+#     # Speedup: do not call LPIPS in a for-loop! Use batched input always.
+#     # LPIPS spatial outputs [B,1,H',W'], but can be smaller than input.
+#     # Safe: always upsample to original BCHW after LPIPS.
+#     with torch.no_grad():
+#         lp_map = loss_fn(x_m11, y_m11)  # [B, 1, h, w]
+#         if lp_map.shape[-2:] != x01.shape[-2:]:
+#             # Use "nearest" - this is notably faster than bilinear, 
+#             # and for mask reduction accuracy it's sufficient, since LPIPS is "fuzzy" spatially.
+#             lp_map = F.interpolate(lp_map, size=x01.shape[-2:], mode="nearest")
+#     per_image = _masked_reduce_per_image(lp_map, m)
+#     if reduction == "mean":
+#         return per_image.mean()
+#     else:
+#         return per_image
 
 # =========================
 # 5) DISTS (global or masked via composite)

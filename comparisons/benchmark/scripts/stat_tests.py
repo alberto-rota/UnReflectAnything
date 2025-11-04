@@ -42,12 +42,18 @@ def pairwise_tests(df: pd.DataFrame, scope_name: str) -> pd.DataFrame:
     metric_cols = [c for c in df.columns if c not in exclude]
     rows = []
     methods = sorted(df["method"].unique())
-
+    print(f"Methods identified: {methods}")
     for metric in metric_cols:
         # Build per-image wide table for matched pairs
         pivot = df.pivot_table(index="global_image_key", columns="method", values=metric, aggfunc="mean")
+        if pivot.empty:
+            continue
+        # Use only methods actually present for this metric in this scope
+        present_methods = [m for m in methods if m in pivot.columns]
+        if len(present_methods) < 2:
+            continue
         # Drop rows with any NaN among methods in pairs during each pair test
-        for a, b in itertools.combinations(methods, 2):
+        for a, b in itertools.combinations(present_methods, 2):
             ab = pivot[[a, b]].dropna()
             n = len(ab)
             if n < 3:

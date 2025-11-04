@@ -4,7 +4,7 @@ parameters:
   ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:
-      MODEL_CLASS: "RGBDistillDecomposer"
+      MODEL_CLASS: "UnReflect_Model"
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vitb16-pretrain-lvd1689m"
         IMAGE_SIZE: 448

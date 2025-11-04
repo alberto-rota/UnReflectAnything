@@ -427,3 +427,22 @@ def saturation_ring_blob_consistency(
         return torch.zeros((), device=device, dtype=dtype)
     return (total / count).reshape(())
 
+def _total_variation(x):
+    # x: (B,C,H,W)
+    tv_h = (x[..., 1:, :] - x[..., :-1, :]).abs().mean()
+    tv_w = (x[..., :, 1:] - x[..., :, :-1]).abs().mean()
+    return tv_h + tv_w
+
+def _grad_mag(x):
+    # Simple |∇x| using forward differences
+    dx = F.pad(x[..., 1:, :] - x[..., :-1, :], (0,0,0,1))
+    dy = F.pad(x[..., :, 1:] - x[..., :, :-1], (0,1,0,0))
+    return (dx.abs() + dy.abs())
+
+def _pixel_to_patch_mask(m_hw: torch.Tensor, patch: int) -> torch.Tensor:
+    """
+    Convert (B,1,H,W) pixel mask to boolean (B,N) patch mask using max-pool with stride=patch.
+    A patch is masked if ANY pixel inside is masked.
+    """
+    pm = F.max_pool2d((m_hw > 0.5).float(), kernel_size=patch, stride=patch)
+    return pm.flatten(1).bool()  # (B, N)

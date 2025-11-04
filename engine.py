@@ -100,7 +100,7 @@ class Engine:
         resume_wandb_run_id = resume_run_id
         init(initialize.wandb, config, self.model, notes, no_wandb, resume_wandb_run_id)
         init(initialize.tracking_metrics)
-        
+
         # Skip directory setup during initialization if we're going to resume
         # The directories will be set up during resume_from_run()
         if not self._will_resume:
@@ -124,9 +124,9 @@ class Engine:
             else:
                 # Temporary placeholder; will be updated upon resume
                 self.config["name"] = "resuming"
-        self.add_polar_highlights = PolarHighlighter(
-            height=self.height, width=self.width
-        ).to(self.device)
+        self.add_highlights = PolarHighlighter(height=self.height, width=self.width).to(
+            self.device
+        )
 
         # Save hyperparameters to json only when not resuming
         if not self._will_resume:
@@ -152,15 +152,34 @@ class Engine:
             weight_diffuse_loss=self.config.DIFFUSE_LOSS_WEIGHT,
             weight_highlight_loss=self.config.HIGHLIGHT_LOSS_WEIGHT,
             weight_image_reconstruction=self.config.IMAGE_RECONSTRUCTION_LOSS_WEIGHT,
-            # New diffuse regularizers (optional; use defaults if missing)
+            # Saturation ring parameters
             weight_saturation_ring=self.config.get("SATURATION_RING_LOSS_WEIGHT", 0.0),
             ring_kernel_size=int(self.config.get("RING_KERNEL_SIZE", 7)),
             ring_var_weight=float(self.config.get("RING_VAR_WEIGHT", 0.5)),
             ring_texture_weight=float(self.config.get("RING_TEXTURE_WEIGHT", 1.0)),
-            # HL regression extra knobs (optional in config; keep defaults if missing)
+            # Highlight regression loss parameters
+            hlreg_w_l1=float(self.config.get("HLREG_W_L1", 1.0)),
+            hlreg_use_charb=bool(self.config.get("HLREG_USE_CHARB", True)),
+            hlreg_w_dice=float(self.config.get("HLREG_W_DICE", 0.2)),
+            hlreg_w_ssim=float(self.config.get("HLREG_W_SSIM", 0.0)),
+            hlreg_w_grad=float(self.config.get("HLREG_W_GRAD", 0.0)),
+            hlreg_w_tv=float(self.config.get("HLREG_W_TV", 0.0)),
             hlreg_balance_mode=self.config.get("HLREG_BALANCE_MODE", "none"),
-            hlreg_pos_weight=self.config.get("HLREG_POS_WEIGHT", 1.0),
-            hlreg_focal_gamma=self.config.get("HLREG_FOCAL_GAMMA", 0.0),
+            hlreg_pos_weight=float(self.config.get("HLREG_POS_WEIGHT", 1.0)),
+            hlreg_focal_gamma=float(self.config.get("HLREG_FOCAL_GAMMA", 0.0)),
+            # Highlight rendering parameters
+            highlight_color=tuple(self.config.get("HIGHLIGHT_COLOR", [1.0, 1.0, 1.0])),
+            clamp_reconstruction=bool(self.config.get("CLAMP_RECONSTRUCTION", True)),
+            # Context and regularization weights
+            weight_context_identity=float(
+                self.config.get("WEIGHT_CONTEXT_IDENTITY", 1.0)
+            ),
+            weight_ring_grad=float(self.config.get("WEIGHT_RING_GRAD", 0.5)),
+            weight_tv_in_hole=float(self.config.get("WEIGHT_TV_IN_HOLE", 1e-3)),
+            ring_dilate_kernel=int(self.config.get("RING_DILATE_KERNEL", 7)),
+            # Token-space loss parameters
+            weight_token_inpaint=float(self.config.get("WEIGHT_TOKEN_INPAINT", 1.0)),
+            token_feat_alpha=float(self.config.get("TOKEN_FEAT_ALPHA", 0.5)),
         ).to(self.device)
 
         # Memory management settings for optimal GPU memory usage
@@ -223,8 +242,8 @@ class Engine:
         validates it, and handles early stopping and saving of the model.
         """
         # Determine starting epoch (for resume functionality)
-        start_epoch = getattr(self, 'start_epoch', 0)
-        
+        start_epoch = getattr(self, "start_epoch", 0)
+
         for e in range(start_epoch, self.epochs):
             ### TRAINING + VALIDATION FOR EACH EPOCH
             self.train()  # Train the model for one epoch
@@ -693,14 +712,14 @@ class Engine:
                         param_group["lr"] = current_lr
 
                 ### Add polarization highlights
-                random_light_pos = self.add_polar_highlights.sample_light_source(
+                random_light_pos = self.add_highlights.sample_light_source(
                     dist_to_camera=self.config.LIGHT_DISTANCE_RANGE,
                     left_right_angle=self.config.LIGHT_LEFT_RIGHT_ANGLE,
                     above_below_angle=self.config.LIGHT_ABOVE_BELOW_ANGLE,
                     batch_size=self.batch_size,
                     device=self.device,
                 )
-                highlight_result = self.add_polar_highlights(
+                highlight_result = self.add_highlights(
                     rgb=sample["diffuse"].to(self.device, non_blocking=True),
                     light_pos=random_light_pos,
                     surface_roughness=self.config.SURFACE_ROUGHNESS,
@@ -712,14 +731,15 @@ class Engine:
                 )
 
                 # Compute soft highlight map
-                real_highlight_soft_mask = get_soft_highlight_map(
+                ### DATASET HIGHLIGHTS - NATURAL - DO NOT USE FOR SUPERVISION
+                dataset_highlights_soft_mask = get_soft_highlight_map(
                     sample["diffuse"].to(self.device, non_blocking=True),
                     threshold=self.config.SOFT_HIGHLIGHT_THRESHOLD,
                 )
                 # Compute inverse binary mask to mask out real highlights from the loss computation
-                real_highlight_inverse_binary_mask = torch.logical_not(
+                dataset_highlights_inverse_binary_mask = torch.logical_not(
                     torch.nn.functional.max_pool2d(
-                        real_highlight_soft_mask,
+                        dataset_highlights_soft_mask,
                         kernel_size=self.config.REAL_HIGHLIGHT_DILATION,
                         stride=1,
                         padding=self.config.REAL_HIGHLIGHT_DILATION // 2,
@@ -729,30 +749,34 @@ class Engine:
 
                 # We use the inverse binary mask only at training time
                 if phase == "Training":
-                    lossmask = real_highlight_inverse_binary_mask
+                    lossmask = dataset_highlights_inverse_binary_mask
                 else:
-                    lossmask = None
+                    lossmask = torch.ones_like(dataset_highlights_inverse_binary_mask)
                 # Include BOTH virtual and real highlights in GT highlight map
                 # Model learns to predict ALL highlights in the highlight channel
                 # But diffuse supervision is masked in real highlight regions
-                # Model must learn to inpaint/generalize diffuse behind real highlights
-                real_and_virtual_highlights = (
-                    highlight_result["highlight"] + real_highlight_soft_mask
+                # Model must learn to inpaint/generalize diffuse behind real
+
+                ### SYNTHETIC HIGHLIGHTS - GENERATED - SUPERVISION
+                synthetic_highlights = highlight_result["highlight"]
+
+                ### ALL HIGHLIGHTS - BOTH NATURAL AND SYNTHETIC - NEEDS TO BE PREDICTED
+                all_holes_to_inpaint = (
+                    synthetic_highlights + dataset_highlights_soft_mask
                 ).clamp(0, 1)
-                
 
                 ### Constructing ground truth dict
                 rgb_highlighted = highlight_result["rgb_highlighted"]
                 specular = sample["specular"].to(self.device, non_blocking=True)
-                
+
                 # Ground truth diffuse: original RGB (contains real highlights)
                 diffuse = sample["diffuse"].to(self.device, non_blocking=True)
-                
+
                 gt_decomposition = {
                     "diffuse": diffuse,  # Contains real highlights, but masked during loss
                     "rgb_highlighted": rgb_highlighted,
                     "specular": specular,
-                    "highlight": real_and_virtual_highlights,  # BOTH real and virtual
+                    "highlight": all_holes_to_inpaint,  # BOTH real and virtual
                 }
                 del sample  # Clean up. All necessary data is already on GPU.
 
@@ -762,10 +786,10 @@ class Engine:
                 # Log memory usage before forward pass if monitoring
                 if self.memory_monitoring and batch_idx % 10 == 0:
                     self._log_memory_usage(f"Before forward pass - batch {batch_idx}")
-                
+
                 if self.ablation:
                     print("This is an ablation block")
-                
+
                 ### Forward pass
                 pred_decomposition = self.model(model_input)
 
@@ -791,9 +815,8 @@ class Engine:
                     try:
                         # Check if we should accumulate gradients
                         accumulate_gradients = (
-                            step >= self.warmup_steps
-                            and (batch_idx + 1) % self.gradient_accumulation_steps == 0
-                        )
+                            batch_idx + 1
+                        ) % self.gradient_accumulation_steps == 0
 
                         # Use the backward_pass method
                         backward_output = self.backward_pass(
@@ -870,26 +893,59 @@ class Engine:
                 try:
                     # Use same mask as loss for diffuse comparisons during Training; None otherwise
                     eval_mask = lossmask if phase == "Training" else None
-                    if "diffuse" in pred_decomposition and "diffuse" in gt_decomposition:
+                    if (
+                        "diffuse" in pred_decomposition
+                        and "diffuse" in gt_decomposition
+                    ):
                         pdiff = pred_decomposition["diffuse"].detach()
                         gt = gt_decomposition["diffuse"].detach()
                         # Shapes: [B, C, H, W]
-                        metrics["PSNR/diffuse"] = float(psnr_metric(pdiff, gt, mask=eval_mask, reduction="mean").item())
-                        metrics["SSIM/diffuse"] = float(ssim_metric(pdiff, gt, mask=eval_mask, reduction="mean").item())
-                        metrics["MSE/diffuse"] = float(mse_metric(pdiff, gt, mask=eval_mask, reduction="mean").item())
-                    if "specular" in pred_decomposition and "specular" in gt_decomposition:
+                        metrics["PSNR/diffuse"] = float(
+                            psnr_metric(
+                                pdiff, gt, mask=eval_mask, reduction="mean"
+                            ).item()
+                        )
+                        metrics["SSIM/diffuse"] = float(
+                            ssim_metric(
+                                pdiff, gt, mask=eval_mask, reduction="mean"
+                            ).item()
+                        )
+                        metrics["MSE/diffuse"] = float(
+                            mse_metric(
+                                pdiff, gt, mask=eval_mask, reduction="mean"
+                            ).item()
+                        )
+                    if (
+                        "specular" in pred_decomposition
+                        and "specular" in gt_decomposition
+                    ):
                         ps = pred_decomposition["specular"].detach()
                         gs = gt_decomposition["specular"].detach()
-                        metrics["PSNR/specular"] = float(psnr_metric(ps, gs, reduction="mean").item())
-                        metrics["SSIM/specular"] = float(ssim_metric(ps, gs, reduction="mean").item())
-                        metrics["MSE/specular"] = float(mse_metric(ps, gs, reduction="mean").item())
+                        metrics["PSNR/specular"] = float(
+                            psnr_metric(ps, gs, reduction="mean").item()
+                        )
+                        metrics["SSIM/specular"] = float(
+                            ssim_metric(ps, gs, reduction="mean").item()
+                        )
+                        metrics["MSE/specular"] = float(
+                            mse_metric(ps, gs, reduction="mean").item()
+                        )
                     # Reconstructed image metric if available
-                    if "rgb_highlighted" in pred_decomposition and "rgb_highlighted" in gt_decomposition:
+                    if (
+                        "rgb_highlighted" in pred_decomposition
+                        and "rgb_highlighted" in gt_decomposition
+                    ):
                         pr = pred_decomposition["rgb_highlighted"].detach()
                         gr = gt_decomposition["rgb_highlighted"].detach()
-                        metrics["PSNR/recon"] = float(psnr_metric(pr, gr, reduction="mean").item())
-                        metrics["SSIM/recon"] = float(ssim_metric(pr, gr, reduction="mean").item())
-                        metrics["MSE/recon"] = float(mse_metric(pr, gr, reduction="mean").item())
+                        metrics["PSNR/recon"] = float(
+                            psnr_metric(pr, gr, reduction="mean").item()
+                        )
+                        metrics["SSIM/recon"] = float(
+                            ssim_metric(pr, gr, reduction="mean").item()
+                        )
+                        metrics["MSE/recon"] = float(
+                            mse_metric(pr, gr, reduction="mean").item()
+                        )
                 except Exception as _metrics_e:
                     # Do not fail the step if metrics fail; continue logging losses
                     pass
@@ -903,42 +959,74 @@ class Engine:
                 # Image logging to wandb - with aggressive cleanup after
                 if log_images_this_batch and self.wandb:
                     # try:
-                        # Create a copy of sample for visualization (since we deleted it earlier)
-                        gt_data = {
-                            "rgb": gt_decomposition["rgb_highlighted"].cpu(),
-                        }
-                        # Add optional polarization data if available
-                        if "highlight" in gt_decomposition:
-                            gt_data["highlight"] = gt_decomposition["highlight"].cpu()
-                        if "rgb_highlighted" in gt_decomposition:
-                            gt_data["rgb_highlighted"] = gt_decomposition[
-                                "rgb_highlighted"
-                            ].cpu()
+                    # Create a copy of sample for visualization (since we deleted it earlier)
+                    gt_data = {
+                        "rgb": gt_decomposition["rgb_highlighted"].cpu(),
+                    }
+                    # Add optional polarization data if available
+                    if "highlight" in gt_decomposition:
+                        gt_data["highlight"] = gt_decomposition["highlight"].cpu()
+                    if "rgb_highlighted" in gt_decomposition:
+                        gt_data["rgb_highlighted"] = gt_decomposition[
+                            "rgb_highlighted"
+                        ].cpu()
 
-                        images = self.create_visualization_images(
-                            gt_decomposition,
-                            pred_decomposition,
-                            gt_data,
-                            as_single_panel=True,
-                            batch_idx=batch_idx,
-                            phase=phase,
-                            test_idx=test_idx if phase == "Test" else None,
-                            # Ensure images are logged under the correct Test prefix inside helper
-                            # (helper will no-op prefixing for non-Test phases)
+                    # Remove tokens_teacher and tokens_completed as they are not needed for visualization
+                    if (
+                        "tokens_teacher" in pred_decomposition
+                        and "tokens_completed" in pred_decomposition
+                    ):
+                        _, npatches, embed_dim = pred_decomposition["tokens_teacher"][
+                            -1
+                        ].shape
+
+                        patch_resolution = int(math.sqrt(npatches))
+                        tokens_and_pca = rgb(
+                            pred_decomposition["tokens_teacher"][-1]
+                            .reshape(-1, patch_resolution, patch_resolution, embed_dim)
+                            .permute(0, 3, 1, 2)
+                            .detach()[0],
+                            resize=(
+                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                            ),
+                            as_tensor=True,
+                            blackout=True,
+                            return_pca=True,
                         )
-                        if images:
-                            # Images are logged directly inside helper with proper prefixes.
-                            # Avoid adding to metrics to prevent duplicate logging.
-                            images_logged = True
+                        pred_decomposition["tokens_teacher"] = tokens_and_pca[0].unsqueeze(0)
+                        pca = tokens_and_pca[1]
+                        pred_decomposition["tokens_completed"] = rgb(
+                            pred_decomposition["tokens_completed"][-1]
+                            .reshape(-1, patch_resolution, patch_resolution, embed_dim)
+                            .permute(0, 3, 1, 2)
+                            .detach()[0]
+                            * pred_decomposition["patch_mask"]
+                                .reshape(-1, patch_resolution, patch_resolution)
+                                .unsqueeze(1)
+                                .int()[0],
+                                pca = pca,
+                            resize=(
+                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                            ),
+                            as_tensor=True,
+                            blackout=True,
+                        ).unsqueeze(0)
+                    if "patch_mask" in pred_decomposition:
+                        del pred_decomposition["patch_mask"]
 
-                        # Clean up sample copy immediately
-                        del gt_data
-
-                    # except Exception as e:
-                    #     self.logger.warning(
-                    #         f"Failed to create visualization images: {e}",
-                    #         context=phase.upper(),
-                    #     )
+                    images = self.create_visualization_images(
+                        gt_decomposition,
+                        pred_decomposition,
+                        gt_data,
+                        as_single_panel=True,
+                        batch_idx=batch_idx,
+                        phase=phase,
+                        test_idx=test_idx if phase == "Test" else None,
+                    )
+                    if images:
+                        images_logged = True
 
                 # Console logging
                 if batch_idx % self.config.get("LOG_INTERVAL", 10) == 0:
@@ -971,7 +1059,7 @@ class Engine:
                         prefixed_metrics = {}
                         for key, value in wandb_metrics.items():
                             if isinstance(key, str) and key.startswith("Test/"):
-                                rest = key[len("Test/"):]
+                                rest = key[len("Test/") :]
                                 new_key = f"Test/test_idx_{test_idx}/{rest}"
                                 prefixed_metrics[new_key] = value
                             else:
@@ -1026,7 +1114,7 @@ class Engine:
             if phase == "Test" and test_idx is not None:
                 for key, value in epoch_metrics.items():
                     if key.startswith("Test/"):
-                        rest = key[len("Test/"):]
+                        rest = key[len("Test/") :]
                         new_key = f"Test/test_idx_{test_idx}/{rest}"
                         final_epoch_metrics[new_key] = value
                 # Record step keys
@@ -1036,7 +1124,9 @@ class Engine:
                 # Training/Validation: keep standard epoch prefixing
                 for key, value in epoch_metrics.items():
                     if key.startswith(phase + "/"):
-                        final_epoch_metrics[key.replace(phase, f"{phase}/{epoch_label}")] = value
+                        final_epoch_metrics[
+                            key.replace(phase, f"{phase}/{epoch_label}")
+                        ] = value
                 final_epoch_metrics[f"Step/{epoch_label}"] = self.step["epoch"]
 
             self.wandb.log(final_epoch_metrics)
@@ -1052,34 +1142,38 @@ class Engine:
             "model_class_module": self.model.__class__.__module__,
             "optimizer_state_dict": self.optimizer.state_dict(),
             "config": self.config,
-            "runname": getattr(self, 'runname', None),
-            "wandb_run_id": getattr(self.wandb, 'id', None) if self.wandb else None,
+            "runname": getattr(self, "runname", None),
+            "wandb_run_id": getattr(self.wandb, "id", None) if self.wandb else None,
         }
-        
+
         # Add scheduler states if available (save what Engine actually uses)
-        if hasattr(self, 'LRscheduler') and self.LRscheduler is not None:
+        if hasattr(self, "LRscheduler") and self.LRscheduler is not None:
             try:
                 checkpoint["LRscheduler_state_dict"] = self.LRscheduler.state_dict()
             except Exception as e:
                 self.logger.warning(f"Could not save LRscheduler state: {e}")
-        if hasattr(self, 'LRschedulerPlateau') and self.LRschedulerPlateau is not None:
+        if hasattr(self, "LRschedulerPlateau") and self.LRschedulerPlateau is not None:
             try:
-                checkpoint["LRschedulerPlateau_state_dict"] = self.LRschedulerPlateau.state_dict()
+                checkpoint["LRschedulerPlateau_state_dict"] = (
+                    self.LRschedulerPlateau.state_dict()
+                )
             except Exception as e:
                 self.logger.warning(f"Could not save LRschedulerPlateau state: {e}")
-        
+
         # Add early stopping state if available
-        if hasattr(self, 'earlystopping') and self.earlystopping is not None:
+        if hasattr(self, "earlystopping") and self.earlystopping is not None:
             checkpoint["earlystopping_state"] = {
-                "val_loss_min": getattr(self.earlystopping, 'val_loss_min', float('inf')),
-                "counter": getattr(self.earlystopping, 'counter', 0),
-                "patience": getattr(self.earlystopping, 'patience', 0),
+                "val_loss_min": getattr(
+                    self.earlystopping, "val_loss_min", float("inf")
+                ),
+                "counter": getattr(self.earlystopping, "counter", 0),
+                "patience": getattr(self.earlystopping, "patience", 0),
             }
-        
+
         # Add training metrics history if available
-        if hasattr(self, 'training_metrics') and self.training_metrics:
+        if hasattr(self, "training_metrics") and self.training_metrics:
             checkpoint["training_metrics_history"] = self.training_metrics
-        if hasattr(self, 'validation_metrics') and self.validation_metrics:
+        if hasattr(self, "validation_metrics") and self.validation_metrics:
             checkpoint["validation_metrics_history"] = self.validation_metrics
 
         # Save regular checkpoint
@@ -1128,7 +1222,9 @@ class Engine:
             visualization_dict = {}
 
             # Collect all unique keys from both dicts
-            all_keys = list(sorted(set(pred_decomposition.keys()) | set(gt_decomposition.keys())))
+            all_keys = list(
+                sorted(set(pred_decomposition.keys()) | set(gt_decomposition.keys()))
+            )
 
             def make_black_image(size=(448, 448)):
                 # Returns a black RGB image tensor [3, H, W]
@@ -1138,7 +1234,9 @@ class Engine:
             prediction_row = panelize(
                 *[
                     rgb(
-                        pred_decomposition[comp_name][0][:3].detach() if comp_name in pred_decomposition else make_black_image(),
+                        pred_decomposition[comp_name][0][:3].detach()
+                        if comp_name in pred_decomposition
+                        else make_black_image(),
                         as_tensor=True,
                         resize=(448, 448),
                         colormap="gray",
@@ -1147,7 +1245,9 @@ class Engine:
                             "position": "top-left",
                             "height": 40,
                             "margin": 1 if comp_name not in pred_decomposition else 0,
-                            "text": f"PRED {comp_name.capitalize()}" if comp_name in pred_decomposition else "NA",
+                            "text": f"PRED {comp_name.capitalize()}"
+                            if comp_name in pred_decomposition
+                            else "NA",
                         },
                     )
                     for comp_name in all_keys
@@ -1159,7 +1259,9 @@ class Engine:
             gt_row = panelize(
                 *[
                     rgb(
-                        gt_decomposition[comp_name][0][:3].detach() if comp_name in gt_decomposition else make_black_image(),
+                        gt_decomposition[comp_name][0][:3].detach()
+                        if comp_name in gt_decomposition
+                        else make_black_image(),
                         as_tensor=True,
                         resize=(448, 448),
                         colormap="gray",
@@ -1168,7 +1270,9 @@ class Engine:
                             "position": "top-left",
                             "height": 40,
                             "margin": 1 if comp_name not in gt_decomposition else 0,
-                            "text": f"GT {comp_name.capitalize()}" if comp_name in gt_decomposition else "NA",
+                            "text": f"GT {comp_name.capitalize()}"
+                            if comp_name in gt_decomposition
+                            else "NA",
                         },
                     )
                     for comp_name in all_keys
@@ -1190,7 +1294,6 @@ class Engine:
             )
             return visualization_dict
         else:
-        
             # Create visualization dictionary
             visualization_dict = {}
 
@@ -1269,7 +1372,7 @@ class Engine:
                         "f_spec",
                         "rgb_highlighted",
                         "intrinsics",
-                        "lossmask"
+                        "lossmask",
                     ] or not isinstance(comp_tensor, torch.Tensor):
                         continue
 
@@ -1308,32 +1411,57 @@ class Engine:
             return
 
         try:
-            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            checkpoint = torch.load(
+                checkpoint_path, map_location=self.device, weights_only=False
+            )
             self.model.load_state_dict(checkpoint["model_state_dict"])
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             # Load schedulers if present (support both new and legacy keys)
             try:
-                if "LRscheduler_state_dict" in checkpoint and hasattr(self, 'LRscheduler') and self.LRscheduler is not None:
-                    self.LRscheduler.load_state_dict(checkpoint["LRscheduler_state_dict"])
-                if "LRschedulerPlateau_state_dict" in checkpoint and hasattr(self, 'LRschedulerPlateau') and self.LRschedulerPlateau is not None:
-                    self.LRschedulerPlateau.load_state_dict(checkpoint["LRschedulerPlateau_state_dict"])
+                if (
+                    "LRscheduler_state_dict" in checkpoint
+                    and hasattr(self, "LRscheduler")
+                    and self.LRscheduler is not None
+                ):
+                    self.LRscheduler.load_state_dict(
+                        checkpoint["LRscheduler_state_dict"]
+                    )
+                if (
+                    "LRschedulerPlateau_state_dict" in checkpoint
+                    and hasattr(self, "LRschedulerPlateau")
+                    and self.LRschedulerPlateau is not None
+                ):
+                    self.LRschedulerPlateau.load_state_dict(
+                        checkpoint["LRschedulerPlateau_state_dict"]
+                    )
                 # Backward-compatibility: legacy single scheduler key
                 if "scheduler_state_dict" in checkpoint:
                     loaded = False
-                    if hasattr(self, 'LRscheduler') and self.LRscheduler is not None:
+                    if hasattr(self, "LRscheduler") and self.LRscheduler is not None:
                         try:
-                            self.LRscheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+                            self.LRscheduler.load_state_dict(
+                                checkpoint["scheduler_state_dict"]
+                            )
                             loaded = True
                         except Exception:
                             pass
-                    if not loaded and hasattr(self, 'LRschedulerPlateau') and self.LRschedulerPlateau is not None:
+                    if (
+                        not loaded
+                        and hasattr(self, "LRschedulerPlateau")
+                        and self.LRschedulerPlateau is not None
+                    ):
                         try:
-                            self.LRschedulerPlateau.load_state_dict(checkpoint["scheduler_state_dict"])
+                            self.LRschedulerPlateau.load_state_dict(
+                                checkpoint["scheduler_state_dict"]
+                            )
                             loaded = True
                         except Exception:
                             pass
                     if not loaded:
-                        self.logger.warning("Found legacy scheduler_state_dict but no compatible scheduler attribute to load into", context="SAVE")
+                        self.logger.warning(
+                            "Found legacy scheduler_state_dict but no compatible scheduler attribute to load into",
+                            context="SAVE",
+                        )
             except Exception as e:
                 self.logger.warning(f"Could not load scheduler state(s): {e}")
             self.logger.info(
@@ -1360,7 +1488,9 @@ class Engine:
             return None
 
         try:
-            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+            checkpoint = torch.load(
+                checkpoint_path, map_location=device, weights_only=False
+            )
 
             # Extract model class information
             model_class_name = checkpoint.get("model_class_name")
@@ -1388,7 +1518,9 @@ class Engine:
                     "optimizer_state_dict": checkpoint.get("optimizer_state_dict"),
                     # Expose both new and legacy scheduler keys for callers
                     "LRscheduler_state_dict": checkpoint.get("LRscheduler_state_dict"),
-                    "LRschedulerPlateau_state_dict": checkpoint.get("LRschedulerPlateau_state_dict"),
+                    "LRschedulerPlateau_state_dict": checkpoint.get(
+                        "LRschedulerPlateau_state_dict"
+                    ),
                     "scheduler_state_dict": checkpoint.get("scheduler_state_dict"),
                     "epoch": checkpoint.get("epoch"),
                     "config": checkpoint.get("config"),
@@ -1406,144 +1538,190 @@ class Engine:
     def resume_from_run(self, run_identifier: str) -> bool:
         """
         Resume training from an existing run.
-        
+
         Args:
             run_identifier (str): Run name or run ID to resume from
-            
+
         Returns:
             bool: True if resume was successful, False otherwise
         """
         from utilities.run_resume import get_resume_info, load_checkpoint_for_resume
-        
+
         # Get resume information
         resume_info = get_resume_info(run_identifier, self.RUNS_DIR)
         if resume_info is None:
             self.logger.error(f"Failed to get resume info for run: {run_identifier}")
             return False
-        
+
         # Set up directories using the existing run information
         self._setup_resume_directories(resume_info)
-        
+
         # Load the latest checkpoint
         checkpoint_data = load_checkpoint_for_resume(
-            resume_info['latest_checkpoint'], self.device
+            resume_info["latest_checkpoint"], self.device
         )
         if checkpoint_data is None:
             self.logger.error("Failed to load checkpoint data")
             return False
-        
+
         # Load model state
         try:
-            self.model.load_state_dict(checkpoint_data['model_state_dict'])
+            self.model.load_state_dict(checkpoint_data["model_state_dict"])
             self.logger.info("Loaded model state from checkpoint", context="RESUME")
         except Exception as e:
             self.logger.error(f"Failed to load model state: {e}")
             return False
-        
+
         # Load optimizer state
         try:
-            self.optimizer.load_state_dict(checkpoint_data['optimizer_state_dict'])
+            self.optimizer.load_state_dict(checkpoint_data["optimizer_state_dict"])
             self.logger.info("Loaded optimizer state from checkpoint", context="RESUME")
         except Exception as e:
             self.logger.error(f"Failed to load optimizer state: {e}")
             return False
-        
+
         # Load scheduler states if available (support both new and legacy keys)
         try:
-            if 'LRscheduler_state_dict' in checkpoint_data and hasattr(self, 'LRscheduler') and self.LRscheduler is not None:
-                self.LRscheduler.load_state_dict(checkpoint_data['LRscheduler_state_dict'])
-                self.logger.info("Loaded LRscheduler state from checkpoint", context="RESUME")
-            if 'LRschedulerPlateau_state_dict' in checkpoint_data and hasattr(self, 'LRschedulerPlateau') and self.LRschedulerPlateau is not None:
-                self.LRschedulerPlateau.load_state_dict(checkpoint_data['LRschedulerPlateau_state_dict'])
-                self.logger.info("Loaded LRschedulerPlateau state from checkpoint", context="RESUME")
+            if (
+                "LRscheduler_state_dict" in checkpoint_data
+                and hasattr(self, "LRscheduler")
+                and self.LRscheduler is not None
+            ):
+                self.LRscheduler.load_state_dict(
+                    checkpoint_data["LRscheduler_state_dict"]
+                )
+                self.logger.info(
+                    "Loaded LRscheduler state from checkpoint", context="RESUME"
+                )
+            if (
+                "LRschedulerPlateau_state_dict" in checkpoint_data
+                and hasattr(self, "LRschedulerPlateau")
+                and self.LRschedulerPlateau is not None
+            ):
+                self.LRschedulerPlateau.load_state_dict(
+                    checkpoint_data["LRschedulerPlateau_state_dict"]
+                )
+                self.logger.info(
+                    "Loaded LRschedulerPlateau state from checkpoint", context="RESUME"
+                )
             # Backward-compatibility: legacy single scheduler key
-            if 'scheduler_state_dict' in checkpoint_data:
+            if "scheduler_state_dict" in checkpoint_data:
                 loaded = False
-                if hasattr(self, 'LRscheduler') and self.LRscheduler is not None:
+                if hasattr(self, "LRscheduler") and self.LRscheduler is not None:
                     try:
-                        self.LRscheduler.load_state_dict(checkpoint_data['scheduler_state_dict'])
+                        self.LRscheduler.load_state_dict(
+                            checkpoint_data["scheduler_state_dict"]
+                        )
                         loaded = True
-                        self.logger.info("Loaded legacy scheduler state into LRscheduler", context="RESUME")
+                        self.logger.info(
+                            "Loaded legacy scheduler state into LRscheduler",
+                            context="RESUME",
+                        )
                     except Exception:
                         pass
-                if not loaded and hasattr(self, 'LRschedulerPlateau') and self.LRschedulerPlateau is not None:
+                if (
+                    not loaded
+                    and hasattr(self, "LRschedulerPlateau")
+                    and self.LRschedulerPlateau is not None
+                ):
                     try:
-                        self.LRschedulerPlateau.load_state_dict(checkpoint_data['scheduler_state_dict'])
+                        self.LRschedulerPlateau.load_state_dict(
+                            checkpoint_data["scheduler_state_dict"]
+                        )
                         loaded = True
-                        self.logger.info("Loaded legacy scheduler state into LRschedulerPlateau", context="RESUME")
+                        self.logger.info(
+                            "Loaded legacy scheduler state into LRschedulerPlateau",
+                            context="RESUME",
+                        )
                     except Exception:
                         pass
                 if not loaded:
-                    self.logger.warning("Found legacy scheduler_state_dict but no compatible scheduler attribute to load into", context="RESUME")
+                    self.logger.warning(
+                        "Found legacy scheduler_state_dict but no compatible scheduler attribute to load into",
+                        context="RESUME",
+                    )
         except Exception as e:
             self.logger.warning(f"Failed to load scheduler state(s): {e}")
-        
+
         # Restore early stopping state if available
-        if 'earlystopping_state' in checkpoint_data and hasattr(self, 'earlystopping') and self.earlystopping is not None:
+        if (
+            "earlystopping_state" in checkpoint_data
+            and hasattr(self, "earlystopping")
+            and self.earlystopping is not None
+        ):
             try:
-                es_state = checkpoint_data['earlystopping_state']
-                self.earlystopping.val_loss_min = es_state.get('val_loss_min', float('inf'))
-                self.earlystopping.counter = es_state.get('counter', 0)
-                self.earlystopping.patience = es_state.get('patience', 0)
+                es_state = checkpoint_data["earlystopping_state"]
+                self.earlystopping.val_loss_min = es_state.get(
+                    "val_loss_min", float("inf")
+                )
+                self.earlystopping.counter = es_state.get("counter", 0)
+                self.earlystopping.patience = es_state.get("patience", 0)
                 self.logger.info("Restored early stopping state", context="RESUME")
             except Exception as e:
                 self.logger.warning(f"Failed to restore early stopping state: {e}")
-        
+
         # Restore metrics history if available
-        if 'training_metrics_history' in checkpoint_data:
-            self.training_metrics = checkpoint_data['training_metrics_history']
+        if "training_metrics_history" in checkpoint_data:
+            self.training_metrics = checkpoint_data["training_metrics_history"]
             self.logger.info("Restored training metrics history", context="RESUME")
-        
-        if 'validation_metrics_history' in checkpoint_data:
-            self.validation_metrics = checkpoint_data['validation_metrics_history']
+
+        if "validation_metrics_history" in checkpoint_data:
+            self.validation_metrics = checkpoint_data["validation_metrics_history"]
             self.logger.info("Restored validation metrics history", context="RESUME")
-        
+
         # Set the starting epoch
-        self.start_epoch = checkpoint_data['epoch'] + 1
-        self.logger.info(f"Resuming training from epoch {self.start_epoch}", context="RESUME")
-        
+        self.start_epoch = checkpoint_data["epoch"] + 1
+        self.logger.info(
+            f"Resuming training from epoch {self.start_epoch}", context="RESUME"
+        )
+
         # Update wandb run ID if available and re-initialize wandb
-        if 'wandb_run_id' in checkpoint_data and checkpoint_data['wandb_run_id']:
-            self.resume_wandb_run_id = checkpoint_data['wandb_run_id']
-            self.logger.info(f"Will resume wandb run: {self.resume_wandb_run_id}", context="RESUME")
-            
+        if "wandb_run_id" in checkpoint_data and checkpoint_data["wandb_run_id"]:
+            self.resume_wandb_run_id = checkpoint_data["wandb_run_id"]
+            self.logger.info(
+                f"Will resume wandb run: {self.resume_wandb_run_id}", context="RESUME"
+            )
+
             # Re-initialize wandb with the correct run ID
             self._reinitialize_wandb()
-        
+
         return True
 
     def _setup_resume_directories(self, resume_info):
         """Set up directories using existing run information"""
         # Extract run name from the run directory path
-        run_dir = resume_info['run_dir']
+        run_dir = resume_info["run_dir"]
         runname = os.path.basename(run_dir)
-        
+
         # Set up directory structure using existing run
         self.runname = runname
         self.RUN_DIR = run_dir
-        self.MODELS_DIR = resume_info['models_dir']
+        self.MODELS_DIR = resume_info["models_dir"]
         self.TEST_DIR = os.path.join(run_dir, "tests")
         self.paths_file = os.path.join(run_dir, "loadeddata.csv")
-        
+
         # Create test directory if it doesn't exist
         os.makedirs(self.TEST_DIR, exist_ok=True)
-        
+
         # Initialize early stopping with the existing run name
         from utilities import engine_initializers as initialize
+
         earlystopping_result = initialize.earlystopping(
             self.earlystopping_patience,
             self.MODELS_DIR,
             self.runname,
         )
-        
+
         # Set early stopping attributes
         for key, value in earlystopping_result.items():
             setattr(self, key, value)
-        
+
         # Update config with the run name
         self.config["name"] = self.runname
-        
-        self.logger.info(f"Set up resume directories for run: {self.runname}", context="RESUME")
+
+        self.logger.info(
+            f"Set up resume directories for run: {self.runname}", context="RESUME"
+        )
         self.logger.info(f"Run directory: {self.RUN_DIR}", context="RESUME")
 
     def _reinitialize_wandb(self):
@@ -1551,20 +1729,24 @@ class Engine:
         if self.wandb is not None:
             # Finish the current wandb run
             self.wandb.finish()
-        
+
         # Re-initialize wandb with the resume run ID
         from utilities import engine_initializers as initialize
+
         wandb_result = initialize.wandb(
-            self.config, 
-            self.model, 
-            self.config.get("NOTES", ""), 
+            self.config,
+            self.model,
+            self.config.get("NOTES", ""),
             False,  # no_wandb
-            self.resume_wandb_run_id
+            self.resume_wandb_run_id,
         )
-        
+
         # Update the wandb reference
         self.wandb = wandb_result.get("wandb")
-        self.logger.info(f"Re-initialized wandb with run ID: {self.resume_wandb_run_id}", context="RESUME")
+        self.logger.info(
+            f"Re-initialized wandb with run ID: {self.resume_wandb_run_id}",
+            context="RESUME",
+        )
 
     def _log_memory_usage(self, context: str = ""):
         """Log current GPU memory usage for monitoring"""
@@ -1680,7 +1862,16 @@ class Engine:
 
         return pil_image
 
-    def _add_image_safely(self, viz_dict, key, tensor, caption, batch_idx=0, phase: str = None, test_idx: Optional[int] = None):
+    def _add_image_safely(
+        self,
+        viz_dict,
+        key,
+        tensor,
+        caption,
+        batch_idx=0,
+        phase: str = None,
+        test_idx: Optional[int] = None,
+    ):
         """Safely add image to visualization dictionary"""
 
         image = wandb.Image(self._to_cpu_image(tensor))
@@ -1689,7 +1880,9 @@ class Engine:
         if isinstance(phase, str):
             # Highest precedence: Test with explicit index
             if phase == "Test" and test_idx is not None:
-                if key.startswith("Test/") and not key.startswith(f"Test/test_idx_{test_idx}/"):
+                if key.startswith("Test/") and not key.startswith(
+                    f"Test/test_idx_{test_idx}/"
+                ):
                     # Upgrade existing Test/ prefix to include test_idx
                     log_key = key.replace("Test/", f"Test/test_idx_{test_idx}/", 1)
                 elif not key.startswith(f"Test/test_idx_{test_idx}/"):
@@ -1703,10 +1896,15 @@ class Engine:
         # Attach step index for grouping if available
         if phase == "Test" and test_idx is not None:
             payload["Step/test_idx"] = int(test_idx)
-        elif not self.metrics["Test"].empty and "Step/test_idx" in self.metrics["Test"].columns:
+        elif (
+            not self.metrics["Test"].empty
+            and "Step/test_idx" in self.metrics["Test"].columns
+        ):
             # Fallback: infer last test_idx from metrics table
             try:
-                payload["Step/test_idx"] = int(self.metrics["Test"]["Step/test_idx"].iloc[-1])
+                payload["Step/test_idx"] = int(
+                    self.metrics["Test"]["Step/test_idx"].iloc[-1]
+                )
             except Exception:
                 pass
         wandb.log(payload)

@@ -1,0 +1,10 @@
+{
+  "timestamp": "2025-10-28 18:12:56",
+  "benchmark_dir": "/anvme/workspace/v120bb18-unreflectanything/comparisons/benchmark",
+  "config_path": "/home/atuin/v120bb/v120bb18/UnReflectAnything/comparisons/benchmark/configs/eval.yaml",
+  "torch_version": "2.8.0+cu128",
+  "device": "cuda",
+  "num_rows": 7340,
+  "num_images": 6224,
+  "num_methods": 2
+}

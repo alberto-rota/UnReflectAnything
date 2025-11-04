@@ -25,9 +25,10 @@ def rgb(
     t: torch.Tensor,
     as_tensor: Union[bool, str] = False,
     pca: Optional[PCA] = None,
+    return_pca: Optional[bool] = False,
     blackout: Optional[bool] = False,
     resize: Optional[Tuple[int, int]] = None,
-    interpolation: str = "bilinear",
+    interpolation: str = "nearest",
     colormap: Optional[str] = "magma",
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
@@ -121,7 +122,7 @@ def rgb(
                 else:  # BxHxWxC
                     return tensor.squeeze(0).permute(2, 0, 1)  # Shape: (C, H, W)
             else:
-                raise ValueError(f"Batch size must be 1, got {shape[0]}")
+                return tensor[0]
 
         else:
             raise ValueError(f"Unsupported tensor shape: {shape}")
@@ -442,11 +443,12 @@ def rgb(
                 dummy_draw2 = ImageDraw.Draw(dummy_img2)
                 bb2 = dummy_draw2.textbbox((0, 0), str(label_text), font=pil_font)
                 base_adj = bb2[1]
+                fill_color = (0, 0, 0) if pil_img.mode in ("RGB", "RGBA") else 0
                 draw.text(
                     (int(text_x), int(text_y - base_adj)),
                     str(label_text),
                     font=pil_font,
-                    fill=(0, 0, 0),
+                    fill=fill_color,
                 )
 
         if inside:
@@ -509,6 +511,8 @@ def rgb(
 
     # Handle return types
     if as_tensor is True:
+        if return_pca:
+            return t, pca
         return t
     elif as_tensor == "pil":
         # Convert tensor to PIL Image

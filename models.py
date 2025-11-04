@@ -5,6 +5,26 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoImageProcessor, AutoModel
+from models_utils import pixel_mask_to_patch_mask
+
+def _is_instance_or_cfg(x, cls):
+    """Return 'instance' if x is an instance of cls, 'cfg' if dict, else raise."""
+    if isinstance(x, cls):
+        return "instance"
+    if isinstance(x, dict):
+        return "cfg"
+    raise TypeError(f"Expected {cls.__name__} instance or dict config, got {type(x)}.")
+
+
+def _build(component, cls):
+    """
+    Build a component given either an instance of `cls` or a config dict
+    with kwargs for cls(**config_dict).
+    """
+    kind = _is_instance_or_cfg(component, cls)
+    if kind == "instance":
+        return component
+    return cls(component)  # Pass dict as single argument for config-based constructors
 
 
 class DINOv3(nn.Module):
@@ -270,7 +290,7 @@ class DPTReassembleLayer(nn.Module):
         # Spatial resampling based on scale factor
         if scale_factor == 4.0:
             # 4x upsampling: 24x24 -> 96x96
-            self.resample = nn.ConvTranspose2d(
+            self.resample = nn.ConvTranspose2d( 
                 out_channels,
                 out_channels,
                 kernel_size=8,
@@ -551,434 +571,7 @@ class DPT_Decoder(nn.Module):
 
         return rgb_output
 
-
-# ---------- 1) POL preprocessing ----------
-class PolarizationPreprocess(nn.Module):
-    """
-    Input:
-      aolp: (B,1,H,W) in radians, typically [0, pi)
-      dolp: (B,1,H,W) in [0,1]
-    Output:
-      (B,3,H,W) = [cos(2*AoLP), sin(2*AoLP), DoLP]
-    """
-
-    def __init__(self, dinov3_model_name: str, height: int, width: int):
-        super().__init__()
-        self.prep_fn = AutoImageProcessor.from_pretrained(dinov3_model_name)
-        self.prep_fn.do_normalize = False
-        self.prep_fn.do_rescale = False
-        self.prep_fn.size = {"height": height, "width": width}
-
-    def forward(self, aolp: torch.Tensor, dolp: torch.Tensor) -> torch.Tensor:
-        # aolp = self.prep_fn(images=aolp, return_tensors="pt")["pixel_values"]
-        # dolp = self.prep_fn(images=dolp, return_tensors="pt")["pixel_values"]
-        cos2 = torch.cos(2.0 * aolp)
-        sin2 = torch.sin(2.0 * aolp)
-        cos2sin2dolp = torch.cat([cos2, sin2, dolp.clamp(0, 1)], dim=1)
-        cropped_pol = self.prep_fn(images=cos2sin2dolp, return_tensors="pt")[
-            "pixel_values"
-        ]
-        return cropped_pol
-
-
-# ---------- 2) Tiny ViT-style POL encoder ----------
-class PatchEmbed(nn.Module):
-    def __init__(self, in_ch=3, embed_dim=768, patch_size=16):
-        super().__init__()
-        self.patch_size = patch_size
-        self.proj = nn.Conv2d(
-            in_ch, embed_dim, kernel_size=patch_size, stride=patch_size
-        )
-
-    def forward(self, x):  # x: (B,C,H,W)
-        x = self.proj(x)  # (B,embed_dim,H/P,W/P)
-        B, C, Hp, Wp = x.shape
-        x = x.flatten(2).transpose(1, 2)  # (B, N, C) with N = Hp*Wp
-        return x, (Hp, Wp)
-
-
-class MLP(nn.Module):
-    def __init__(self, dim, mlp_ratio=4.0, drop=0.0):
-        super().__init__()
-        hidden = int(dim * mlp_ratio)
-        self.fc1 = nn.Linear(dim, hidden)
-        self.act = nn.GELU()
-        self.fc2 = nn.Linear(hidden, dim)
-        self.drop = nn.Dropout(drop)
-
-    def forward(self, x):
-        x = self.fc2(self.drop(self.act(self.fc1(x))))
-        return self.drop(x)
-
-
-class TransformerBlock(nn.Module):
-    def __init__(self, dim, n_heads=12, drop=0.0):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(dim)
-        self.attn = nn.MultiheadAttention(dim, n_heads, dropout=drop, batch_first=True)
-        self.norm2 = nn.LayerNorm(dim)
-        self.mlp = MLP(dim, mlp_ratio=4.0, drop=drop)
-
-    def forward(self, x):
-        # Self-attention
-        x = (
-            x
-            + self.attn(
-                self.norm1(x), self.norm1(x), self.norm1(x), need_weights=False
-            )[0]
-        )
-        x = x + self.mlp(self.norm2(x))
-        return x
-
-
-class POLViTEncoder(nn.Module):
-    """
-    ViT-like encoder for POL features; match DINOv3 hidden dim and patch size.
-
-    Args:
-        config: Dict containing configuration parameters:
-            - in_ch: int, input channels (default: 3 for cos2θ, sin2θ, DoLP)
-            - embed_dim: int, embedding dimension (default: 768)
-            - depth: int, number of transformer blocks (default: 4)
-            - n_heads: int, number of attention heads (default: 12)
-            - patch_size: int, patch size for embedding (default: 16)
-            - drop: float, dropout rate (default: 0.0)
-
-    Returns:
-        tokens: (B, N, embed_dim)  # N = (H/P)*(W/P)
-    """
-
-    def __init__(self, config: Optional[Dict] = None):
-        super().__init__()
-
-        # Default configuration
-        default_config = {
-            "in_ch": 3,
-            "embed_dim": 768,
-            "depth": 4,
-            "n_heads": 12,
-            "patch_size": 16,
-            "drop": 0.0,
-        }
-
-        self.config = {**default_config, **(config or {})}
-
-        self.patch = PatchEmbed(
-            self.config["in_ch"], self.config["embed_dim"], self.config["patch_size"]
-        )
-        self.pos = None  # initialized at first forward pass
-        self.blocks = nn.ModuleList(
-            [
-                TransformerBlock(
-                    self.config["embed_dim"],
-                    self.config["n_heads"],
-                    self.config["drop"],
-                )
-                for _ in range(self.config["depth"])
-            ]
-        )
-        self.norm = nn.LayerNorm(self.config["embed_dim"])
-
-    def forward(self, x):  # x: (B,3,H,W)
-        x, (Hp, Wp) = self.patch(x)  # (B,N,C)
-        # learnable 2D pos embedding (initialized on first run to match N)
-        N = x.shape[1]
-        if (self.pos is None) or (self.pos.shape[1] != N):
-            self.pos = nn.Parameter(torch.zeros(1, N, x.shape[2], device=x.device))
-            nn.init.trunc_normal_(self.pos, std=0.02)
-        x = x + self.pos
-        pol_hidden_states = []
-        for blk in self.blocks:
-            x = blk(x)
-            pol_hidden_states.append(self.norm(x))
-        return pol_hidden_states  # (B,N,C)
-
-
-# ---------- 3) Cross-attention block ----------
-class CrossAttentionBlock(nn.Module):
-    """
-    One cross-attention layer with residual + MLP.
-    Q from x_q (e.g., RGB tokens), K/V from x_kv (e.g., POL tokens).
-    Shapes:
-      x_q:  (B, Nq, C)
-      x_kv: (B, Nk, C)
-    Returns:
-      (B, Nq, C) fused features.
-    """
-
-    def __init__(self, dim=768, n_heads=12, drop=0.0):
-        super().__init__()
-        self.norm_q = nn.LayerNorm(dim)
-        self.norm_kv = nn.LayerNorm(dim)
-        self.cross_attn = nn.MultiheadAttention(
-            dim, n_heads, dropout=drop, batch_first=True
-        )
-        self.norm_out = nn.LayerNorm(dim)
-        self.mlp = MLP(dim, mlp_ratio=4.0, drop=drop)
-
-    def forward(self, x_q, x_kv, attn_mask=None):
-        q = self.norm_q(x_q)
-        kv = self.norm_kv(x_kv)
-        x, _ = self.cross_attn(q, kv, kv, attn_mask=attn_mask, need_weights=False)
-        x = x_q + x  # residual after attention
-        x = x + self.mlp(self.norm_out(x))  # residual after MLP
-        return x
-
-
-# ---------- 4) Simple fusion wrapper ----------
-class RGBPOLCrossFuse(nn.Module):
-    """
-    One-way (RGB<-POL) or two-way (bi-directional) fusion.
-    If bi_directional=True, returns concat([RGB_fused, POL_fused]) projected back to dim.
-    """
-
-    def __init__(self, config: Optional[Dict] = None):
-        super().__init__()
-        default_config = {
-            "embed_dim": 768,
-            "n_heads": 12,
-            "dropout": 0.0,
-            "bi_directional": False,
-        }
-        self.config = {**default_config, **(config or {})}
-        self.rgb_from_pol = CrossAttentionBlock(
-            self.config["embed_dim"], self.config["n_heads"], self.config["dropout"]
-        )
-        self.bi = self.config["bi_directional"]
-        if self.config["bi_directional"]:
-            self.pol_from_rgb = CrossAttentionBlock(
-                self.config["embed_dim"], self.config["n_heads"], self.config["dropout"]
-            )
-            self.proj = nn.Linear(
-                2 * self.config["embed_dim"], self.config["embed_dim"]
-            )
-
-    def forward(self, rgb_tokens, pol_tokens, attn_mask=None):
-        rgb_fused = self.rgb_from_pol(
-            rgb_tokens, pol_tokens, attn_mask
-        )  # Q=RGB, K/V=POL
-        if not self.bi:
-            return rgb_fused
-        pol_fused = self.pol_from_rgb(
-            pol_tokens, rgb_tokens, attn_mask
-        )  # Q=POL, K/V=RGB
-        fused = torch.cat([rgb_fused, pol_fused], dim=-1)
-        return self.proj(fused)  # (B, N_rgb, dim) if N_rgb == N_pol; else up to you
-
-
-# ------------------ small helpers ------------------
-def _is_instance_or_cfg(x, cls):
-    """Return 'instance' if x is an instance of cls, 'cfg' if dict, else raise."""
-    if isinstance(x, cls):
-        return "instance"
-    if isinstance(x, dict):
-        return "cfg"
-    raise TypeError(f"Expected {cls.__name__} instance or dict config, got {type(x)}.")
-
-
-def _build(component, cls):
-    """
-    Build a component given either an instance of `cls` or a config dict
-    with kwargs for cls(**config_dict).
-    """
-    kind = _is_instance_or_cfg(component, cls)
-    if kind == "instance":
-        return component
-    return cls(component)  # Pass dict as single argument for config-based constructors
-
-
-# ------------------ top-level model ------------------
-
-
-class RGBPOLDecomposer(nn.Module):
-    """
-    RGB + POL decomposition with cross-attention and flexible DPT decoders.
-
-    Inputs (forward):
-      batch["rgb"] : (B,3,H,W) in [0,1]
-      batch["AoP"] : (B,1,H,W) radians
-      batch["DoP"] : (B,1,H,W) in [0,1]
-
-    Returns:
-      {
-        "decoder_name": (B,C,H,W) for each configured decoder
-        "tokens": {
-           "rgb": (B,N,C),
-           "pol": (B,N,C),
-           "cross": (B,N,C)
-        }
-      }
-    """
-
-    def __init__(
-        self,
-        # 1) RGB encoder (DINOv3) — instance or config dict
-        dinov3,
-        # 2) POL encoder — instance or configs (preprocess is created inside if not passed)
-        pol_encoder=None,  # POLViTEncoder instance or dict
-        pol_preprocess=None,  # PolarizationPreprocess instance or dict
-        pol_cross_attn=None,  # RGBPOLCrossFuse instance or dict
-        # 3) Flexible decoders — dict of decoder_name -> DPT_Decoder config/instance
-        decoders=None,  # Dict[str, DPT_Decoder instance or dict config]
-        # Legacy support for backward compatibility (will be deprecated)
-        spec_decoder=None,  # DPT_Decoder instance or dict
-        diffuse_decoder=None,  # DPT_Decoder instance or dict
-        highlight_decoder=None,  # DPT_Decoder instance or dict
-        # Optional: if your DINO wrapper needs these hints
-        patch_size: int = 16,
-    ):
-        super().__init__()
-
-        # ---- RGB (DINOv3) ----
-        # Accept either an instance or a DINOv3(**cfg) dict
-        self.dinov3 = _build(dinov3, DINOv3)
-
-        self.image_size = self.dinov3.config["image_size"]
-        self.patch_size = patch_size
-        self.embed_dim = self.dinov3.feature_dim
-
-        # ---- POL branch ----
-        # Preprocess (AoLP, DoLP) → [cos2θ, sin2θ, DoLP]
-        if pol_preprocess is None:
-            self.pol_pre = PolarizationPreprocess(
-                self.dinov3.config["model_name"], self.image_size, self.image_size
-            )
-        else:
-            self.pol_pre = _build(pol_preprocess, PolarizationPreprocess)
-
-        # Encoder (ViT-like), align dim/patch with DINO
-        if pol_encoder is None:
-            self.pol_enc = POLViTEncoder(
-                in_ch=3,
-                embed_dim=self.embed_dim,
-                depth=4,
-                n_heads=12,
-                patch_size=patch_size,
-            )
-        else:
-            self.pol_enc = _build(pol_encoder, POLViTEncoder)
-
-        # Cross-attention: Q=RGB, K/V=POL
-        if pol_cross_attn is None:
-            self.cross = nn.ModuleList(
-                [
-                    RGBPOLCrossFuse(
-                        embed_dim=self.embed_dim,
-                        n_heads=12,
-                        dropout=0.1,
-                        bi_directional=False,
-                    )
-                    for _ in range(4)
-                ]
-            )
-        else:
-            self.cross = nn.ModuleList(
-                [_build(pol_cross_attn, RGBPOLCrossFuse) for _ in range(4)]
-            )
-
-        # ---- Decoders (DPT_Decoder) ----
-        # Handle flexible decoder configuration with legacy support
-        def build_dpt(dec):
-            """Build DPT decoder from config or instance."""
-            if isinstance(dec, DPT_Decoder):
-                return dec
-            if isinstance(dec, dict):
-                # DPT_Decoder takes a single config dict
-                config = {
-                    "feature_dim": self.embed_dim,
-                    **dec,
-                }
-                return DPT_Decoder(config)
-            raise TypeError("Decoder must be DPT_Decoder instance or dict.")
-
-        # Use flexible decoders if provided, otherwise fall back to legacy format
-        if decoders is not None:
-            self.decoder_names = list(decoders.keys())
-            self.decoders = nn.ModuleDict()
-            for decoder_name, decoder_config in decoders.items():
-                self.decoders[decoder_name] = build_dpt(decoder_config)
-        else:
-            # Legacy support - create decoders from individual parameters
-            legacy_decoders = {}
-            
-            # Specular decoder
-            if spec_decoder is not None:
-                legacy_decoders["specular"] = spec_decoder
-            else:
-                legacy_decoders["specular"] = {
-                    "use_bn": True, 
-                    "readout_type": "project",
-                    "output_channels": 3,
-                }
-            
-            # Diffuse decoder  
-            if diffuse_decoder is not None:
-                legacy_decoders["diffuse"] = diffuse_decoder
-            else:
-                legacy_decoders["diffuse"] = {
-                    "use_bn": True,
-                    "readout_type": "project", 
-                    "output_channels": 3,
-                }
-                
-            # Highlight decoder
-            if highlight_decoder is not None:
-                legacy_decoders["highlight"] = highlight_decoder
-            else:
-                legacy_decoders["highlight"] = {
-                    "use_bn": True,
-                    "readout_type": "project",
-                    "output_channels": 1,
-                }
-            
-            self.decoder_names = list(legacy_decoders.keys())
-            self.decoders = nn.ModuleDict()
-            for decoder_name, decoder_config in legacy_decoders.items():
-                self.decoders[decoder_name] = build_dpt(decoder_config)
-
-    def _rgb_tokens(self, rgb_preproc):
-        """Extract DINOv3 tokens and infer (Hp, Wp) if wrapper doesn’t return them."""
-        with torch.no_grad():
-            out = self.dinov3(rgb_preproc)
-        tokens = out.get("last_hidden_state", out.get("tokens"))
-        if tokens is None:
-            raise KeyError(
-                # "DINOv3 wrapper must return 'last_hidden_state' or 'tokens'."
-            )
-        Hp = self.image_size // self.patch_size
-        Wp = self.image_size // self.patch_size
-        return tokens, (Hp, Wp)
-
-    def forward(self, batch):
-        # 1) RGB → DINO tokens
-        rgb_in = self.dinov3.preprocess_image(batch["rgb"])
-        rgb_tokens = self.dinov3(rgb_in)["selected_hidden_states"]
-
-        # 2) POL → preprocess → POL tokens
-        pol_in = self.pol_pre(batch["AoP"], batch["DoP"])  # (B,3,H,W)
-        pol_tokens = self.pol_enc(pol_in)  # (B,N,C)
-        # 3) CROSS (Q=RGB, K/V=POL)
-        cross_tokens = []
-        for i in range(4):
-            cross_tokens.append(self.cross[i](rgb_tokens[i], pol_tokens[i]))
-
-        # 6) Decode with flexible decoder heads
-        outputs = {}
-        for decoder_name in self.decoder_names:
-            decoder_output = self.decoders[decoder_name](cross_tokens)
-            outputs[decoder_name] = decoder_output
-
-        # Optional: Add tokens for debugging/analysis
-        # outputs.update({
-        #     "rgb_tokens": rgb_tokens,
-        #     "pol_tokens": pol_tokens,
-        #     "cross_tokens": cross_tokens,
-        # })
-
-        return outputs
-
-
-class RGBDistillDecomposer(nn.Module):
+class UnReflect_Model(nn.Module):
     """
     RGB with flexible DPT decoders.
 
@@ -1020,24 +613,110 @@ class RGBDistillDecomposer(nn.Module):
 
         # ---- Decoders (DPT_Decoder) ----
         # Handle flexible decoder configuration with legacy support
-        def build_dpt(dec):
-            """Build DPT decoder from config or instance."""
-            if isinstance(dec, DPT_Decoder):
+        def build_dpt(dec, decoder_name=None):
+            """Build a decoder from config or instance (standard or FiLM-conditioned).
+
+            Accepts either an instantiated `DPT_Decoder`/`FiLMConditionedDPT` or a
+            config dict. When a config dict is provided, if it contains
+            `use_film` (or `USE_FILM`) set to True, a `FiLMConditionedDPT` is
+            created; otherwise a standard `DPT_Decoder` is created. The config
+            dict is passed as a single dictionary argument to the decoder's
+            constructor, augmented with the resolved `feature_dim`.
+            
+            If `from_pretrained` (or `FROM_PRETRAINED`) is set and not empty,
+            the decoder weights are loaded from that path and the decoder is frozen.
+            
+            Args:
+                dec: Decoder instance or config dict
+                decoder_name: Optional decoder name for prefix stripping when loading weights
+            """
+            if isinstance(dec, (DPT_Decoder, FiLMConditionedDPT)):
                 return dec
             if isinstance(dec, dict):
-                # DPT_Decoder takes a single config dict
+                # Extract pretrained path before building decoder
+                pretrained_path = dec.get("from_pretrained", dec.get("FROM_PRETRAINED", ""))
+                # Determine whether to build FiLM-conditioned or standard decoder
+                use_film = bool(dec.get("use_film", dec.get("USE_FILM", False)))
+                # Build config dict for the decoder class
                 config = {
                     "feature_dim": self.embed_dim,
                     **dec,
                 }
-                return DPT_Decoder(config)
-            raise TypeError("Decoder must be DPT_Decoder instance or dict.")
+                # Remove the control flags from the config passed into the module
+                config.pop("use_film", None)
+                config.pop("USE_FILM", None)
+                config.pop("from_pretrained", None)
+                config.pop("FROM_PRETRAINED", None)
+                
+                # Create decoder instance
+                decoder = FiLMConditionedDPT(config) if use_film else DPT_Decoder(config)
+                
+                # Load pretrained weights and freeze if path is specified and not empty
+                if pretrained_path and pretrained_path != "":
+                    if not os.path.exists(pretrained_path):
+                        raise FileNotFoundError(
+                            f"Pretrained decoder weights not found at: {pretrained_path}"
+                        )
+                    
+                    # Load checkpoint (handle both raw state_dict and checkpoint formats)
+                    checkpoint = torch.load(pretrained_path, map_location="cpu", weights_only=False)
+                    
+                    # Extract state dict (handle both formats)
+                    state_dict = checkpoint
+                    if isinstance(checkpoint, dict):
+                        # Try common checkpoint keys
+                        state_dict = (
+                            checkpoint.get("model_state_dict") or
+                            checkpoint.get("state_dict") or
+                            checkpoint
+                        )
+                    
+                    # Strip common prefixes if state dict was saved as part of larger model
+                    # Handle cases like "decoders.diffuse.weight" -> "weight" or "decoder.weight" -> "weight"
+                    if isinstance(state_dict, dict) and decoder_name and len(state_dict) > 0:
+                        sample_key = next(iter(state_dict.keys()))
+                        if "." in sample_key:
+                            # Try to find decoder-specific prefix pattern
+                            prefix_options = [
+                                f"decoders.{decoder_name}.",
+                                f"{decoder_name}.",
+                                "decoder.",
+                            ]
+                            for prefix in prefix_options:
+                                # Check if any keys start with this prefix
+                                matching_keys = [k for k in state_dict.keys() if k.startswith(prefix)]
+                                if matching_keys:
+                                    # Strip decoder prefix from matching keys, keep others as-is
+                                    stripped_dict = {}
+                                    for k, v in state_dict.items():
+                                        if k.startswith(prefix):
+                                            stripped_dict[k[len(prefix):]] = v
+                                        else:
+                                            stripped_dict[k] = v
+                                    state_dict = stripped_dict
+                                    break
+                    
+                    # Load weights with strict=False to handle partial matches
+                    missing_keys, unexpected_keys = decoder.load_state_dict(state_dict, strict=False)
+                    if missing_keys:
+                        import warnings
+                        warnings.warn(
+                            f"Some keys were missing when loading pretrained decoder from {pretrained_path}: {missing_keys[:min(5, len(missing_keys))]}..."
+                        )
+                    
+                    # Freeze all decoder parameters
+                    for param in decoder.parameters():
+                        param.requires_grad = False
+                    decoder.eval()  # Set to eval mode for frozen decoder
+                
+                return decoder
+            raise TypeError("Decoder must be DPT_Decoder/FiLMConditionedDPT instance or dict.")
 
 
         self.decoder_names = list(decoders.keys())
         self.decoders = nn.ModuleDict()
         for decoder_name, decoder_config in decoders.items():
-            self.decoders[decoder_name] = build_dpt(decoder_config)
+            self.decoders[decoder_name] = build_dpt(decoder_config, decoder_name=decoder_name)
 
     def _rgb_tokens(self, rgb_preproc):
         """Extract DINOv3 tokens and infer (Hp, Wp) if wrapper doesn’t return them."""
@@ -1070,299 +749,261 @@ class RGBDistillDecomposer(nn.Module):
         # })
 
         return outputs
-
-def get_model_parameter_summary(model):
+    
+class RGBDistillDecomposer(UnReflect_Model):
+    def __init__(self):
+        super().__init__()
+        
+# ---- 1) A FiLM-enabled DPT that can be used for the diffuse/spec decoders ----
+class FiLMConditionedDPT(DPT_Decoder):
     """
-    Generate a comprehensive parameter summary for RGBPOLDecomposer or RGBDistillDecomposer models.
-
-    Args:
-        model: RGBPOLDecomposer or RGBDistillDecomposer instance
-
-    Returns:
-        dict: Detailed parameter summary with counts and breakdowns
+    Drop-in replacement for DPT_Decoder that accepts a spatial mask (B,1,H,W)
+    (e.g., predicted highlight map) and applies FiLM at each fusion stage.
     """
-    if not isinstance(model, (RGBPOLDecomposer, RGBDistillDecomposer)):
-        raise ValueError("Model must be RGBPOLDecomposer or RGBDistillDecomposer")
+    def __init__(self, config=None):
+        super().__init__(config)
+        self._mask = None
+        self._mask_enabled = False
 
-    def count_parameters(module, trainable_only=False):
-        """Count parameters in a module."""
-        if trainable_only:
-            return sum(p.numel() for p in module.parameters() if p.requires_grad)
+        # For each fusion stage we predict [gamma, beta] from [mask, distance]
+        self.film = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(2, 32, 3, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, self.config["fusion_hidden_size"] * 2, 1),
+            ) for _ in range(4)
+        ])
+
+    @torch.no_grad()
+    def _build_mask_pyr(self, m: torch.Tensor):
+        """
+        m: (B,1,H,W) in [0,1]. Produces a pyramid of [mask, distance] at stage sizes.
+        Stage spatial sizes after fusion are: 12, 24, 48, 96 (before last upsample).
+        """
+        H, W = self.out_image_size
+        # Cheap distance proxy (replace with proper EDT if you have it)
+        inv = 1.0 - m
+        d = inv
+        for _ in range(3):
+            d = F.avg_pool2d(d, 3, 1, 1)
+        d = 1.0 - d
+        d = d / (d.amax(dim=(-1, -2), keepdim=True) + 1e-6)
+
+        # Spatial sizes to match fused feature maps at each fusion stage:
+        # stage3 -> (H/32, W/32), stage2 -> (H/16, W/16), stage1 -> (H/8, W/8), stage0 -> (H/4, W/4)
+        sizes = [
+            (H // 32, W // 32),  # e.g., 14x14 when H=W=448 (12x12 when H=W=384)
+            (H // 16, W // 16),  # e.g., 28x28 (24x24)
+            (H // 8,  W // 8),   # e.g., 56x56 (48x48)
+            (H // 4,  W // 4),   # e.g., 112x112 (96x96)
+            # (H // 2,  W // 2),   # e.g., 112x112 (96x96)
+        ]
+
+        pyr = []
+        for (hh, ww) in sizes:
+            mm = F.interpolate(m, size=(hh, ww), mode="nearest")
+            dd = F.interpolate(d, size=(hh, ww), mode="bilinear", align_corners=True)
+            pyr.append(torch.cat([mm, dd], dim=1))  # (B,2,hh,ww)
+        return pyr
+
+    def set_mask(self, mask: torch.Tensor | None):
+        """
+        mask: (B,1,H,W) in [0,1] (soft is fine). Set to None to disable FiLM.
+        """
+        self._mask = mask
+        self._mask_enabled = mask is not None
+
+    def _apply_film(self, x: torch.Tensor, ab_layer: nn.Module, cond: torch.Tensor):
+        ab = ab_layer(cond)                    # (B, 2C, H, W)
+        gamma, beta = torch.chunk(ab, 2, dim=1)
+        return gamma * x + beta
+
+    def forward(self, hidden_states, return_mask: bool = True):
+        # Standard reassembly part (unchanged)
+        H, W = self.out_image_size
+        ph, pw = H // 16, W // 16
+
+        feats = []
+        for hs, reas in zip(hidden_states, self.reassemble_layers):
+            feats.append(reas(hs, ph, pw))  # sizes: [96,96], [48,48], [24,24], [12,12] in channels [96,192,384,768]
+
+        # Prepare mask pyramid if available
+        mask_pyr = self._build_mask_pyr(self._mask) if self._mask_enabled else [None]*4
+
+        # Fusion with FiLM at every stage
+        fused = self.fusion_blocks[3](feats[3])                   # (B,256,12,12)
+        if mask_pyr[0] is not None:
+            fused = self._apply_film(fused, self.film[3], mask_pyr[0])
+
+        fused = F.interpolate(fused, scale_factor=2, mode="bilinear", align_corners=True)  # -> 24
+
+        fused = fused + self.fusion_blocks[2](feats[2])           # (B,256,24,24)
+        if mask_pyr[1] is not None:
+            fused = self._apply_film(fused, self.film[2], mask_pyr[1])
+        fused = self.drop2d(fused)
+        fused = F.interpolate(fused, scale_factor=2, mode="bilinear", align_corners=True)  # -> 48
+
+        fused = fused + self.fusion_blocks[1](feats[1])           # (B,256,48,48)
+        if mask_pyr[2] is not None:
+            fused = self._apply_film(fused, self.film[1], mask_pyr[2])
+        fused = self.drop2d(fused)
+        fused = F.interpolate(fused, scale_factor=2, mode="bilinear", align_corners=True)  # -> 96
+
+        fused = fused + self.fusion_blocks[0](feats[0])           # (B,256,96,96)
+        if mask_pyr[3] is not None:
+            fused = self._apply_film(fused, self.film[0], mask_pyr[3])
+        fused = self.drop2d(fused)
+        fused = F.interpolate(fused, scale_factor=2, mode="bilinear", align_corners=True)  # -> 192
+
+        out = self.rgb_head(fused)                                # (B,C,H,W) after final resize
+        if self.config["output_image_size"] or (out.shape[-2:] != (H, W)):
+            out = F.interpolate(out, size=(H, W), mode="bilinear", align_corners=True)
+        if return_mask:
+            return out, mask_pyr
+        return out
+
+# ---- 2) Wiring in RGBDistillDecomposer: run highlight first, then condition diffuse/spec ----
+class UnReflect_Model_FiLMConditioned(UnReflect_Model):
+    """
+    Assumes decoders dict contains at least:
+      - "highlight": DPT_Decoder(output_channels=1) that predicts soft mask in [0,1]
+      - "diffuse":   FiLMConditionedDPT(...)        that will be conditioned by the mask
+    You can add "specular" similarly if desired.
+    """
+    def forward(self, model_input_dict):
+        x = model_input_dict["rgb"]                     # (B,3,H,W) in [0,1]
+        rgb_in = self.dinov3.preprocess_image(x)
+        tokens_list = self.dinov3(rgb_in)["selected_hidden_states"]  # List[4] of [B,N_p,C]
+
+        outputs = {}
+
+        # 1) Predict highlight mask (soft), from highlight head
+        if "highlight" not in self.decoders:
+            raise KeyError("decoders must include a 'highlight' head for Option A.")
+        hl_logits = self.decoders["highlight"](tokens_list)        # (B,1,H,W) in [0,1] (Sigmoid in head)
+        mask_soft = hl_logits.clamp(0, 1)                          # treat as soft attention; no hard threshold here
+        outputs["highlight"] = mask_soft
+
+        # 2) Condition other heads with FiLM if supported
+        for name, dec in self.decoders.items():
+            if name == "highlight":
+                continue
+            if hasattr(dec, "set_mask"):
+                dec.set_mask(mask_soft)
+            outputs[name] = dec(tokens_list)
+            # outputs["mask_pyr"] = mask_pyr
+        return outputs
+
+
+
+# ---- 1) Tiny token-inpainter (works on patch tokens) ----
+class _TinyMLP(nn.Module):
+    def __init__(self, dim, mlp_ratio=4.0, drop=0.0):
+        super().__init__()
+        hid = int(dim * mlp_ratio)
+        self.fc1 = nn.Linear(dim, hid)
+        self.act = nn.GELU()
+        self.drop = nn.Dropout(drop)
+        self.fc2 = nn.Linear(hid, dim)
+    def forward(self, x):
+        return self.fc2(self.drop(self.act(self.fc1(x))))
+
+class _TransformerBlk(nn.Module):
+    def __init__(self, dim=768, heads=12, drop=0.0):
+        super().__init__()
+        self.n1 = nn.LayerNorm(dim)
+        self.attn = nn.MultiheadAttention(dim, heads, dropout=drop, batch_first=True)
+        self.n2 = nn.LayerNorm(dim)
+        self.mlp = _TinyMLP(dim, 4.0, drop)
+    def forward(self, x, attn_bias=None):
+        q = k = v = self.n1(x)
+        if attn_bias is None:
+            a, _ = self.attn(q, k, v, need_weights=False)
         else:
-            return sum(p.numel() for p in module.parameters())
+            # attn_bias: (B, N, N) added to logits; implement via attn_mask per batch
+            # Fallback: no bias (PyTorch's MHA doesn't support per-batch logit bias directly)
+            a, _ = self.attn(q, k, v, need_weights=False)
+        x = x + a
+        x = x + self.mlp(self.n2(x))
+        return x
 
-    def count_parameters_by_name(module, name_patterns):
-        """Count parameters for modules matching name patterns."""
-        total_params = 0
-        trainable_params = 0
-
-        for name, child in module.named_modules():
-            if any(pattern in name for pattern in name_patterns):
-                total_params += sum(p.numel() for p in child.parameters())
-                trainable_params += sum(
-                    p.numel() for p in child.parameters() if p.requires_grad
-                )
-
-        return total_params, trainable_params
-
-    # Initialize summary
-    summary = {
-        "model_type": model.__class__.__name__,
-        "total_parameters": 0,
-        "trainable_parameters": 0,
-        "frozen_parameters": 0,
-        "components": {},
-    }
-
-    # RGB Encoder (DINOv3)
-    dinov3_total, dinov3_trainable = (
-        count_parameters(model.dinov3, trainable_only=False),
-        count_parameters(model.dinov3, trainable_only=True),
-    )
-    summary["components"]["rgb_encoder"] = {
-        "total": dinov3_total,
-        "trainable": dinov3_trainable,
-        "frozen": dinov3_total - dinov3_trainable,
-        "description": "DINOv3 backbone for RGB feature extraction",
-    }
-
-    # POL components (only for RGBPOLDecomposer)
-    if isinstance(model, RGBPOLDecomposer):
-        # POL Preprocessing
-        pol_pre_total, pol_pre_trainable = (
-            count_parameters(model.pol_pre, trainable_only=False),
-            count_parameters(model.pol_pre, trainable_only=True),
-        )
-        summary["components"]["pol_preprocessing"] = {
-            "total": pol_pre_total,
-            "trainable": pol_pre_trainable,
-            "frozen": pol_pre_total - pol_pre_trainable,
-            "description": "Polarization preprocessing (AoLP, DoLP → [cos2θ, sin2θ, DoLP])",
-        }
-
-        # POL Encoder
-        pol_enc_total, pol_enc_trainable = (
-            count_parameters(model.pol_enc, trainable_only=False),
-            count_parameters(model.pol_enc, trainable_only=True),
-        )
-        summary["components"]["pol_encoder"] = {
-            "total": pol_enc_total,
-            "trainable": pol_enc_trainable,
-            "frozen": pol_enc_total - pol_enc_trainable,
-            "description": "POLViT encoder for polarization feature extraction",
-        }
-
-        # Cross-attention modules
-        cross_total, cross_trainable = (
-            count_parameters(model.cross, trainable_only=False),
-            count_parameters(model.cross, trainable_only=True),
-        )
-        summary["components"]["cross_attention"] = {
-            "total": cross_total,
-            "trainable": cross_trainable,
-            "frozen": cross_total - cross_trainable,
-            "description": "RGB-POL cross-attention fusion modules",
-        }
-
-    # Decoders
-    decoders = {
-        "specular_decoder": model.decS,
-        "diffuse_decoder": model.decD,
-        "highlight_decoder": model.decH,
-    }
-
-    for name, decoder in decoders.items():
-        dec_total, dec_trainable = (
-            count_parameters(decoder, trainable_only=False),
-            count_parameters(decoder, trainable_only=True),
-        )
-        summary["components"][name] = {
-            "total": dec_total,
-            "trainable": dec_trainable,
-            "frozen": dec_total - dec_trainable,
-            "description": f"DPT decoder for {name.replace('_decoder', '')} component",
-        }
-
-    # Calculate totals
-    summary["total_parameters"] = sum(
-        comp["total"] for comp in summary["components"].values()
-    )
-    summary["trainable_parameters"] = sum(
-        comp["trainable"] for comp in summary["components"].values()
-    )
-    summary["frozen_parameters"] = (
-        summary["total_parameters"] - summary["trainable_parameters"]
-    )
-
-    return summary
-
-
-def print_model_parameter_summary(model, detailed=True):
+class TokenInpainter(nn.Module):
     """
-    Print a formatted parameter summary for RGBPOLDecomposer or RGBDistillDecomposer models.
-
-    Args:
-        model: RGBPOLDecomposer or RGBDistillDecomposer instance
-        detailed: Whether to print detailed breakdown by component
+    Completes masked patch tokens from context.
+    Input:  T  = (B, N, C) tokens for a selected DINO layer
+            pm = (B, N)    boolean mask at patch resolution (True = masked/hole)
+    Output: X  = (B, N, C) refined tokens; we will take X at masked positions
     """
-    summary = get_model_parameter_summary(model)
+    def __init__(self, dim=768, depth=4, heads=16, drop=0.0):
+        super().__init__()
+        self.blocks = nn.ModuleList([_TransformerBlk(dim, heads, drop) for _ in range(depth)])
+        self.norm = nn.LayerNorm(dim)
+        # Learnable mask token to seed missing positions
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, dim))
+        # nn.init.trunc_normal_(self.mask_token, std=0.02)
 
-    print(f"\n{'=' * 60}")
-    print(f"MODEL PARAMETER SUMMARY: {summary['model_type']}")
-    print(f"{'=' * 60}")
+    def forward(self, T: torch.Tensor, pm_bool: torch.Tensor):
+        # Replace masked positions with a learned vector before refinement
+        B, N, C = T.shape
+        mask_tok = self.mask_token.expand(B, 1, C)
+        T_seed = T.clone()
+        # Scatter mask token into masked positions
+        for b in range(B):
+            if pm_bool[b].any():
+                T_seed[b, pm_bool[b]] = mask_tok[b, 0]
+        X = T_seed
+        for blk in self.blocks:
+            X = blk(X)  # (B,N,C)
+        return self.norm(X)
 
-    # Overall statistics
-    print("\n📊 OVERALL STATISTICS:")
-    print(f"   Total Parameters:     {summary['total_parameters']:,}")
-    print(f"   Trainable Parameters: {summary['trainable_parameters']:,}")
-    print(f"   Frozen Parameters:    {summary['frozen_parameters']:,}")
-    print(
-        f"   Trainable Ratio:      {summary['trainable_parameters'] / summary['total_parameters'] * 100:.1f}%"
-    )
-
-    if detailed:
-        print("\n🔍 DETAILED BREAKDOWN:")
-        print(
-            f"{'Component':<25} {'Total':<12} {'Trainable':<12} {'Frozen':<12} {'Ratio':<8}"
-        )
-        print(f"{'-' * 25} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 8}")
-
-        for comp_name, comp_data in summary["components"].items():
-            ratio = (
-                comp_data["trainable"] / comp_data["total"] * 100
-                if comp_data["total"] > 0
-                else 0
-            )
-            print(
-                f"{comp_name:<25} {comp_data['total']:<12,} {comp_data['trainable']:<12,} {comp_data['frozen']:<12,} {ratio:<7.1f}%"
-            )
-
-        print("\n📝 COMPONENT DESCRIPTIONS:")
-        for comp_name, comp_data in summary["components"].items():
-            print(f"   • {comp_name}: {comp_data['description']}")
-
-    print(f"\n{'=' * 60}")
-
-
-def get_model_size_mb(model):
+class UnReflect_Model_TokenInpainter(UnReflect_Model):
     """
-    Calculate model size in MB (approximate).
-
-    Args:
-        model: RGBPOLDecomposer or RGBDistillDecomposer instance
-
-    Returns:
-        float: Model size in MB
+    Assumes decoders dict contains at least:
+      - "highlight": DPT_Decoder(output_channels=1) that predicts a soft mask in [0,1]
+      - "diffuse":   (regular) DPT_Decoder that expects standard DINO tokens
+    Keeps DPT decoders intact; completes tokens first.
     """
-    summary = get_model_parameter_summary(model)
-    # Assuming float32 (4 bytes per parameter)
-    size_mb = summary["total_parameters"] * 4 / (1024 * 1024)
-    return size_mb
+    def __init__(self, dinov3, decoders, patch_size: int = 16,
+                 token_inpainter_cfg: dict | None = None, **kwargs):
+        super().__init__(dinov3=dinov3, decoders=decoders, patch_size=patch_size, **kwargs)
+        dim = self.embed_dim
+        self.token_inpaint = TokenInpainter(dim=dim, **(token_inpainter_cfg or {}))
 
+    def forward(self, model_input_dict):
+        x = model_input_dict["rgb"]              # (B,3,H,W)
+        rgb_in = self.dinov3.preprocess_image(x)
+        tokens_list = self.dinov3(rgb_in)["selected_hidden_states"]  # List[4] of (B,N,C), PATCH TOKENS ONLY
 
-def load_best_model_by_run(run_identifier: str, device: Optional[torch.device] = None, runs_dir: Optional[str] = None) -> nn.Module:
-    """
-    Load and return a model instantiated from a run's best checkpoint.
+        outputs = {}
 
-    Args:
-        run_identifier: Run name or ID used to locate the run directory.
-        device: Optional torch.device. Defaults to CUDA if available else CPU.
-        runs_dir: Optional absolute path to the root runs directory. If None, uses the
-                  same resolution logic as the training engine (RESUlTS_DIR env or default).
+        # 1) Predict soft highlight mask in image space
+        if "highlight" not in self.decoders:
+            raise KeyError("decoders must include a 'highlight' head for Option B.")
+        hl_soft = self.decoders["highlight"](tokens_list)          # (B,1,H,W) in [0,1]
+        outputs["highlight"] = hl_soft
 
-    Returns:
-        nn.Module: The model put on the requested device, loaded with best weights, set to eval().
+        # 2) Build patch-level mask (same for all selected layers)
+        P = self.patch_size
+        
+        # patchmask_bool = 1 : MUST IMPAINT THE TOKEN
+        # patchmask_bool = 0 : IS TEACHER TOKEN
+        patchmask_bool = pixel_mask_to_patch_mask(hl_soft, patch_size=P)  # (B, N) boolean
+        outputs["patch_mask"] = patchmask_bool
+        # 3) Token completion per selected layer, then form completed token list
+        completed_tokens = []
+        for T in tokens_list:                                      # (B,N,C)
+            T_inpained = self.token_inpaint(T, patchmask_bool)                         # refined all tokens
+            # keep teacher tokens on context; use predicted tokens on masked patches
+            T_comp = torch.where(patchmask_bool.unsqueeze(-1), T_inpained, T)  # (B,N,C)
+            completed_tokens.append(T_comp)
 
-    Raises:
-        FileNotFoundError: If the run or best checkpoint cannot be found.
-        RuntimeError: If model instantiation or state loading fails.
-    """
-    # Resolve device
-    load_device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # 4) Decode with completed tokens (do NOT pass mask to decoder)
+        for name, dec in self.decoders.items():
+            if name == "highlight":
+                continue
+            outputs[name] = dec(completed_tokens)
 
-    # Resolve runs directory using same logic as engine initializers if not provided
-    if runs_dir is None:
-        try:
-            from utilities import engine_initializers as initialize  # local import to avoid cycles
-            runs_dir = initialize.device_and_directories({})["runs_dir"]
-        except Exception:
-            # Fallback: environment variable or repo default
-            runs_dir = os.path.expandvars(
-                os.getenv(
-                    "RESULTS_DIR",
-                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs"),
-                )
-            )
-
-    # Find the run and its models directory
-    try:
-        from utilities.run_resume import get_resume_info  # local import to avoid cycles
-        resume_info = get_resume_info(run_identifier, runs_dir)
-    except Exception as e:
-        raise FileNotFoundError(f"Failed to resolve run '{run_identifier}' in runs_dir '{runs_dir}': {e}")
-
-    if resume_info is None:
-        raise FileNotFoundError(f"Run not found or invalid: {run_identifier}")
-
-    models_dir = resume_info.get("models_dir")
-    run_dir = resume_info.get("run_dir")
-    if models_dir is None or not os.path.isdir(models_dir):
-        raise FileNotFoundError(f"Models directory not found for run: {run_identifier}")
-
-    # Prefer weights_best.pt (EarlyStopping), fallback to best_model.pth (engine best)
-    candidate_paths = [
-        os.path.join(models_dir, "weights_best.pt"),
-        os.path.join(models_dir, "best_model.pth"),
-    ]
-    best_ckpt = next((p for p in candidate_paths if os.path.exists(p)), None)
-    if best_ckpt is None:
-        raise FileNotFoundError(
-            f"Best checkpoint not found. Looked for: {', '.join(candidate_paths)}"
-        )
-
-    # Load checkpoint and reconstruct model from saved config
-    checkpoint = torch.load(best_ckpt, map_location=load_device, weights_only=False)
-
-    # Prefer config packaged inside checkpoint; else use run's config from resume_info
-    saved_config = checkpoint.get("config", resume_info.get("config"))
-    if saved_config is None:
-        # As a last resort, try to read config.json from the run directory
-        import json
-
-        config_path = os.path.join(run_dir, "config.json") if run_dir else None
-        if config_path and os.path.exists(config_path):
-            with open(config_path, "r") as f:
-                saved_config = json.load(f)
-        else:
-            raise RuntimeError("No configuration found to rebuild model architecture")
-
-    # Ensure DotMap for the model factory
-    try:
-        from dotmap import DotMap  # local import
-        if not isinstance(saved_config, DotMap):
-            saved_config = DotMap(saved_config)
-    except Exception:
-        # If DotMap import fails, attempt to use raw dict (factory expects DotMap but guard anyway)
-        pass
-
-    # Build model using the main factory to ensure identical architecture
-    try:
-        from main import create_model_from_config  # local import to avoid top-level cycle
-        model = create_model_from_config(saved_config, load_device)
-    except Exception as e:
-        raise RuntimeError(f"Failed to instantiate model from saved config: {e}")
-
-    # Load weights (handle both full checkpoint and raw state_dict formats)
-    state_dict = checkpoint.get("model_state_dict", None)
-    if state_dict is None:
-        # If the file is a plain state_dict
-        state_dict = checkpoint
-
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    if len(unexpected) > 0:
-        # Not fatal; but surface to caller as warning via exception message for clarity
-        # Users can inspect and decide to ignore
-        pass
-
-    model = model.to(load_device).eval()
-    return model
+        # Optionally return tokens for loss computation (feature distillation etc.)
+        outputs["tokens_teacher"] = tokens_list
+        outputs["tokens_completed"] = completed_tokens
+        return outputs
