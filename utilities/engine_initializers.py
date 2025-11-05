@@ -165,11 +165,36 @@ def optimizers(model, config):
     """Initialize optimizers and related components"""
     # Main optimizer
     optimizer_class = getattr(optimization, config.get("OPTIMIZER_BOOTSTRAP_NAME"))
-    optimizer = optimizer_class(
-        model.parameters(),
-        lr=config.get("LEARNING_RATE"),
-        weight_decay=config.get("WEIGHT_DECAY"),
-    )
+    base_lr = config.get("LEARNING_RATE")
+    weight_decay = config.get("WEIGHT_DECAY")
+    # Optional: higher LR for token inpainter to ensure it moves even if other parts are frozen
+    token_lr = config.get("LEARNING_RATE_TOKEN_INPAINTER", base_lr)
+
+    # Build param groups deterministically
+    token_params = []
+    other_params = []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if name.startswith("token_inpaint."):
+            token_params.append(p)
+        else:
+            other_params.append(p)
+
+    if len(token_params) == 0:
+        # Fallback: single group
+        optimizer = optimizer_class(
+            filter(lambda p: p.requires_grad, model.parameters()),
+            lr=base_lr,
+            weight_decay=weight_decay,
+        )
+    else:
+        optimizer = optimizer_class(
+            [
+                {"params": other_params, "lr": base_lr, "weight_decay": weight_decay},
+                {"params": token_params, "lr": token_lr, "weight_decay": weight_decay},
+            ]
+        )
 
     # Gradient scaler for mixed precision
     scaler = torch.amp.GradScaler(

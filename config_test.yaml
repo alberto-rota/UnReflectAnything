@@ -165,7 +165,7 @@ parameters:
     value: [0, 360]
   SOFT_HIGHLIGHT_THRESHOLD:
     value: 0.9
-  REAL_HIGHLIGHT_DILATION:
+  DATASET_HIGHLIGHT_DILATION:
     value: 15
   # Highlight regression stabilization (optional)
   HLREG_BALANCE_MODE:

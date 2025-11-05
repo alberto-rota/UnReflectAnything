@@ -67,6 +67,7 @@ parameters:
         VAL_SCENES: "station"
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
+        FEW_IMAGES: False
         SAMPLE_EVERY_N: 8
         LOAD_RGB_ONLY: True
     
@@ -75,6 +76,7 @@ parameters:
         VAL_SCENES: "PSD_Val"
         TARGET_SIZE: [448,448]  
         RESIZE_MODE: "resize+crop"
+        FEW_IMAGES: False
         SAMPLE_EVERY_N: 1
         LOAD_RGB_ONLY: True
 
@@ -132,7 +134,7 @@ parameters:
   BATCH_SIZE: # Max batch size with img size 448 is 32
     value: 32
   NUM_WORKERS:
-    value: 12
+    value: 4
   SHUFFLE:
     value: True
   PIN_MEMORY:
@@ -146,7 +148,7 @@ parameters:
   SURFACE_ROUGHNESS:
     value: 8.0
   INTENSITY:
-    value: 2.0
+    value: 1.5
   # NORMAL_NOISE:
   #   value: 1
   # NORMAL_NOISE_CELLS:
@@ -161,22 +163,22 @@ parameters:
     value: [0, 360]
   LIGHT_ABOVE_BELOW_ANGLE:
     value: [0, 360]
-  SOFT_HIGHLIGHT_THRESHOLD:
+  DATASET_HIGHLIGHT_DILATION:
+    value: 51
+  DATASET_HIGHLIGHT_THRESHOLD:
     value: 0.875
-  REAL_HIGHLIGHT_DILATION:
-    value: 25
 
   ### OPTIMIZATION                                                                      
   LEARNING_RATE:
-    value: 5.0e-4
+    value: 1.0e-5
   WEIGHT_DECAY:
-    value: 1.0e-8
+    value: 0.0
   EPOCHS:
-    value: 20
+    value: 100
   GRADIENT_ACCUMULATION_STEPS:
     value: 1
   WARMUP_STEPS:
-    value: 100
+    value: 2
   GRADIENT_CLIPPING_MAX_NORM:
     value: 8
   LR_SCHEDULER: 
@@ -195,9 +197,9 @@ parameters:
   SWITCH_OPTIMIZER_EPOCH:
     value: null
   OPTIMIZER_BOOTSTRAP_NAME:
-    value: "Adam"
+    value: "AdamW" 
   OPTIMIZER_REFINING_NAME:
-    value: "Adam"
+    value: "AdamW"    
   EARLY_STOPPING_PATIENCE:
     value: 20
   SAVE_INTERVAL:
@@ -205,11 +207,11 @@ parameters:
   
   ### LOSS WEIGHTS (relative to the total loss, NOT NORMALIZED LATER)                                                                              
   SPECULAR_LOSS_WEIGHT:
-    value: 1.0
+    value: 0.0
   DIFFUSE_LOSS_WEIGHT:
-    value: 1.0
+    value: 0.0
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 1.0
+    value: 0.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
     value: 0.0
   SATURATION_RING_LOSS_WEIGHT:
@@ -252,15 +254,15 @@ parameters:
   WEIGHT_CONTEXT_IDENTITY:
     value: 1.0
   WEIGHT_RING_GRAD:
-    value: 0.5
+    value: 0.0
   WEIGHT_TV_IN_HOLE:
-    value: 0.001
+    value: 1.0
   RING_DILATE_KERNEL:
     value: 15
   
   # Token-space loss parameters
   WEIGHT_TOKEN_INPAINT:
-    value: 0.01
+    value: 1.0
   TOKEN_FEAT_ALPHA:
     value: 0.5
 
@@ -268,9 +270,9 @@ parameters:
   LOG_INTERVAL:
     value: 1
   WANDB_LOG_INTERVAL:
-    value: 4
+    value: 1
   IMAGE_LOG_INTERVAL:
-    value: 5
+    value: 2
   NO_WANDB:
     value: False
   MODEL_WATCHER_FREQ_WANDB:
@@ -280,5 +282,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "FiLM decoder. Increasing highlight thresholds"
+    value: "Proper token inpainting"
   

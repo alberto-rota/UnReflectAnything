@@ -23,29 +23,28 @@ def _smoothstep(x, e0, e1):
 
 @torch.no_grad()
 def add_geometric_roughness_torch(
-    normals: torch.Tensor,                         # [B,3,H,W], in [-1,1] or [0,1]
+    normals: torch.Tensor,  # [B,3,H,W], in [-1,1] or [0,1]
     # --- blob controls ---
-    n_blobs: int = 16,                             # number of blobs
-    avg_blob_size: float = 0.10,                   # avg diameter (fraction of min(H,W) or pixels)
+    n_blobs: int = 16,  # number of blobs
+    avg_blob_size: float = 0.10,  # avg diameter (fraction of min(H,W) or pixels)
     size_unit: str = "fraction",
-    size_spread: float = 0.6,                      # lognormal spread; >0 => many small blobs
-    elongation_bias: float = 0.6,                  # 0: circular, 1: very elongated on avg
-    falloff_mean: float = 10,                    # mean softness (0=hard edge, 0.5=soft halo)
-    falloff_jitter: float = 10,                   # variation of falloff per blob
-    edge_wobble: float = 0.6,                      # amplitude of border perturbation (0..1)
-    warp_scale: int = 20,                          # spatial scale (px) of border perturbation
-    min_separation: float = 0.06,                  # keep centers apart (fraction of min(H,W))
+    size_spread: float = 0.6,  # lognormal spread; >0 => many small blobs
+    elongation_bias: float = 0.6,  # 0: circular, 1: very elongated on avg
+    falloff_mean: float = 10,  # mean softness (0=hard edge, 0.5=soft halo)
+    falloff_jitter: float = 10,  # variation of falloff per blob
+    edge_wobble: float = 0.6,  # amplitude of border perturbation (0..1)
+    warp_scale: int = 20,  # spatial scale (px) of border perturbation
+    min_separation: float = 0.06,  # keep centers apart (fraction of min(H,W))
     # --- micro-geometry controls (unchanged) ---
     wavelength_px: float = 12.0,
     wavelength_jitter: float = 0.5,
     orientation_anisotropy: float = 0.4,
     octaves: int = 2,
-    roughness_strength: float = 10,              # average angular deviation (radians)
+    roughness_strength: float = 10,  # average angular deviation (radians)
     # misc
-    seed = None,
+    seed=None,
     return_mask: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor | None]:
-
     B, C, H, W = normals.shape
     assert C == 3
     dev = normals.device
@@ -54,7 +53,7 @@ def add_geometric_roughness_torch(
     # if seed is None:
     g.manual_seed(random.randint(0, 1000000))
     # else:
-        # g.manual_seed(seed)
+    # g.manual_seed(seed)
     # normalize input to [-1,1]
     n = normals.clone()
     if n.min() >= 0:
@@ -65,23 +64,31 @@ def add_geometric_roughness_torch(
     yy, xx = torch.meshgrid(
         torch.arange(H, device=dev, dtype=torch.float32),
         torch.arange(W, device=dev, dtype=torch.float32),
-        indexing="ij"
+        indexing="ij",
     )
 
     # fbm-like noise field for warping (edge perturbations)
     def _smooth_noise(scale=28):
         h0, w0 = max(2, H // scale), max(2, W // scale)
-        base = torch.randn(1, 2, h0, w0, generator=g, device=dev)  # 2 channels -> 2D warp
+        base = torch.randn(
+            1, 2, h0, w0, generator=g, device=dev
+        )  # 2 channels -> 2D warp
         field = F.interpolate(base, size=(H, W), mode="bicubic", align_corners=False)
         return field  # [1,2,H,W]
 
     warp_field = _smooth_noise(scale=max(6, warp_scale))  # shared statistics
-    warp_field = warp_field / (warp_field.std(dim=(-2, -1), keepdim=True) + 1e-8)  # normalize
+    warp_field = warp_field / (
+        warp_field.std(dim=(-2, -1), keepdim=True) + 1e-8
+    )  # normalize
 
     # ---------- soft, perturbed super-ellipse blobs ----------
     def make_soft_blob_mask() -> torch.Tensor:
         mask = torch.zeros(1, H, W, device=dev)
-        d_mean = (avg_blob_size * min(H, W)) if size_unit == "fraction" else float(avg_blob_size)
+        d_mean = (
+            (avg_blob_size * min(H, W))
+            if size_unit == "fraction"
+            else float(avg_blob_size)
+        )
         d_mean = max(4.0, d_mean)
         min_sep_px = max(4.0, min_separation * min(H, W))
 
@@ -91,44 +98,74 @@ def add_geometric_roughness_torch(
             tries += 1
             cx = torch.empty((), device=dev).uniform_(0, W, generator=g).item()
             cy = torch.empty((), device=dev).uniform_(0, H, generator=g).item()
-            if all(((cx-px)**2 + (cy-py)**2)**0.5 >= min_sep_px for px,py in centers):
+            if all(
+                ((cx - px) ** 2 + (cy - py) ** 2) ** 0.5 >= min_sep_px
+                for px, py in centers
+            ):
                 centers.append((cx, cy))
 
-        for (cx, cy) in centers:
+        for cx, cy in centers:
             # sample size from lognormal (many small, some large)
             ln_sigma = size_spread * 0.5  # softer control
-            s = torch.exp(torch.empty((), device=dev).normal_(0, ln_sigma, generator=g))  # ~lognormal
+            s = torch.exp(
+                torch.empty((), device=dev).normal_(0, ln_sigma, generator=g)
+            )  # ~lognormal
             D = d_mean * s
             # elongation: sample axis ratio biased to small values
-            r = torch.clamp(1.0 - torch.empty((), device=dev).uniform_(0, elongation_bias, generator=g), 0.15, 1.0)
-            a = D * 0.5                      # major semi-axis
-            b = D * 0.5 * r                  # minor semi-axis
+            r = torch.clamp(
+                1.0
+                - torch.empty((), device=dev).uniform_(0, elongation_bias, generator=g),
+                0.15,
+                1.0,
+            )
+            a = D * 0.5  # major semi-axis
+            b = D * 0.5 * r  # minor semi-axis
             theta = torch.empty((), device=dev).uniform_(0, 3.1416, generator=g)
-            p = torch.empty((), device=dev).uniform_(1.8, 3.2, generator=g)  # super-ellipse exponent
+            p = torch.empty((), device=dev).uniform_(
+                1.8, 3.2, generator=g
+            )  # super-ellipse exponent
 
             # coordinate warp for irregularity
-            wob_amp = edge_wobble * 0.35 * D  # scale by size so small blobs aren't shredded
+            wob_amp = (
+                edge_wobble * 0.35 * D
+            )  # scale by size so small blobs aren't shredded
             X = xx + wob_amp * warp_field[:, 0] - cx
             Y = yy + wob_amp * warp_field[:, 1] - cy
 
             ct, st = torch.cos(theta), torch.sin(theta)
-            xr =  ct * X + st * Y
+            xr = ct * X + st * Y
             yr = -st * X + ct * Y
 
             # super-ellipse implicit metric f= (|xr/a|^p + |yr/b|^p)
-            f = torch.pow(torch.abs(xr) / (a + 1e-8), p) + torch.pow(torch.abs(yr) / (b + 1e-8), p)
+            f = torch.pow(torch.abs(xr) / (a + 1e-8), p) + torch.pow(
+                torch.abs(yr) / (b + 1e-8), p
+            )
 
             # soft falloff via smoothstep around f=1 with randomized width
-            soft = (falloff_mean * (1.0 + torch.empty((), device=dev).uniform_(-falloff_jitter, falloff_jitter, generator=g))).clamp(0.05, 0.7)
-            edge0 = 1.0 - soft   # inside value to start softening
-            edge1 = 1.0 + soft   # outside value where it goes to 0
-            blob = (1.0 - _smoothstep(f, edge0, edge1)).clamp(0, 1)  # 1 at core -> 0 outside
+            soft = (
+                falloff_mean
+                * (
+                    1.0
+                    + torch.empty((), device=dev).uniform_(
+                        -falloff_jitter, falloff_jitter, generator=g
+                    )
+                )
+            ).clamp(0.05, 0.7)
+            edge0 = 1.0 - soft  # inside value to start softening
+            edge1 = 1.0 + soft  # outside value where it goes to 0
+            blob = (1.0 - _smoothstep(f, edge0, edge1)).clamp(
+                0, 1
+            )  # 1 at core -> 0 outside
             blob = blob.unsqueeze(0)
 
             mask = (mask + blob).clamp(0, 1)
 
         # mild blur to merge micro-holes but keep shapes
-        mask = F.gaussian_blur(mask, (5, 5), sigma=(1.2, 1.2)) if hasattr(F, "gaussian_blur") else mask
+        mask = (
+            F.gaussian_blur(mask, (5, 5), sigma=(1.2, 1.2))
+            if hasattr(F, "gaussian_blur")
+            else mask
+        )
         return mask  # [1,H,W]
 
     mask = torch.cat([make_soft_blob_mask() for _ in range(B)], dim=0)  # [B,1,H,W]
@@ -142,31 +179,59 @@ def add_geometric_roughness_torch(
     )
     height = torch.zeros(B, 1, H, W, device=dev)
     for o in range(octaves):
-        lam = wavelength_px * (0.5 ** o)
+        lam = wavelength_px * (0.5**o)
         base_freq = 1.0 / max(lam, 1.0)
         dom = torch.empty(B, device=dev).uniform_(0, 3.1416, generator=g)
-        theta = dom + torch.empty(B, device=dev).uniform_(-3.1416*orientation_anisotropy*0.25,
-                                                          3.1416*orientation_anisotropy*0.25, generator=g)
-        freq = base_freq * torch.clamp(1.0 + torch.empty(B, device=dev).uniform_(-wavelength_jitter, wavelength_jitter, generator=g), 0.25, 4.0)
+        theta = dom + torch.empty(B, device=dev).uniform_(
+            -3.1416 * orientation_anisotropy * 0.25,
+            3.1416 * orientation_anisotropy * 0.25,
+            generator=g,
+        )
+        freq = base_freq * torch.clamp(
+            1.0
+            + torch.empty(B, device=dev).uniform_(
+                -wavelength_jitter, wavelength_jitter, generator=g
+            ),
+            0.25,
+            4.0,
+        )
         phase = torch.empty(B, device=dev).uniform_(0, 6.2832, generator=g)
         for b in range(B):
             ct, st = torch.cos(theta[b]), torch.sin(theta[b])
             u = ct * xxn + st * yyn
-            height[b:b+1] += torch.sin(2*3.1416*freq[b] * u + phase[b]) * (1.0 / (2**o))
-    height = height - height.mean(dim=(-2,-1), keepdim=True)
-    height = F.gaussian_blur(height, (5,5), sigma=(1.0,1.0)) if hasattr(F,"gaussian_blur") else height
+            height[b : b + 1] += torch.sin(2 * 3.1416 * freq[b] * u + phase[b]) * (
+                1.0 / (2**o)
+            )
+    height = height - height.mean(dim=(-2, -1), keepdim=True)
+    height = (
+        F.gaussian_blur(height, (5, 5), sigma=(1.0, 1.0))
+        if hasattr(F, "gaussian_blur")
+        else height
+    )
     height = height * mask
 
     # slopes
-    kx = torch.tensor([[1,0,-1],[2,0,-2],[1,0,-1]], device=dev, dtype=torch.float32).view(1,1,3,3)/8.0
-    ky = torch.tensor([[1,2,1],[0,0,0],[-1,-2,-1]], device=dev, dtype=torch.float32).view(1,1,3,3)/8.0
+    kx = (
+        torch.tensor(
+            [[1, 0, -1], [2, 0, -2], [1, 0, -1]], device=dev, dtype=torch.float32
+        ).view(1, 1, 3, 3)
+        / 8.0
+    )
+    ky = (
+        torch.tensor(
+            [[1, 2, 1], [0, 0, 0], [-1, -2, -1]], device=dev, dtype=torch.float32
+        ).view(1, 1, 3, 3)
+        / 8.0
+    )
     dhdx = F.conv2d(height, kx, padding=1)
     dhdy = F.conv2d(height, ky, padding=1)
 
     # TBN from n
-    ref = torch.tensor([0.0,0.0,1.0], device=dev).view(1,3,1,1).expand(B,-1,H,W)
-    parallel = (torch.abs((n*ref).sum(1,keepdim=True)) > 0.99)
-    ref = torch.where(parallel, torch.tensor([0.0,1.0,0.0], device=dev).view(1,3,1,1), ref)
+    ref = torch.tensor([0.0, 0.0, 1.0], device=dev).view(1, 3, 1, 1).expand(B, -1, H, W)
+    parallel = torch.abs((n * ref).sum(1, keepdim=True)) > 0.99
+    ref = torch.where(
+        parallel, torch.tensor([0.0, 1.0, 0.0], device=dev).view(1, 3, 1, 1), ref
+    )
     t = F.normalize(torch.cross(ref, n, dim=1), dim=1)
     b = F.normalize(torch.cross(n, t, dim=1), dim=1)
 
@@ -348,12 +413,6 @@ class PolarHighlighter(nn.Module):
         """Normalize vectors along dim=1"""
         return v / (v.norm(dim=1, keepdim=True).clamp_min(eps))
 
-
-
-
-
-
-
     def _gaussian_kernel1d(self, sigma: float, dtype, device):
         radius = max(int(3.0 * sigma + 0.5), 1)
         x = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
@@ -370,12 +429,12 @@ class PolarHighlighter(nn.Module):
         B, C, H, W = x.shape
         k1d = self._gaussian_kernel1d(float(sigma), x.dtype, x.device)  # [1,1,K]
         # Horizontal
-        pad = (k1d.shape[-1] // 2)
+        pad = k1d.shape[-1] // 2
         w_h = k1d.view(1, 1, 1, -1).repeat(C, 1, 1, 1)
-        x = F.conv2d(F.pad(x, (pad, pad, 0, 0), mode='reflect'), w_h, groups=C)
+        x = F.conv2d(F.pad(x, (pad, pad, 0, 0), mode="reflect"), w_h, groups=C)
         # Vertical
         w_v = k1d.view(1, 1, -1, 1).repeat(C, 1, 1, 1)
-        x = F.conv2d(F.pad(x, (0, 0, pad, pad), mode='reflect'), w_v, groups=C)
+        x = F.conv2d(F.pad(x, (0, 0, pad, pad), mode="reflect"), w_v, groups=C)
         return x
 
     @time_module("depth_estimation")
@@ -395,7 +454,7 @@ class PolarHighlighter(nn.Module):
             mogeout = self.geometry_model.infer(image)  # image: [B,3,H,W]
 
         # Extract depth [B,H,W] and normals [B,H,W,3]
-        depth = mogeout["depth"]   # [B,H,W]
+        depth = mogeout["depth"]  # [B,H,W]
         normals = mogeout["normal"]  # [B,H,W,3]
         intrinsics = mogeout["intrinsics"].clone()
         intrinsics[:, 0, 2] = image.shape[3] / 2  # cx (width/2)
@@ -627,7 +686,7 @@ class PolarHighlighter(nn.Module):
         """
         # Compute half-vector
         h = self.normalize_vector(l + v)  # [B,3,H,W] half-vector
-        
+
         # Compute n·h
         nh = (n * h).sum(1, keepdim=True).clamp(0.0, 1.0)
 
@@ -735,7 +794,7 @@ class PolarHighlighter(nn.Module):
         # Expand H to RGB channels
         # Use H as an alpha map to blend pure white highlight over input rgb, modulated by intensity
         alpha = (H * intensity).clamp(0, 1)  # [B,1,H,W]
-        alpha_rgb = alpha.expand_as(rgb)     # [B,3,H,W]
+        alpha_rgb = alpha.expand_as(rgb)  # [B,3,H,W]
         # Traditional "over" operator: composed = (1-a)*rgb + a*white
         composed = rgb * (1.0 - alpha_rgb) + alpha_rgb * 1.0
         composed = composed.clamp(0, 1)
@@ -791,7 +850,7 @@ class PolarHighlighter(nn.Module):
             )  # [B,3]
         # 1) Compute viewing and lighting geometry
         v, l, n, nl, nv, light_pos, pcloud = self.compute_viewing_lighting_geometry(
-            depth, normals, K, light_pos*torch.tensor([-1, -1, 1]).to(device)
+            depth, normals, K, light_pos * torch.tensor([-1, -1, 1]).to(device)
         )
 
         # 2) Compute Blinn-Phong specular lobe with Fresnel modulation
@@ -844,6 +903,9 @@ class PolarHighlighter(nn.Module):
         octaves=2,
         roughness_strength=1.5,
         seed=0,
+        return_dataset_highlights=True,
+        dataset_highlight_dilation=None,
+        dataset_highlight_threshold=None,
     ):
         """
         Forward pass for polar highlight synthesis with geometric roughness.
@@ -899,7 +961,9 @@ class PolarHighlighter(nn.Module):
 
         # If intensity is zero, skip all highlight and geometry computations
         if intensity == 0:
-            zeros_1hw = lambda ch: torch.zeros((B, ch, H, W), device=device, dtype=rgb.dtype)
+            zeros_1hw = lambda ch: torch.zeros(
+                (B, ch, H, W), device=device, dtype=rgb.dtype
+            )
             zeros_b3 = lambda: torch.zeros((B, 3), device=device, dtype=rgb.dtype)
             zeros_b33 = lambda: torch.zeros((B, 3, 3), device=device, dtype=rgb.dtype)
             result = {
@@ -984,6 +1048,32 @@ class PolarHighlighter(nn.Module):
             "light_dir": light_dir,
             "view_dir": view_dir,
         }
+
+        # Dataset Highlights are thresholded here
+        if (
+            return_dataset_highlights
+            and dataset_highlight_threshold is not None
+            and dataset_highlight_dilation is not None
+        ):
+            dataset_highlights_soft_mask = get_soft_highlight_map(
+                rgb,
+                threshold=dataset_highlight_threshold,
+            )
+            # Compute inverse binary mask to mask out real highlights from the loss computation
+            # dataset_highlights_inverse_binary_mask = torch.logical_not(
+            #     torch.nn.functional.max_pool2d(
+            #         dataset_highlights_soft_mask,
+            #         kernel_size=dataset_highlight_dilation,
+            #         stride=1,
+            #         padding=dataset_highlight_dilation // 2,
+            #     )
+            #     > 0
+            # ).int()
+            dataset_highlights_inverse_binary_mask = (dataset_highlights_soft_mask > 0).int()
+            result["supervision_mask"] = (
+                dataset_highlights_inverse_binary_mask
+            )
+            result["dataset_highlights_soft_mask"] = dataset_highlights_soft_mask
 
         # Only compute stokes_highlighted if pol was provided
         if pol is not None:

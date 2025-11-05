@@ -39,6 +39,7 @@ def rgb(
         ]
     ] = None,
     label: Optional[Union[Tuple[str, int, str], Tuple[str, int, int, str]]] = None,
+    show_grid: Optional[dict] = None,
     **kwargs: Any,
 ) -> Union[None, torch.Tensor, Image.Image]:
     r"""
@@ -92,6 +93,17 @@ def rgb(
                 - style: one of {"normal", "bold", "italic"}; defaults to "bold".
                 - latex: if True, or if text is wrapped with $...$, render text as LaTeX.
                 - text: the string to render inside the rectangle.
+        show_grid (Optional[dict]):
+            Grid specification. If None or empty dict, no grid is drawn.
+            Dict form: {"spacing": int, "width": int, "color": ...}
+                - spacing: integer distance between grid lines in pixels (required if grid is to be drawn)
+                - width: thickness of grid lines in pixels (default: 1)
+                - color: grid line color, same formats as border color:
+                    - RGB list/tuple: [r, g, b] or (r, g, b) with values in [0, 1]
+                    - torch.Tensor: RGB tensor with values in [0, 1]
+                    - np.ndarray: RGB array with values in [0, 1]
+                    - str: Hex color code (e.g., "#000000" for black)
+                Default color is black [0.0, 0.0, 0.0].
         **kwargs (Any):
             Additional keyword arguments passed to lt.rgb().
 
@@ -230,13 +242,22 @@ def rgb(
         t = torch.cat([rgb_normalized, alpha_normalized], dim=0)
 
     # Apply border if specified
+    should_apply_border = False
     if border is not None:
         # Support dict or tuple
         if isinstance(border, dict):
-            color = border.get("color", [1.0, 1.0, 1.0])
-            thickness = border.get("thickness", 1)
+            # Only apply border if at least one key is specified
+            if len(border) > 0:
+                should_apply_border = True
+                # Fill missing keys with defaults
+                color = border.get("color", [1.0, 1.0, 1.0])
+                thickness = border.get("thickness", 1)
         else:
+            # Tuple format - always apply
+            should_apply_border = True
             color, thickness = border
+    
+    if should_apply_border:
         thickness = int(thickness) + 1
         # Convert color to RGB tensor with values in [0, 1]
         if isinstance(color, str):
@@ -298,22 +319,39 @@ def rgb(
         t = t_with_border
 
     # Apply label if specified
+    should_apply_label = False
     if label is not None:
         # Accept dict or (pos, height, text) / (pos, height, padding, text)
         if isinstance(label, dict):
-            pos_str = label.get("position", "top")
-            rect_height = label.get("height", 24)
-            margin = label.get("margin", None)
-            label_text = label.get("text", "")
+            # Only apply label if at least one key is specified
+            if len(label) > 0:
+                should_apply_label = True
+                # Fill missing keys with defaults
+                pos_str = label.get("position", "top")
+                rect_height = label.get("height", 24)
+                margin = label.get("margin", 0)  # Default to 0 if not specified
+                label_text = label.get("text", "")
+                style = label.get("style", "bold")
+                latex = label.get("latex", False)
+            else:
+                should_apply_label = False
         elif isinstance(label, (list, tuple)) and len(label) == 3:
+            should_apply_label = True
             pos_str, rect_height, label_text = label  # type: ignore
-            margin = None
+            margin = 0  # Default for tuple format
+            style = "bold"  # Default for tuple format
+            latex = False  # Default for tuple format
         elif isinstance(label, (list, tuple)) and len(label) == 4:
+            should_apply_label = True
             pos_str, rect_height, margin, label_text = label  # type: ignore
+            style = "bold"  # Default for tuple format
+            latex = False  # Default for tuple format
         else:
             raise ValueError(
                 "label must be a dict {position,height,margin,text} or a tuple (pos,height,text) or (pos,height,padding,text)"
             )
+    
+    if should_apply_label:
 
         rect_height = max(1, int(rect_height))
         C, H, W = t.shape
@@ -332,8 +370,8 @@ def rgb(
             bold_path = os.path.join(ttf_dir, "cmb10.ttf")
             italic_path = os.path.join(ttf_dir, "cmi10.ttf")
             regular_path = os.path.join(ttf_dir, "cmr10.ttf")
-            # style variable may be undefined if tuple form used
-            chosen_style = locals().get("style", "bold")
+            # Use the style variable extracted from label dict or default
+            chosen_style = style
             chosen_path = regular_path
             if chosen_style == "bold" and os.path.exists(bold_path):
                 chosen_path = bold_path
@@ -369,12 +407,12 @@ def rgb(
 
         # Measure text size or LaTeX image size
         # If LaTeX support is requested, render it first, otherwise use PIL font
-        is_latex = False
+        is_latex = bool(latex)
         if isinstance(label_text, str):
             s_txt = label_text.strip()
-            is_latex = s_txt.startswith("$") and s_txt.endswith("$")
-        if isinstance(label, dict):
-            is_latex = bool(label.get("latex", is_latex))
+            # Also check if text is wrapped in $...$ for LaTeX
+            if s_txt.startswith("$") and s_txt.endswith("$"):
+                is_latex = True
 
         latex_img = None
         if is_latex:
@@ -428,7 +466,7 @@ def rgb(
         def draw_label_on_pil(pil_img: Image.Image, x0: int, y0: int) -> None:
             draw = ImageDraw.Draw(pil_img)
             # Rectangle
-            draw.rectangle([x0, y0, x0 + rect_w, y0 + rect_h], fill=(255, 255, 255))
+            draw.rectangle([x0, y0, x0 + rect_w, y0 + rect_h], fill=(255,255,255))
             # Text position: left padding, vertically centered
             text_x = x0 + pad
             text_y = y0 + (rect_h - text_h) // 2
@@ -506,6 +544,86 @@ def rgb(
         # Convert back to tensor
         t = (
             torch.from_numpy(np_img).to(device=t.device, dtype=t.dtype).permute(2, 0, 1)
+            / 255.0
+        )
+
+    # Apply grid if specified
+    should_apply_grid = False
+    if show_grid is not None and isinstance(show_grid, dict) and len(show_grid) > 0:
+        # Check if spacing is provided (required for grid)
+        if "spacing" in show_grid:
+            should_apply_grid = True
+            spacing = int(show_grid["spacing"])
+            grid_width = show_grid.get("width", 1)
+            grid_color = show_grid.get("color", [0.0, 0.0, 0.0])  # Default black
+    
+    if should_apply_grid:
+        # Convert tensor to numpy array for grid drawing
+        # t shape: (C, H, W)
+        C, H, W = t.shape
+        np_img_grid = (t.permute(1, 2, 0).detach().cpu().numpy() * 255.0).astype(np.uint8)
+        np_img_grid = np.ascontiguousarray(np_img_grid)
+        
+        # Determine if image has alpha channel
+        has_alpha = C == 4
+        
+        # Convert color to RGB tuple with values in [0, 255]
+        if isinstance(grid_color, str):
+            # Handle hex color
+            if grid_color.startswith("#"):
+                grid_color = grid_color[1:]
+            rgb_int = tuple(int(grid_color[i : i + 2], 16) for i in (0, 2, 4))
+            color_tuple = rgb_int
+        elif isinstance(grid_color, (list, tuple)):
+            # Handle list/tuple - convert from [0, 1] to [0, 255]
+            color_tuple = tuple(int(c * 255) for c in grid_color[:3])
+        elif isinstance(grid_color, np.ndarray):
+            # Handle numpy array
+            color_array = grid_color.flatten()[:3]
+            if color_array.max() <= 1.0:
+                color_tuple = tuple(int(c * 255) for c in color_array)
+            else:
+                color_tuple = tuple(int(c) for c in color_array)
+        elif isinstance(grid_color, torch.Tensor):
+            # Handle torch tensor
+            color_tensor = grid_color.flatten()[:3].cpu().numpy()
+            if color_tensor.max() <= 1.0:
+                color_tuple = tuple(int(c * 255) for c in color_tensor)
+            else:
+                color_tuple = tuple(int(c) for c in color_tensor)
+        else:
+            raise ValueError(f"Unsupported grid color type: {type(grid_color)}")
+        
+        # Ensure color tuple has 3 values
+        if len(color_tuple) != 3:
+            raise ValueError(f"Grid color must have exactly 3 RGB values, got {len(color_tuple)}")
+        
+        # Clamp color values to [0, 255]
+        color_tuple = tuple(max(0, min(255, c)) for c in color_tuple)
+        
+        # Convert to PIL Image for drawing
+        if has_alpha:
+            pil_img_grid = Image.fromarray(np_img_grid, 'RGBA')
+        else:
+            pil_img_grid = Image.fromarray(np_img_grid)
+        draw_grid = ImageDraw.Draw(pil_img_grid)
+        
+        # Draw vertical grid lines
+        x = spacing
+        while x < W:
+            draw_grid.line([(x, 0), (x, H - 1)], fill=color_tuple, width=grid_width)
+            x += spacing
+        
+        # Draw horizontal grid lines
+        y = spacing
+        while y < H:
+            draw_grid.line([(0, y), (W - 1, y)], fill=color_tuple, width=grid_width)
+            y += spacing
+        
+        # Convert back to tensor
+        np_img_grid = np.array(pil_img_grid)
+        t = (
+            torch.from_numpy(np_img_grid).to(device=t.device, dtype=t.dtype).permute(2, 0, 1)
             / 255.0
         )
 

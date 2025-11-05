@@ -22,6 +22,7 @@ import torchvision.transforms as transforms
 from utilities.visualization import panelize, rgb
 from utilities.ablation import Ablation
 from metrics import mse_metric, psnr_metric, ssim_metric
+from models_utils import pixel_mask_to_patch_mask, patch_mask_to_pixel_mask
 
 ablation = Ablation(False)
 
@@ -724,50 +725,50 @@ class Engine:
                     light_pos=random_light_pos,
                     surface_roughness=self.config.SURFACE_ROUGHNESS,
                     intensity=self.config.INTENSITY,
-                    # normal_noise=self.config.NORMAL_NOISE,  # overall amplitude
-                    # normal_noise_cells=self.config.NORMAL_NOISE_CELLS,
-                    # normal_noise_octaves=self.config.NORMAL_NOISE_OCTAVES,
-                    # normal_noise_falloff=self.config.NORMAL_NOISE_FALLOFF,
+                    return_dataset_highlights=True,
+                    dataset_highlight_dilation=self.config.DATASET_HIGHLIGHT_DILATION,
+                    dataset_highlight_threshold=self.config.DATASET_HIGHLIGHT_THRESHOLD,
                 )
 
-                # Compute soft highlight map
-                ### DATASET HIGHLIGHTS - NATURAL - DO NOT USE FOR SUPERVISION
-                dataset_highlights_soft_mask = get_soft_highlight_map(
-                    sample["diffuse"].to(self.device, non_blocking=True),
-                    threshold=self.config.SOFT_HIGHLIGHT_THRESHOLD,
+                # The supervision mask is the inverse of the dataset highlights binary mask, inflated
+                # --> Supervision mask is 1 if the pixel is to be supervised, 0 if to be excluded from supervision
+
+                pixel_supervision_mask = highlight_result["supervision_mask"]
+                if phase != "Training":
+                    pixel_supervision_mask = torch.ones_like(pixel_supervision_mask)
+                patch_supervision_mask = pixel_mask_to_patch_mask(
+                    pixel_supervision_mask, patch_size=16, threshold=0.1,invert=False
                 )
-                # Compute inverse binary mask to mask out real highlights from the loss computation
-                dataset_highlights_inverse_binary_mask = torch.logical_not(
-                    torch.nn.functional.max_pool2d(
-                        dataset_highlights_soft_mask,
-                        kernel_size=self.config.REAL_HIGHLIGHT_DILATION,
-                        stride=1,
-                        padding=self.config.REAL_HIGHLIGHT_DILATION // 2,
+
+                ### ALL HIGHLIGHTS - BOTH NATURAL AND SYNTHETIC - NEED TO BE INPAINTED
+                pixel_inpaint_mask = torch.clamp(
+                    highlight_result["highlight"]
+                    + highlight_result["dataset_highlights_soft_mask"],
+                    0,
+                    1,
+                )
+                patch_inpaint_mask = pixel_mask_to_patch_mask(
+                    pixel_inpaint_mask, patch_size=16, threshold=0.1
+                )
+                # Intersect: supervise only masked (inpaint) patches that are also supervised
+                patch_mask_sup_bool = (patch_inpaint_mask.bool() & patch_supervision_mask.bool())
+
+                # Token inpainter ground truth
+                diffuse_teacher_tokens = self.model.extract_tokens(
+                    sample["diffuse"].to(self.device, non_blocking=True)
+                )
+                highlight_teacher_tokens = self.model.extract_tokens(
+                    highlight_result["rgb_highlighted"].to(
+                        self.device, non_blocking=True
                     )
-                    > 0
-                ).int()
-
-                # We use the inverse binary mask only at training time
-                if phase == "Training":
-                    lossmask = dataset_highlights_inverse_binary_mask
-                else:
-                    lossmask = torch.ones_like(dataset_highlights_inverse_binary_mask)
-                # Include BOTH virtual and real highlights in GT highlight map
-                # Model learns to predict ALL highlights in the highlight channel
-                # But diffuse supervision is masked in real highlight regions
-                # Model must learn to inpaint/generalize diffuse behind real
-
-                ### SYNTHETIC HIGHLIGHTS - GENERATED - SUPERVISION
-                synthetic_highlights = highlight_result["highlight"]
-
-                ### ALL HIGHLIGHTS - BOTH NATURAL AND SYNTHETIC - NEEDS TO BE PREDICTED
-                all_holes_to_inpaint = (
-                    synthetic_highlights + dataset_highlights_soft_mask
-                ).clamp(0, 1)
-
+                )
                 ### Constructing ground truth dict
                 rgb_highlighted = highlight_result["rgb_highlighted"]
-                specular = sample["specular"].to(self.device, non_blocking=True)
+
+                if "specular" in sample:
+                    specular = sample["specular"].to(self.device, non_blocking=True)
+                else:
+                    specular = None
 
                 # Ground truth diffuse: original RGB (contains real highlights)
                 diffuse = sample["diffuse"].to(self.device, non_blocking=True)
@@ -776,12 +777,15 @@ class Engine:
                     "diffuse": diffuse,  # Contains real highlights, but masked during loss
                     "rgb_highlighted": rgb_highlighted,
                     "specular": specular,
-                    "highlight": all_holes_to_inpaint,  # BOTH real and virtual
+                    "highlight": pixel_inpaint_mask,  # BOTH real and virtual
+                    # "hole_mask": pixel_inpaint_mask,
+                    "tokens_teacher": diffuse_teacher_tokens,
+                    "patch_mask_sup": patch_mask_sup_bool.int(),
+                    # "patch_mask_inpaint": patch_inpaint_mask.int(),
+                    #     "patch_inpaint_mask": patch_inpaint_mask.float(),
+                    #     "patch_supervision_mask": patch_supervision_mask.float(),
                 }
                 del sample  # Clean up. All necessary data is already on GPU.
-
-                # Constructing model input dict
-                model_input = {"rgb": gt_decomposition["rgb_highlighted"]}
 
                 # Log memory usage before forward pass if monitoring
                 if self.memory_monitoring and batch_idx % 10 == 0:
@@ -791,13 +795,19 @@ class Engine:
                     print("This is an ablation block")
 
                 ### Forward pass
+                model_input = {
+                        "rgb": gt_decomposition["rgb_highlighted"],
+                        "patch_mask_override": pixel_inpaint_mask,
+                        # "diffuse_tokens": diffuse_teacher_tokens,
+                    }
                 pred_decomposition = self.model(model_input)
+                print("Diffuse GT",torch.max(diffuse_teacher_tokens[-1]).item(), torch.min(diffuse_teacher_tokens[-1]).item())
 
                 ### COMPUTE LOSS FUNCTION
                 losses = self.loss(
                     prediction=pred_decomposition,
                     ground_truth=gt_decomposition,
-                    mask=lossmask,
+                    mask=pixel_supervision_mask,
                 )
                 loss_value = losses["total"]
 
@@ -807,8 +817,10 @@ class Engine:
                 )
                 # Adding the loss mask to the gt_decomposition to log it on wandb
                 if phase == "Training":
-                    gt_decomposition["lossmask"] = lossmask
-                    gt_decomposition["masked_diffuse"] = diffuse * lossmask
+                    gt_decomposition["supervision_mask"] = pixel_supervision_mask
+                    gt_decomposition["masked_diffuse"] = (
+                        diffuse * pixel_supervision_mask
+                    )
                 ### Backward pass
                 backward_output = None
                 if is_training:
@@ -834,6 +846,7 @@ class Engine:
                                 if "specular" in self.model.decoders
                                 else None,
                                 "dinov3": self.model.dinov3,
+                                "token_inpaint": getattr(self.model, "token_inpaint", None),
                             },
                         )
 
@@ -892,7 +905,7 @@ class Engine:
                 # Compute evaluation metrics (vectorized over batch)
                 try:
                     # Use same mask as loss for diffuse comparisons during Training; None otherwise
-                    eval_mask = lossmask if phase == "Training" else None
+                    eval_mask = pixel_supervision_mask if phase == "Training" else None
                     if (
                         "diffuse" in pred_decomposition
                         and "diffuse" in gt_decomposition
@@ -973,46 +986,171 @@ class Engine:
 
                     # Remove tokens_teacher and tokens_completed as they are not needed for visualization
                     if (
-                        "tokens_teacher" in pred_decomposition
+                        "tokens_teacher" in gt_decomposition
                         and "tokens_completed" in pred_decomposition
                     ):
-                        _, npatches, embed_dim = pred_decomposition["tokens_teacher"][
+                        _, npatches, embed_dim = gt_decomposition["tokens_teacher"][
                             -1
                         ].shape
-
+                        token_inpaint_mask_sup = (
+                            patch_mask_to_pixel_mask(
+                                patch_inpaint_mask, patch_size=16
+                            ).int()[0]
+                            * patch_mask_to_pixel_mask(
+                                patch_supervision_mask, patch_size=16
+                            ).int()[0]
+                        )  # (1, H, W) in [0,1]
+                        token_sup_mask = patch_mask_to_pixel_mask(
+                            patch_supervision_mask, patch_size=16
+                        ).int()[0]
+                        token_inpaint_mask = patch_mask_to_pixel_mask(
+                            patch_inpaint_mask, patch_size=16
+                        ).int()[0]  # (1, H, W) in [0,1]
                         patch_resolution = int(math.sqrt(npatches))
-                        tokens_and_pca = rgb(
-                            pred_decomposition["tokens_teacher"][-1]
+                        _, pca = rgb(
+                            diffuse_teacher_tokens[-1]
                             .reshape(-1, patch_resolution, patch_resolution, embed_dim)
-                            .permute(0, 3, 1, 2)
-                            .detach()[0],
-                            resize=(
-                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                            ),
+                            .permute(0, 3, 1, 2)[0]
+                            .detach(),
                             as_tensor=True,
-                            blackout=True,
                             return_pca=True,
                         )
-                        pred_decomposition["tokens_teacher"] = tokens_and_pca[0].unsqueeze(0)
-                        pca = tokens_and_pca[1]
-                        pred_decomposition["tokens_completed"] = rgb(
-                            pred_decomposition["tokens_completed"][-1]
-                            .reshape(-1, patch_resolution, patch_resolution, embed_dim)
-                            .permute(0, 3, 1, 2)
-                            .detach()[0]
-                            * pred_decomposition["patch_mask"]
-                                .reshape(-1, patch_resolution, patch_resolution)
-                                .unsqueeze(1)
-                                .int()[0],
-                                pca = pca,
-                            resize=(
-                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                            ),
-                            as_tensor=True,
-                            blackout=True,
-                        ).unsqueeze(0)
+                        gt_decomposition["token_inpaint"] = (
+                            rgb(
+                                diffuse_teacher_tokens[-1]
+                                .reshape(
+                                    -1, patch_resolution, patch_resolution, embed_dim
+                                )
+                                .permute(0, 3, 1, 2)
+                                .detach()[0],
+                                pca=pca,
+                                resize=(
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                ),
+                                as_tensor=True,
+                                blackout=False,
+                            )
+                            * token_inpaint_mask
+                        )
+                        pred_decomposition["token_inpaint"] = (
+                            rgb(
+                                pred_decomposition["tokens_completed"][-1]
+                                .reshape(
+                                    -1, patch_resolution, patch_resolution, embed_dim
+                                )
+                                .permute(0, 3, 1, 2)
+                                .detach()[0],
+                                pca=pca,
+                                resize=(
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                ),
+                                as_tensor=True,
+                                blackout=False,
+                            )
+                            * token_inpaint_mask
+                        )
+                        gt_decomposition["token_inpaint_sup"] = (
+                            rgb(
+                                diffuse_teacher_tokens[-1]
+                                .reshape(
+                                    -1, patch_resolution, patch_resolution, embed_dim
+                                )
+                                .permute(0, 3, 1, 2)
+                                .detach()[0],
+                                pca=pca,
+                                resize=(
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                ),
+                                as_tensor=True,
+                                blackout=False,
+                            )
+                            * token_inpaint_mask_sup
+                        )
+                        pred_decomposition["token_inpaint_sup"] = (
+                            rgb(
+                                pred_decomposition["tokens_completed"][-1]
+                                .reshape(
+                                    -1, patch_resolution, patch_resolution, embed_dim
+                                )
+                                .permute(0, 3, 1, 2)
+                                .detach()[0],
+                                pca=pca,
+                                resize=(
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                ),
+                                as_tensor=True,
+                                blackout=False,
+                            )
+                            * token_inpaint_mask_sup
+                        )
+                        gt_decomposition["token_inpaint_sup_full"] = (
+                            rgb(
+                                diffuse_teacher_tokens[-1]
+                                .reshape(
+                                    -1, patch_resolution, patch_resolution, embed_dim
+                                )
+                                .permute(0, 3, 1, 2)
+                                .detach()[0],
+                                pca=pca,
+                                resize=(
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                ),
+                                as_tensor=True,
+                                blackout=False,
+                            )
+                        )
+                        pred_decomposition["token_inpaint_sup_full"] = (
+                            rgb(
+                                pred_decomposition["tokens_completed"][-1]
+                                .reshape(
+                                    -1, patch_resolution, patch_resolution, embed_dim
+                                )
+                                .permute(0, 3, 1, 2)
+                                .detach()[0],
+                                pca=pca,
+                                resize=(
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                ),
+                                as_tensor=True,
+                                blackout=False,
+                            )
+                        )
+                        # gt_decomposition["token_inpaint_sup_HL"] = (
+                        #     rgb(
+                        #         highlight_teacher_tokens[-1]
+                        #         .reshape(
+                        #             -1, patch_resolution, patch_resolution, embed_dim
+                        #         )
+                        #         .permute(0, 3, 1, 2)
+                        #         .detach()[0],
+                        #         pca=pca,
+                        #         resize=(
+                        #             self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                        #             self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                        #         ),
+                        #         as_tensor=True,
+                        #         blackout=False,
+                        #     )
+                        #     * token_inpaint_mask_sup
+                        # )
+                        # gt_decomposition["patch_mask_inpaint_sup"] = (
+                        #     token_inpaint_mask_sup.int()
+                        # )
+                        # gt_decomposition["patch_mask_inpaint"] = (
+                        #     token_inpaint_mask.int()
+                        # )
+                        gt_decomposition["patch_mask_sup"] = None
+                        del pred_decomposition["tokens_completed"]
+                        del pred_decomposition["tokens_inpainted"]
+                        del gt_decomposition["tokens_teacher"]
+                        del gt_decomposition["specular"]
+
                     if "patch_mask" in pred_decomposition:
                         del pred_decomposition["patch_mask"]
 
@@ -1025,6 +1163,7 @@ class Engine:
                         phase=phase,
                         test_idx=test_idx if phase == "Test" else None,
                     )
+
                     if images:
                         images_logged = True
 
@@ -1230,25 +1369,62 @@ class Engine:
                 # Returns a black RGB image tensor [3, H, W]
                 return torch.zeros(3, size[0], size[1])
 
+            # Helper to safely extract an image tensor in CHW form
+            def _prepare_img_tensor(t: torch.Tensor) -> tuple[torch.Tensor, bool]:
+                """
+                Returns (tensor_CHW, is_grayscale) where tensor_CHW is [C,H,W] with C in {1,3}.
+                """
+                if not isinstance(t, torch.Tensor):
+                    return None, False
+                x = t
+                # Reduce batch if present
+                if x.dim() == 4:  # [B,C,H,W] or [B,H,W]
+                    x = x[0]
+                # If 2D -> add channel
+                if x.dim() == 2:  # [H,W]
+                    x = x.unsqueeze(0)
+                # Handle channel-last rare case
+                if x.dim() == 3 and x.shape[0] > 4 and x.shape[-1] <= 4:
+                    x = x.permute(2, 0, 1)
+                # Now assume CHW
+                if x.dim() != 3:
+                    return None, False
+                C = x.shape[0]
+                if C >= 3:
+                    return x[:3].detach(), False
+                else:
+                    return x[:1].detach(), True
+
             # Build prediction row, using black image if key missing
             prediction_row = panelize(
                 *[
-                    rgb(
-                        pred_decomposition[comp_name][0][:3].detach()
-                        if comp_name in pred_decomposition
-                        else make_black_image(),
-                        as_tensor=True,
-                        resize=(448, 448),
-                        colormap="gray",
-                        # border={"color": "#ffffff   ", "thickness": 1 if comp_name not in pred_decomposition else 0} ,
-                        label={
-                            "position": "top-left",
-                            "height": 40,
-                            "margin": 1 if comp_name not in pred_decomposition else 0,
-                            "text": f"PRED {comp_name.capitalize()}"
+                    (
+                        lambda _t: (
+                            rgb(
+                                _t[0] if _t[0] is not None else make_black_image(),
+                                as_tensor=True,
+                                resize=(448, 448),
+                                colormap=("gray" if _t[1] else None),
+                                label={
+                                    "position": "top-left",
+                                    "height": 40,
+                                    "margin": 1
+                                    if comp_name not in pred_decomposition
+                                    else 0,
+                                    "text": (
+                                        f"PRED {comp_name.capitalize()}"
+                                        if comp_name in pred_decomposition
+                                        else "NA"
+                                    ),
+                                },
+                            )
+                        )
+                    )(
+                        _prepare_img_tensor(
+                            pred_decomposition[comp_name]
                             if comp_name in pred_decomposition
-                            else "NA",
-                        },
+                            else None
+                        )
                     )
                     for comp_name in all_keys
                 ],
@@ -1258,22 +1434,33 @@ class Engine:
             # Build GT row, using black image if key missing
             gt_row = panelize(
                 *[
-                    rgb(
-                        gt_decomposition[comp_name][0][:3].detach()
-                        if comp_name in gt_decomposition
-                        else make_black_image(),
-                        as_tensor=True,
-                        resize=(448, 448),
-                        colormap="gray",
-                        # border={"color": "#ffffff   ", "thickness": 1 if comp_name not in gt_decomposition else 0} ,
-                        label={
-                            "position": "top-left",
-                            "height": 40,
-                            "margin": 1 if comp_name not in gt_decomposition else 0,
-                            "text": f"GT {comp_name.capitalize()}"
+                    (
+                        lambda _t: (
+                            rgb(
+                                _t[0] if _t[0] is not None else make_black_image(),
+                                as_tensor=True,
+                                resize=(448, 448),
+                                colormap=("gray" if _t[1] else None),
+                                label={
+                                    "position": "top-left",
+                                    "height": 40,
+                                    "margin": 1
+                                    if comp_name not in gt_decomposition
+                                    else 0,
+                                    "text": (
+                                        f"GT {comp_name.capitalize()}"
+                                        if comp_name in gt_decomposition
+                                        else "NA"
+                                    ),
+                                },
+                            )
+                        )
+                    )(
+                        _prepare_img_tensor(
+                            gt_decomposition[comp_name]
                             if comp_name in gt_decomposition
-                            else "NA",
-                        },
+                            else None
+                        )
                     )
                     for comp_name in all_keys
                 ],
@@ -1372,7 +1559,7 @@ class Engine:
                         "f_spec",
                         "rgb_highlighted",
                         "intrinsics",
-                        "lossmask",
+                        "supervision_mask",
                     ] or not isinstance(comp_tensor, torch.Tensor):
                         continue
 

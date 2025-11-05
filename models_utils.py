@@ -4,6 +4,7 @@ import os
 from typing import Optional
 import torch.nn.functional as F
 
+
 def get_model_parameter_summary(model):
     """
     Generate a comprehensive parameter summary for RGBPOLDecomposer or UnReflect_Model models.
@@ -129,6 +130,8 @@ def get_model_parameter_summary(model):
     )
 
     return summary
+
+
 def print_model_parameter_summary(model, detailed=True):
     """
     Print a formatted parameter summary for RGBPOLDecomposer or UnReflect_Model models.
@@ -174,6 +177,8 @@ def print_model_parameter_summary(model, detailed=True):
             print(f"   • {comp_name}: {comp_data['description']}")
 
     print(f"\n{'=' * 60}")
+
+
 def get_model_size_mb(model):
     """
     Calculate model size in MB (approximate).
@@ -188,7 +193,13 @@ def get_model_size_mb(model):
     # Assuming float32 (4 bytes per parameter)
     size_mb = summary["total_parameters"] * 4 / (1024 * 1024)
     return size_mb
-def load_best_model_by_run(run_identifier: str, device: Optional[torch.device] = None, runs_dir: Optional[str] = None) -> nn.Module:
+
+
+def load_best_model_by_run(
+    run_identifier: str,
+    device: Optional[torch.device] = None,
+    runs_dir: Optional[str] = None,
+) -> nn.Module:
     """
     Load and return a model instantiated from a run's best checkpoint.
 
@@ -211,7 +222,10 @@ def load_best_model_by_run(run_identifier: str, device: Optional[torch.device] =
     # Resolve runs directory using same logic as engine initializers if not provided
     if runs_dir is None:
         try:
-            from utilities import engine_initializers as initialize  # local import to avoid cycles
+            from utilities import (
+                engine_initializers as initialize,
+            )  # local import to avoid cycles
+
             runs_dir = initialize.device_and_directories({})["runs_dir"]
         except Exception:
             # Fallback: environment variable or repo default
@@ -225,9 +239,12 @@ def load_best_model_by_run(run_identifier: str, device: Optional[torch.device] =
     # Find the run and its models directory
     try:
         from utilities.run_resume import get_resume_info  # local import to avoid cycles
+
         resume_info = get_resume_info(run_identifier, runs_dir)
     except Exception as e:
-        raise FileNotFoundError(f"Failed to resolve run '{run_identifier}' in runs_dir '{runs_dir}': {e}")
+        raise FileNotFoundError(
+            f"Failed to resolve run '{run_identifier}' in runs_dir '{runs_dir}': {e}"
+        )
 
     if resume_info is None:
         raise FileNotFoundError(f"Run not found or invalid: {run_identifier}")
@@ -267,6 +284,7 @@ def load_best_model_by_run(run_identifier: str, device: Optional[torch.device] =
     # Ensure DotMap for the model factory
     try:
         from dotmap import DotMap  # local import
+
         if not isinstance(saved_config, DotMap):
             saved_config = DotMap(saved_config)
     except Exception:
@@ -275,7 +293,10 @@ def load_best_model_by_run(run_identifier: str, device: Optional[torch.device] =
 
     # Build model using the main factory to ensure identical architecture
     try:
-        from main import create_model_from_config  # local import to avoid top-level cycle
+        from main import (
+            create_model_from_config,
+        )  # local import to avoid top-level cycle
+
         model = create_model_from_config(saved_config, load_device)
     except Exception as e:
         raise RuntimeError(f"Failed to instantiate model from saved config: {e}")
@@ -295,12 +316,44 @@ def load_best_model_by_run(run_identifier: str, device: Optional[torch.device] =
     model = model.to(load_device).eval()
     return model
 
-def pixel_mask_to_patch_mask(mask_hw: torch.Tensor, patch_size: int) -> torch.Tensor:
+
+def pixel_mask_to_patch_mask(
+    mask_hw: torch.Tensor, patch_size: int, threshold: float = 0.0, invert: bool = False
+) -> torch.Tensor:
     """
     mask_hw: (B,1,H,W) in [0,1]; returns boolean (B, N) where N=(H/P)*(W/P)
     A patch is considered masked if ANY pixel in it is masked.
     """
-    m = (mask_hw > 0.5).float()
+    m = (mask_hw > threshold).float()
     m_small = F.max_pool2d(m, kernel_size=patch_size, stride=patch_size)
-    pm = m_small.flatten(1).bool()  # (B, N)
+    pm = m_small.flatten(1).bool()  # (B, 1)
+    if invert:
+        pm = torch.logical_not(pm)
     return pm
+
+def patch_mask_to_pixel_mask(
+    patch_mask: torch.Tensor, patch_size: int
+) -> torch.Tensor:
+    """
+    Given a patch mask (B, N) (boolean), upsample to pixel mask (B,1,H,W) in [0,1] using nearest neighbor.
+
+    Args:
+        patch_mask: (B, N) boolean or float tensor, where N = (H/P)*(W/P)
+        patch_size: int, spatial size of each patch
+
+    Returns:
+        mask_hw: (B, 1, H, W) float tensor in [0,1]
+    """
+    B, N = patch_mask.shape
+    # Compute target H and W (assuming square arrangement, filled in row-major order)
+    patch_grid_size = int(N ** 0.5)
+
+    # Reshape (B, N) -> (B, 1, grid, grid)
+    patch_mask_grid = patch_mask.reshape(B, 1, patch_grid_size, patch_grid_size).float()
+    # Upsample to (B, 1, H, W) using nearest-neighbor
+    pixel_mask = torch.nn.functional.interpolate(
+        patch_mask_grid,
+        scale_factor=patch_size,
+        mode="nearest"
+    )
+    return pixel_mask

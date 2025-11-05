@@ -7,6 +7,11 @@ import torch.nn.functional as F
 from transformers import AutoImageProcessor, AutoModel
 from models_utils import pixel_mask_to_patch_mask
 
+from logger import get_logger
+
+logger = get_logger(__name__).set_context("MODEL")
+
+
 def _is_instance_or_cfg(x, cls):
     """Return 'instance' if x is an instance of cls, 'cfg' if dict, else raise."""
     if isinstance(x, cls):
@@ -290,7 +295,7 @@ class DPTReassembleLayer(nn.Module):
         # Spatial resampling based on scale factor
         if scale_factor == 4.0:
             # 4x upsampling: 24x24 -> 96x96
-            self.resample = nn.ConvTranspose2d( 
+            self.resample = nn.ConvTranspose2d(
                 out_channels,
                 out_channels,
                 kernel_size=8,
@@ -571,6 +576,7 @@ class DPT_Decoder(nn.Module):
 
         return rgb_output
 
+
 class UnReflect_Model(nn.Module):
     """
     RGB with flexible DPT decoders.
@@ -622,10 +628,10 @@ class UnReflect_Model(nn.Module):
             created; otherwise a standard `DPT_Decoder` is created. The config
             dict is passed as a single dictionary argument to the decoder's
             constructor, augmented with the resolved `feature_dim`.
-            
+
             If `from_pretrained` (or `FROM_PRETRAINED`) is set and not empty,
             the decoder weights are loaded from that path and the decoder is frozen.
-            
+
             Args:
                 dec: Decoder instance or config dict
                 decoder_name: Optional decoder name for prefix stripping when loading weights
@@ -634,7 +640,9 @@ class UnReflect_Model(nn.Module):
                 return dec
             if isinstance(dec, dict):
                 # Extract pretrained path before building decoder
-                pretrained_path = dec.get("from_pretrained", dec.get("FROM_PRETRAINED", ""))
+                pretrained_path = dec.get(
+                    "from_pretrained", dec.get("FROM_PRETRAINED", "")
+                )
                 # Determine whether to build FiLM-conditioned or standard decoder
                 use_film = bool(dec.get("use_film", dec.get("USE_FILM", False)))
                 # Build config dict for the decoder class
@@ -647,33 +655,41 @@ class UnReflect_Model(nn.Module):
                 config.pop("USE_FILM", None)
                 config.pop("from_pretrained", None)
                 config.pop("FROM_PRETRAINED", None)
-                
+
                 # Create decoder instance
-                decoder = FiLMConditionedDPT(config) if use_film else DPT_Decoder(config)
-                
+                decoder = (
+                    FiLMConditionedDPT(config) if use_film else DPT_Decoder(config)
+                )
+
                 # Load pretrained weights and freeze if path is specified and not empty
                 if pretrained_path and pretrained_path != "":
                     if not os.path.exists(pretrained_path):
                         raise FileNotFoundError(
                             f"Pretrained decoder weights not found at: {pretrained_path}"
                         )
-                    
+
                     # Load checkpoint (handle both raw state_dict and checkpoint formats)
-                    checkpoint = torch.load(pretrained_path, map_location="cpu", weights_only=False)
-                    
+                    checkpoint = torch.load(
+                        pretrained_path, map_location="cpu", weights_only=False
+                    )
+
                     # Extract state dict (handle both formats)
                     state_dict = checkpoint
                     if isinstance(checkpoint, dict):
                         # Try common checkpoint keys
                         state_dict = (
-                            checkpoint.get("model_state_dict") or
-                            checkpoint.get("state_dict") or
-                            checkpoint
+                            checkpoint.get("model_state_dict")
+                            or checkpoint.get("state_dict")
+                            or checkpoint
                         )
-                    
+
                     # Strip common prefixes if state dict was saved as part of larger model
                     # Handle cases like "decoders.diffuse.weight" -> "weight" or "decoder.weight" -> "weight"
-                    if isinstance(state_dict, dict) and decoder_name and len(state_dict) > 0:
+                    if (
+                        isinstance(state_dict, dict)
+                        and decoder_name
+                        and len(state_dict) > 0
+                    ):
                         sample_key = next(iter(state_dict.keys()))
                         if "." in sample_key:
                             # Try to find decoder-specific prefix pattern
@@ -684,39 +700,49 @@ class UnReflect_Model(nn.Module):
                             ]
                             for prefix in prefix_options:
                                 # Check if any keys start with this prefix
-                                matching_keys = [k for k in state_dict.keys() if k.startswith(prefix)]
+                                matching_keys = [
+                                    k for k in state_dict.keys() if k.startswith(prefix)
+                                ]
                                 if matching_keys:
                                     # Strip decoder prefix from matching keys, keep others as-is
                                     stripped_dict = {}
                                     for k, v in state_dict.items():
                                         if k.startswith(prefix):
-                                            stripped_dict[k[len(prefix):]] = v
+                                            stripped_dict[k[len(prefix) :]] = v
                                         else:
                                             stripped_dict[k] = v
                                     state_dict = stripped_dict
                                     break
-                    
+
                     # Load weights with strict=False to handle partial matches
-                    missing_keys, unexpected_keys = decoder.load_state_dict(state_dict, strict=False)
+                    missing_keys, unexpected_keys = decoder.load_state_dict(
+                        state_dict, strict=False
+                    )
                     if missing_keys:
                         import warnings
+
                         warnings.warn(
-                            f"Some keys were missing when loading pretrained decoder from {pretrained_path}: {missing_keys[:min(5, len(missing_keys))]}..."
+                            f"Some keys were missing when loading pretrained decoder from {pretrained_path}: {missing_keys[: min(5, len(missing_keys))]}..."
                         )
-                    
+
                     # Freeze all decoder parameters
                     for param in decoder.parameters():
                         param.requires_grad = False
                     decoder.eval()  # Set to eval mode for frozen decoder
-                
+                    logger.info(
+                        f"Loaded pre-trained decoder weights from {pretrained_path}"
+                    )
                 return decoder
-            raise TypeError("Decoder must be DPT_Decoder/FiLMConditionedDPT instance or dict.")
-
+            raise TypeError(
+                "Decoder must be DPT_Decoder/FiLMConditionedDPT instance or dict."
+            )
 
         self.decoder_names = list(decoders.keys())
         self.decoders = nn.ModuleDict()
         for decoder_name, decoder_config in decoders.items():
-            self.decoders[decoder_name] = build_dpt(decoder_config, decoder_name=decoder_name)
+            self.decoders[decoder_name] = build_dpt(
+                decoder_config, decoder_name=decoder_name
+            )
 
     def _rgb_tokens(self, rgb_preproc):
         """Extract DINOv3 tokens and infer (Hp, Wp) if wrapper doesn’t return them."""
@@ -733,7 +759,7 @@ class UnReflect_Model(nn.Module):
 
     def forward(self, model_input_dict):
         # 1) RGB → DINO tokens
-        
+
         rgb_in = self.dinov3.preprocess_image(model_input_dict["rgb"])
         rgb_tokens = self.dinov3(rgb_in)["selected_hidden_states"]
 
@@ -749,30 +775,36 @@ class UnReflect_Model(nn.Module):
         # })
 
         return outputs
-    
+
+
 class RGBDistillDecomposer(UnReflect_Model):
     def __init__(self):
         super().__init__()
-        
+
+
 # ---- 1) A FiLM-enabled DPT that can be used for the diffuse/spec decoders ----
 class FiLMConditionedDPT(DPT_Decoder):
     """
     Drop-in replacement for DPT_Decoder that accepts a spatial mask (B,1,H,W)
     (e.g., predicted highlight map) and applies FiLM at each fusion stage.
     """
+
     def __init__(self, config=None):
         super().__init__(config)
         self._mask = None
         self._mask_enabled = False
 
         # For each fusion stage we predict [gamma, beta] from [mask, distance]
-        self.film = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(2, 32, 3, padding=1),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(32, self.config["fusion_hidden_size"] * 2, 1),
-            ) for _ in range(4)
-        ])
+        self.film = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(2, 32, 3, padding=1),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(32, self.config["fusion_hidden_size"] * 2, 1),
+                )
+                for _ in range(4)
+            ]
+        )
 
     @torch.no_grad()
     def _build_mask_pyr(self, m: torch.Tensor):
@@ -794,13 +826,13 @@ class FiLMConditionedDPT(DPT_Decoder):
         sizes = [
             (H // 32, W // 32),  # e.g., 14x14 when H=W=448 (12x12 when H=W=384)
             (H // 16, W // 16),  # e.g., 28x28 (24x24)
-            (H // 8,  W // 8),   # e.g., 56x56 (48x48)
-            (H // 4,  W // 4),   # e.g., 112x112 (96x96)
+            (H // 8, W // 8),  # e.g., 56x56 (48x48)
+            (H // 4, W // 4),  # e.g., 112x112 (96x96)
             # (H // 2,  W // 2),   # e.g., 112x112 (96x96)
         ]
 
         pyr = []
-        for (hh, ww) in sizes:
+        for hh, ww in sizes:
             mm = F.interpolate(m, size=(hh, ww), mode="nearest")
             dd = F.interpolate(d, size=(hh, ww), mode="bilinear", align_corners=True)
             pyr.append(torch.cat([mm, dd], dim=1))  # (B,2,hh,ww)
@@ -814,7 +846,7 @@ class FiLMConditionedDPT(DPT_Decoder):
         self._mask_enabled = mask is not None
 
     def _apply_film(self, x: torch.Tensor, ab_layer: nn.Module, cond: torch.Tensor):
-        ab = ab_layer(cond)                    # (B, 2C, H, W)
+        ab = ab_layer(cond)  # (B, 2C, H, W)
         gamma, beta = torch.chunk(ab, 2, dim=1)
         return gamma * x + beta
 
@@ -825,42 +857,55 @@ class FiLMConditionedDPT(DPT_Decoder):
 
         feats = []
         for hs, reas in zip(hidden_states, self.reassemble_layers):
-            feats.append(reas(hs, ph, pw))  # sizes: [96,96], [48,48], [24,24], [12,12] in channels [96,192,384,768]
+            feats.append(
+                reas(hs, ph, pw)
+            )  # sizes: [96,96], [48,48], [24,24], [12,12] in channels [96,192,384,768]
 
         # Prepare mask pyramid if available
-        mask_pyr = self._build_mask_pyr(self._mask) if self._mask_enabled else [None]*4
+        mask_pyr = (
+            self._build_mask_pyr(self._mask) if self._mask_enabled else [None] * 4
+        )
 
         # Fusion with FiLM at every stage
-        fused = self.fusion_blocks[3](feats[3])                   # (B,256,12,12)
+        fused = self.fusion_blocks[3](feats[3])  # (B,256,12,12)
         if mask_pyr[0] is not None:
             fused = self._apply_film(fused, self.film[3], mask_pyr[0])
 
-        fused = F.interpolate(fused, scale_factor=2, mode="bilinear", align_corners=True)  # -> 24
+        fused = F.interpolate(
+            fused, scale_factor=2, mode="bilinear", align_corners=True
+        )  # -> 24
 
-        fused = fused + self.fusion_blocks[2](feats[2])           # (B,256,24,24)
+        fused = fused + self.fusion_blocks[2](feats[2])  # (B,256,24,24)
         if mask_pyr[1] is not None:
             fused = self._apply_film(fused, self.film[2], mask_pyr[1])
         fused = self.drop2d(fused)
-        fused = F.interpolate(fused, scale_factor=2, mode="bilinear", align_corners=True)  # -> 48
+        fused = F.interpolate(
+            fused, scale_factor=2, mode="bilinear", align_corners=True
+        )  # -> 48
 
-        fused = fused + self.fusion_blocks[1](feats[1])           # (B,256,48,48)
+        fused = fused + self.fusion_blocks[1](feats[1])  # (B,256,48,48)
         if mask_pyr[2] is not None:
             fused = self._apply_film(fused, self.film[1], mask_pyr[2])
         fused = self.drop2d(fused)
-        fused = F.interpolate(fused, scale_factor=2, mode="bilinear", align_corners=True)  # -> 96
+        fused = F.interpolate(
+            fused, scale_factor=2, mode="bilinear", align_corners=True
+        )  # -> 96
 
-        fused = fused + self.fusion_blocks[0](feats[0])           # (B,256,96,96)
+        fused = fused + self.fusion_blocks[0](feats[0])  # (B,256,96,96)
         if mask_pyr[3] is not None:
             fused = self._apply_film(fused, self.film[0], mask_pyr[3])
         fused = self.drop2d(fused)
-        fused = F.interpolate(fused, scale_factor=2, mode="bilinear", align_corners=True)  # -> 192
+        fused = F.interpolate(
+            fused, scale_factor=2, mode="bilinear", align_corners=True
+        )  # -> 192
 
-        out = self.rgb_head(fused)                                # (B,C,H,W) after final resize
+        out = self.rgb_head(fused)  # (B,C,H,W) after final resize
         if self.config["output_image_size"] or (out.shape[-2:] != (H, W)):
             out = F.interpolate(out, size=(H, W), mode="bilinear", align_corners=True)
         if return_mask:
             return out, mask_pyr
         return out
+
 
 # ---- 2) Wiring in RGBDistillDecomposer: run highlight first, then condition diffuse/spec ----
 class UnReflect_Model_FiLMConditioned(UnReflect_Model):
@@ -870,18 +915,25 @@ class UnReflect_Model_FiLMConditioned(UnReflect_Model):
       - "diffuse":   FiLMConditionedDPT(...)        that will be conditioned by the mask
     You can add "specular" similarly if desired.
     """
+
     def forward(self, model_input_dict):
-        x = model_input_dict["rgb"]                     # (B,3,H,W) in [0,1]
+        x = model_input_dict["rgb"]  # (B,3,H,W) in [0,1]
         rgb_in = self.dinov3.preprocess_image(x)
-        tokens_list = self.dinov3(rgb_in)["selected_hidden_states"]  # List[4] of [B,N_p,C]
+        tokens_list = self.dinov3(rgb_in)[
+            "selected_hidden_states"
+        ]  # List[4] of [B,N_p,C]
 
         outputs = {}
 
         # 1) Predict highlight mask (soft), from highlight head
         if "highlight" not in self.decoders:
             raise KeyError("decoders must include a 'highlight' head for Option A.")
-        hl_logits = self.decoders["highlight"](tokens_list)        # (B,1,H,W) in [0,1] (Sigmoid in head)
-        mask_soft = hl_logits.clamp(0, 1)                          # treat as soft attention; no hard threshold here
+        hl_logits = self.decoders["highlight"](
+            tokens_list
+        )  # (B,1,H,W) in [0,1] (Sigmoid in head)
+        mask_soft = hl_logits.clamp(
+            0, 1
+        )  # treat as soft attention; no hard threshold here
         outputs["highlight"] = mask_soft
 
         # 2) Condition other heads with FiLM if supported
@@ -895,7 +947,6 @@ class UnReflect_Model_FiLMConditioned(UnReflect_Model):
         return outputs
 
 
-
 # ---- 1) Tiny token-inpainter (works on patch tokens) ----
 class _TinyMLP(nn.Module):
     def __init__(self, dim, mlp_ratio=4.0, drop=0.0):
@@ -905,8 +956,10 @@ class _TinyMLP(nn.Module):
         self.act = nn.GELU()
         self.drop = nn.Dropout(drop)
         self.fc2 = nn.Linear(hid, dim)
+
     def forward(self, x):
         return self.fc2(self.drop(self.act(self.fc1(x))))
+
 
 class _TransformerBlk(nn.Module):
     def __init__(self, dim=768, heads=12, drop=0.0):
@@ -915,6 +968,7 @@ class _TransformerBlk(nn.Module):
         self.attn = nn.MultiheadAttention(dim, heads, dropout=drop, batch_first=True)
         self.n2 = nn.LayerNorm(dim)
         self.mlp = _TinyMLP(dim, 4.0, drop)
+
     def forward(self, x, attn_bias=None):
         q = k = v = self.n1(x)
         if attn_bias is None:
@@ -927,6 +981,7 @@ class _TransformerBlk(nn.Module):
         x = x + self.mlp(self.n2(x))
         return x
 
+
 class TokenInpainter(nn.Module):
     """
     Completes masked patch tokens from context.
@@ -934,27 +989,79 @@ class TokenInpainter(nn.Module):
             pm = (B, N)    boolean mask at patch resolution (True = masked/hole)
     Output: X  = (B, N, C) refined tokens; we will take X at masked positions
     """
+
     def __init__(self, dim=768, depth=4, heads=16, drop=0.0):
         super().__init__()
-        self.blocks = nn.ModuleList([_TransformerBlk(dim, heads, drop) for _ in range(depth)])
-        self.norm = nn.LayerNorm(dim)
-        # Learnable mask token to seed missing positions
+        self.blocks = nn.ModuleList(
+            [_TransformerBlk(dim, heads, drop) for _ in range(depth)]
+        )
+        self.out_proj = nn.Linear(dim, dim, bias=True)
+        # Learnable mask token to seed missing positions (randomly initialized with truncated normal, std=0.02)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, dim))
-        # nn.init.trunc_normal_(self.mask_token, std=0.02)
+        nn.init.trunc_normal_(self.mask_token, std=0.02)
+        # Learnable indicator for masked positions (helps network identify holes)
+        self.mask_indicator = nn.Parameter(torch.zeros(1, 1, dim))
+        nn.init.trunc_normal_(self.mask_indicator, std=0.02)
+        # Enable fixed 2D sinusoidal positional encodings
+        self.use_positional_encoding = True
 
     def forward(self, T: torch.Tensor, pm_bool: torch.Tensor):
-        # Replace masked positions with a learned vector before refinement
+        # T: [B, N, C], pm_bool: [B, N] (True = hole)
         B, N, C = T.shape
-        mask_tok = self.mask_token.expand(B, 1, C)
-        T_seed = T.clone()
-        # Scatter mask token into masked positions
-        for b in range(B):
-            if pm_bool[b].any():
-                T_seed[b, pm_bool[b]] = mask_tok[b, 0]
+        mask = pm_bool.unsqueeze(-1)                     # [B, N, 1]
+        mask_tok = self.mask_token                      # [1, 1, C]
+        # Seed masked positions with learned token, keep context as-is
+        T_seed = torch.where(mask, mask_tok.expand(B, N, C), T)
+
+        # Add positional encodings (crucial for spatial reasoning in attention)
+        if self.use_positional_encoding:
+            hw = int(N ** 0.5)
+            if hw * hw != N:
+                hw = int(round(N ** 0.5))
+            pos = self._build_2d_sincos_pos_embed(hw, hw, C, T_seed.device)  # [1,N,C]
+            T_seed = T_seed + pos
+
+        # Add explicit masked-position indicator
+        T_seed = T_seed + torch.where(
+            mask,
+            self.mask_indicator.expand(B, N, C),
+            torch.zeros_like(T_seed),
+        )
         X = T_seed
         for blk in self.blocks:
-            X = blk(X)  # (B,N,C)
-        return self.norm(X)
+            X = blk(X)
+        # Expected shape after projection: [B, N, C]
+        return self.out_proj(X)
+
+    @staticmethod
+    def _build_2d_sincos_pos_embed(h: int, w: int, dim: int, device: torch.device) -> torch.Tensor:
+        """
+        Create 2D sinusoidal positional embeddings of shape [1, h*w, dim].
+        """
+        assert dim % 2 == 0, "positional dim must be even"
+        half = dim // 2
+        emb_h = TokenInpainter._build_1d_sincos_embed(half, h, device)  # [h, half]
+        emb_w = TokenInpainter._build_1d_sincos_embed(half, w, device)  # [w, half]
+        emb_h = emb_h[:, None, :].expand(h, w, half)
+        emb_w = emb_w[None, :, :].expand(h, w, half)
+        pos = torch.cat([emb_h, emb_w], dim=-1).reshape(1, h * w, dim)
+        return pos
+
+    @staticmethod
+    def _build_1d_sincos_embed(dim: int, length: int, device: torch.device) -> torch.Tensor:
+        assert dim % 2 == 0, "1D pos dim must be even"
+        positions = torch.arange(length, device=device, dtype=torch.float32).unsqueeze(1)  # [L,1]
+        div_term = torch.exp(
+            torch.arange(0, dim, 2, device=device, dtype=torch.float32)
+            * (-(torch.log(torch.tensor(10000.0, device=device))))
+            / (dim // 2)
+        )  # [dim/2]
+        angles = positions * div_term  # [L, dim/2]
+        emb = torch.empty((length, dim), device=device, dtype=torch.float32)
+        emb[:, 0::2] = torch.sin(angles)
+        emb[:, 1::2] = torch.cos(angles)
+        return emb
+
 
 class UnReflect_Model_TokenInpainter(UnReflect_Model):
     """
@@ -963,39 +1070,85 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
       - "diffuse":   (regular) DPT_Decoder that expects standard DINO tokens
     Keeps DPT decoders intact; completes tokens first.
     """
-    def __init__(self, dinov3, decoders, patch_size: int = 16,
-                 token_inpainter_cfg: dict | None = None, **kwargs):
-        super().__init__(dinov3=dinov3, decoders=decoders, patch_size=patch_size, **kwargs)
+
+    def __init__(
+        self,
+        dinov3,
+        decoders,
+        patch_size: int = 16,
+        token_inpainter_cfg: dict | None = None,
+        **kwargs,
+    ):
+        super().__init__(
+            dinov3=dinov3, decoders=decoders, patch_size=patch_size, **kwargs
+        )
         dim = self.embed_dim
         self.token_inpaint = TokenInpainter(dim=dim, **(token_inpainter_cfg or {}))
-
+        
+    def extract_tokens(self, image):
+        rgb_in = self.dinov3.preprocess_image(image)
+        tokens_list = self.dinov3(rgb_in)[
+            "selected_hidden_states"
+        ] 
+        return tokens_list
+    
     def forward(self, model_input_dict):
-        x = model_input_dict["rgb"]              # (B,3,H,W)
+        x = model_input_dict["rgb"]  # (B,3,H,W)
         rgb_in = self.dinov3.preprocess_image(x)
-        tokens_list = self.dinov3(rgb_in)["selected_hidden_states"]  # List[4] of (B,N,C), PATCH TOKENS ONLY
+        tokens_list = self.dinov3(rgb_in)[
+            "selected_hidden_states"
+        ]  # List[4] of (B,N,C), PATCH TOKENS ONLY
 
         outputs = {}
 
-        # 1) Predict soft highlight mask in image space
+        ### FIRST: Predict soft highlight mask in image space
         if "highlight" not in self.decoders:
             raise KeyError("decoders must include a 'highlight' head for Option B.")
-        hl_soft = self.decoders["highlight"](tokens_list)          # (B,1,H,W) in [0,1]
+        hl_soft = self.decoders["highlight"](tokens_list)  # (B,1,H,W) in [0,1]
         outputs["highlight"] = hl_soft
 
-        # 2) Build patch-level mask (same for all selected layers)
-        P = self.patch_size
-        
+        ### SECOND: Construct patch-level mask - From the prediction or override from GT if provided
+        if "patch_mask_override" in model_input_dict:
+            patchmask_bool = pixel_mask_to_patch_mask(
+                model_input_dict["patch_mask_override"],
+                patch_size=self.patch_size,
+                threshold=0.1,
+                invert=False,
+            )
+        else:
+            patchmask_bool = pixel_mask_to_patch_mask(
+                outputs["highlight"],
+                patch_size=self.patch_size,
+                threshold=0.1,
+                invert=False,
+            )
+            
+
         # patchmask_bool = 1 : MUST IMPAINT THE TOKEN
         # patchmask_bool = 0 : IS TEACHER TOKEN
-        patchmask_bool = pixel_mask_to_patch_mask(hl_soft, patch_size=P)  # (B, N) boolean
         outputs["patch_mask"] = patchmask_bool
-        # 3) Token completion per selected layer, then form completed token list
+
+        ### THIRD: Inpaint the tokens in the mask
         completed_tokens = []
-        for T in tokens_list:                                      # (B,N,C)
-            T_inpained = self.token_inpaint(T, patchmask_bool)                         # refined all tokens
+        for n, T in enumerate(tokens_list):  # (B,N,C)
+            T_inpainted = self.token_inpaint(T, torch.logical_not(patchmask_bool))  # refined all tokens
+            
+            # ### ! REMOVE - DEBUG ONLY
+            # if "diffuse_tokens" in model_input_dict:
+            #     T_inpainted = model_input_dict["diffuse_tokens"][n]
+            # ###                                                                    
+            
             # keep teacher tokens on context; use predicted tokens on masked patches
-            T_comp = torch.where(patchmask_bool.unsqueeze(-1), T_inpained, T)  # (B,N,C)
+            T_comp = torch.where(
+                patchmask_bool.unsqueeze(-1), T_inpainted, T
+            )  # (B,N,C)
             completed_tokens.append(T_comp)
+
+        # outputs["tokens_teacher"] = tokens_list
+        outputs["tokens_inpainted"] = T_inpainted
+        outputs["tokens_completed"] = completed_tokens
+        print("Inpainted",torch.max(T_inpainted[-1]).item(), torch.min(T_inpainted[-1]).item())
+        print("Completed",torch.max(completed_tokens[-1]).item(), torch.min(completed_tokens[-1]).item())
 
         # 4) Decode with completed tokens (do NOT pass mask to decoder)
         for name, dec in self.decoders.items():
@@ -1003,7 +1156,4 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
                 continue
             outputs[name] = dec(completed_tokens)
 
-        # Optionally return tokens for loss computation (feature distillation etc.)
-        outputs["tokens_teacher"] = tokens_list
-        outputs["tokens_completed"] = completed_tokens
         return outputs

@@ -9,9 +9,9 @@ from loss_utils import (
     saturation_ring_blob_consistency,
     _total_variation,
     _grad_mag,
-    _pixel_to_patch_mask
 )
 
+from models_utils import pixel_mask_to_patch_mask
 
 class UnReflectLoss(nn.Module):
     def __init__(
@@ -111,6 +111,7 @@ class UnReflectLoss(nn.Module):
         tokens_*: List[L] of (B, N, C)
         patch_mask_sup: (B, N) bool — where to supervise (masked & supervised)
         """
+        patch_mask_sup = torch.logical_not(patch_mask_sup)
         if not isinstance(tokens_completed, (list, tuple)) or not isinstance(tokens_teacher, (list, tuple)):
             raise ValueError("tokens_completed and tokens_teacher must be lists of tensors.")
 
@@ -132,8 +133,11 @@ class UnReflectLoss(nn.Module):
             Tt_m = Tt[idx].view(-1, Tt.shape[-1])            # (M, C)
             if Tc_m.numel() == 0:
                 continue
-            l1   = (Tc_m - Tt_m).abs().mean()
-            cosd = 1.0 - cos(Tc_m, Tt_m).mean()
+            # Normalize features for stable geometry in feature space
+            Tc_n = F.normalize(Tc_m, dim=-1)
+            Tt_n = F.normalize(Tt_m, dim=-1)
+            l1   = (Tc_n - Tt_n).abs().mean()
+            cosd = 1.0 - cos(Tc_n, Tt_n).mean()
             l_total = l_total + (self.token_feat_alpha * l1 + (1.0 - self.token_feat_alpha) * cosd)
 
         return l_total / max(1, len(tokens_completed))
@@ -262,11 +266,11 @@ class UnReflectLoss(nn.Module):
         if self.weight_token_inpaint > 0:
             if "tokens_completed" not in prediction:
                 raise KeyError("prediction must include 'tokens_completed' when weight_token_inpaint > 0")
-            if "tokens_teacher" not in prediction:
-                raise KeyError("prediction must include 'tokens_teacher' when weight_token_inpaint > 0")
+            if "tokens_teacher" not in ground_truth:
+                raise KeyError("ground_truth must include 'tokens_teacher' when weight_token_inpaint > 0")
 
-            tokens_completed = prediction["tokens_completed"]
-            tokens_teacher   = prediction["tokens_teacher"]
+            tokens_completed = prediction["tokens_completed"] # Tokens predicted by inpating model
+            tokens_teacher   = ground_truth["tokens_teacher"] # Desired tokens from ground truth diffuse
 
             # Prefer directly provided patch_mask_sup; else try to derive from pixel supervised mask
             if "patch_mask_sup" in ground_truth and ground_truth["patch_mask_sup"] is not None:
@@ -276,7 +280,7 @@ class UnReflectLoss(nn.Module):
                 if m_sup is None:
                     raise KeyError("Need pixel 'mask' (m_sup) or ground_truth['patch_mask_sup'] for token loss.")
                 patch_size = int(ground_truth.get("patch_size", 16))
-                pm_sup = _pixel_to_patch_mask(m_sup, patch=patch_size)  # (B,N) bool
+                pm_sup = pixel_mask_to_patch_mask(m_sup, patch_size=patch_size, threshold=0.1)  # (B,N) bool
 
             l_token = self._token_inpaint_loss(tokens_completed, tokens_teacher, pm_sup)
             losses["TokenInpaint"] = l_token
