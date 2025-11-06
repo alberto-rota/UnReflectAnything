@@ -1,0 +1,14 @@
+run: "brisk-terrain-416"
+runs_dir: "/home/atuin/v120bb/v120bb18/UnReflectAnything/runs"
+weights_path: "/anvme/workspace/v120bb18-unreflectanything/results/brisk-terrain-416/models/weights_best.pt"
+
+model_config_path: "/home/atuin/v120bb/v120bb18/UnReflectAnything/config_train.yaml"
+model_module: "models_old"
+input_dir: "/anvme/workspace/v120bb18-unreflectanything/benchmark/data/input/CHOLEC80_v70"
+output_dir: "/anvme/workspace/v120bb18-unreflectanything/benchmark/data/OURS/CHOLEC80_v70"
+batch_size: 8
+device: "cuda"
+image_extensions: [".png", ".jpg", ".jpeg"]
+resize_output: True
+brightness_threshold: 0.9
+monitor_usage: True

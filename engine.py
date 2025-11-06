@@ -368,7 +368,7 @@ class Engine:
             self.logger.info(f"WandB project URL: {project_url}", context="WANDB")
 
     def csv_log_metrics(self):
-        """Save metrics to CSV files"""
+        """Save metrics to CSV files""" 
         if not self.metrics["Training"].empty:
             self.metrics["Training"].to_csv(
                 os.path.join(self.RUN_DIR, "training_metrics.csv")
@@ -751,7 +751,7 @@ class Engine:
                     pixel_inpaint_mask, patch_size=16, threshold=0.1
                 )
                 # Intersect: supervise only masked (inpaint) patches that are also supervised
-                patch_mask_sup_bool = (patch_inpaint_mask.bool() & patch_supervision_mask.bool())
+                patch_mask_sup_bool = (patch_inpaint_mask.bool() & torch.logical_not(patch_supervision_mask).bool())
 
                 # Token inpainter ground truth
                 diffuse_teacher_tokens = self.model.extract_tokens(
@@ -797,11 +797,10 @@ class Engine:
                 ### Forward pass
                 model_input = {
                         "rgb": gt_decomposition["rgb_highlighted"],
-                        "patch_mask_override": pixel_inpaint_mask,
+                        # "patch_mask_override": pixel_inpaint_mask,
                         # "diffuse_tokens": diffuse_teacher_tokens,
                     }
                 pred_decomposition = self.model(model_input)
-                print("Diffuse GT",torch.max(diffuse_teacher_tokens[-1]).item(), torch.min(diffuse_teacher_tokens[-1]).item())
 
                 ### COMPUTE LOSS FUNCTION
                 losses = self.loss(
@@ -996,9 +995,9 @@ class Engine:
                             patch_mask_to_pixel_mask(
                                 patch_inpaint_mask, patch_size=16
                             ).int()[0]
-                            * patch_mask_to_pixel_mask(
+                            * torch.logical_not(patch_mask_to_pixel_mask(
                                 patch_supervision_mask, patch_size=16
-                            ).int()[0]
+                            )).int()[0]
                         )  # (1, H, W) in [0,1]
                         token_sup_mask = patch_mask_to_pixel_mask(
                             patch_supervision_mask, patch_size=16
@@ -1145,7 +1144,7 @@ class Engine:
                         # gt_decomposition["patch_mask_inpaint"] = (
                         #     token_inpaint_mask.int()
                         # )
-                        gt_decomposition["patch_mask_sup"] = None
+                        del gt_decomposition["patch_mask_sup"]
                         del pred_decomposition["tokens_completed"]
                         del pred_decomposition["tokens_inpainted"]
                         del gt_decomposition["tokens_teacher"]

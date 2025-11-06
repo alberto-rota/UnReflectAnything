@@ -167,34 +167,101 @@ def optimizers(model, config):
     optimizer_class = getattr(optimization, config.get("OPTIMIZER_BOOTSTRAP_NAME"))
     base_lr = config.get("LEARNING_RATE")
     weight_decay = config.get("WEIGHT_DECAY")
-    # Optional: higher LR for token inpainter to ensure it moves even if other parts are frozen
-    token_lr = config.get("LEARNING_RATE_TOKEN_INPAINTER", base_lr)
+    
+    # Get token inpainter learning rate from nested config structure
+    # Try MODEL.value.TOKEN_INPAINTER.TOKEN_INPAINTER_LR first, then fallback to old location
+    token_lr = None  # Track if we found it in nested structure
+    try:
+        # Try nested structure first (MODEL.value.TOKEN_INPAINTER.TOKEN_INPAINTER_LR)
+        model_config = config.get("MODEL", {})
+        if isinstance(model_config, dict):
+            model_value = model_config.get("value", {})
+            if isinstance(model_value, dict):
+                token_inpainter_config = model_value.get("TOKEN_INPAINTER", {})
+                if isinstance(token_inpainter_config, dict):
+                    token_inpainter_lr = token_inpainter_config.get("TOKEN_INPAINTER_LR")
+                    if token_inpainter_lr is not None:
+                        token_lr = token_inpainter_lr
+    except (AttributeError, KeyError, TypeError):
+        pass
+    
+    # Fallback to old location if not found in nested structure, or use base_lr as final default
+    if token_lr is None:
+        token_lr = config.get("LEARNING_RATE_TOKEN_INPAINTER", base_lr)
 
+    # Check if model has decoder-specific learning rates
+    decoder_lrs = getattr(model, "decoder_lrs", {})
+    
     # Build param groups deterministically
     token_params = []
+    decoder_param_groups = {}  # decoder_name -> list of params (only for decoders with custom LR)
     other_params = []
+    
     for name, p in model.named_parameters():
         if not p.requires_grad:
             continue
         if name.startswith("token_inpaint."):
             token_params.append(p)
+        elif name.startswith("decoders."):
+            # Extract decoder name from parameter name (format: "decoders.{decoder_name}.{rest}")
+            parts = name.split(".")
+            if len(parts) >= 2:
+                decoder_name = parts[1]
+                # Check if this decoder has a custom (non-None) learning rate
+                decoder_lr = decoder_lrs.get(decoder_name, None)
+                if decoder_lr is not None:
+                    # Decoder has custom LR - add to separate group
+                    if decoder_name not in decoder_param_groups:
+                        decoder_param_groups[decoder_name] = []
+                    decoder_param_groups[decoder_name].append(p)
+                else:
+                    # Decoder has no custom LR (None/unspecified) - use base LR with other params
+                    other_params.append(p)
+            else:
+                # Fallback: add to other_params if format is unexpected
+                other_params.append(p)
         else:
             other_params.append(p)
 
-    if len(token_params) == 0:
-        # Fallback: single group
+    # Build parameter groups list
+    param_groups = []
+    
+    # Add token inpainter group if it has parameters
+    if len(token_params) > 0:
+        param_groups.append({
+            "params": token_params,
+            "lr": token_lr,
+            "weight_decay": weight_decay,
+        })
+    
+    # Add decoder groups with their specific learning rates (only for decoders with custom LR)
+    for decoder_name, decoder_params in decoder_param_groups.items():
+        if len(decoder_params) > 0:
+            decoder_lr = decoder_lrs[decoder_name]  # Already checked to be non-None above
+            param_groups.append({
+                "params": decoder_params,
+                "lr": decoder_lr,
+                "weight_decay": weight_decay,
+            })
+    
+    # Add other parameters group (includes decoders without custom LR)
+    if len(other_params) > 0:
+        param_groups.append({
+            "params": other_params,
+            "lr": base_lr,
+            "weight_decay": weight_decay,
+        })
+    
+    # Create optimizer with parameter groups
+    if len(param_groups) == 0:
+        # Fallback: single group (shouldn't happen if model has parameters)
         optimizer = optimizer_class(
             filter(lambda p: p.requires_grad, model.parameters()),
             lr=base_lr,
             weight_decay=weight_decay,
         )
     else:
-        optimizer = optimizer_class(
-            [
-                {"params": other_params, "lr": base_lr, "weight_decay": weight_decay},
-                {"params": token_params, "lr": token_lr, "weight_decay": weight_decay},
-            ]
-        )
+        optimizer = optimizer_class(param_groups)
 
     # Gradient scaler for mixed precision
     scaler = torch.amp.GradScaler(

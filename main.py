@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import argparse
 import ast
+import importlib
 import os
 import socket
 import time
@@ -48,6 +49,11 @@ def create_model_from_config(config: DotMap, device: torch.device):
     """
     # Access model configuration from the nested structure
     model_config = config.get("MODEL", {})  # .get("value", {})
+
+    # Get the models module name from config (default: "models")
+    model_module_name = model_config.get("MODEL_MODULE", "models")
+    # Dynamically import the models module
+    models_module = importlib.import_module(model_module_name)
 
     # Get image dimensions from config (check multiple possible locations)
     target_size = None
@@ -122,6 +128,8 @@ def create_model_from_config(config: DotMap, device: torch.device):
                 "use_film": decoder_params.get("USE_FILM", False),
                 # Path to pretrained weights - if set and not empty, decoder will be loaded and frozen
                 "from_pretrained": decoder_params.get("FROM_PRETRAINED", ""),
+                # Learning rate for this decoder - if 0, decoder will be frozen; otherwise sets its learning rate
+                "decoder_lr": decoder_params.get("DECODER_LR", None),
             }
             decoders[decoder_name] = decoder_cfg
         
@@ -145,11 +153,11 @@ def create_model_from_config(config: DotMap, device: torch.device):
             "highlight_decoder": decoder_cfg,
         }
 
-    shared_dinov3 = models.DINOv3(dinov3_cfg).to(device)
+    shared_dinov3 = models_module.DINOv3(dinov3_cfg).to(device)
     # Create the main model
     model_class_str = model_config.get("MODEL_CLASS", "RGBPOLDecomposer")
     # Get the model class from the string name
-    model_class = getattr(models, model_class_str)
+    model_class = getattr(models_module, model_class_str)
     
     # Build model kwargs based on model type
     model_kwargs = {
@@ -163,6 +171,23 @@ def create_model_from_config(config: DotMap, device: torch.device):
             "pol_encoder": pol_enc_cfg,
             "pol_cross_attn": cross_attn_cfg,
         })
+    
+    # Add TokenInpainter config for UnReflect_Model_TokenInpainter
+    if model_class_str == "UnReflect_Model_TokenInpainter":
+        token_inpainter_config = model_config.get("TOKEN_INPAINTER", {})
+        token_inpainter_cfg = {
+            "token_inpainter_class": token_inpainter_config.get("TOKEN_INPAINTER_CLASS", "TokenInpainter"),
+            "token_inpainter_module": token_inpainter_config.get("TOKEN_INPAINTER_MODULE", "models"),
+            # TokenInpainter parameters (will be passed to the class constructor)
+            "depth": token_inpainter_config.get("DEPTH", 4),
+            "heads": token_inpainter_config.get("HEADS", 16),
+            "drop": token_inpainter_config.get("DROP", 0.1),
+            "use_positional_encoding": token_inpainter_config.get("USE_POSITIONAL_ENCODING", True),
+            "use_final_norm": token_inpainter_config.get("USE_FINAL_NORM", True),
+            "use_local_prior": token_inpainter_config.get("USE_LOCAL_PRIOR", True),
+            "seed_noise_std": token_inpainter_config.get("SEED_NOISE_STD", 0.01),
+        }
+        model_kwargs["token_inpainter_cfg"] = token_inpainter_cfg
     
     model = model_class(**model_kwargs).to(device)
     if config.get("USE_TORCH_COMPILE", True):

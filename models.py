@@ -1,13 +1,16 @@
-from typing import Dict, List, Optional
+import importlib
+import inspect
+import math
 import os
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoImageProcessor, AutoModel
-from models_utils import pixel_mask_to_patch_mask
 
 from logger import get_logger
+from models_utils import pixel_mask_to_patch_mask
 
 logger = get_logger(__name__).set_context("MODEL")
 
@@ -643,6 +646,8 @@ class UnReflect_Model(nn.Module):
                 pretrained_path = dec.get(
                     "from_pretrained", dec.get("FROM_PRETRAINED", "")
                 )
+                # Extract decoder learning rate
+                decoder_lr = dec.get("decoder_lr", dec.get("DECODER_LR", None))
                 # Determine whether to build FiLM-conditioned or standard decoder
                 use_film = bool(dec.get("use_film", dec.get("USE_FILM", False)))
                 # Build config dict for the decoder class
@@ -655,6 +660,8 @@ class UnReflect_Model(nn.Module):
                 config.pop("USE_FILM", None)
                 config.pop("from_pretrained", None)
                 config.pop("FROM_PRETRAINED", None)
+                config.pop("decoder_lr", None)
+                config.pop("DECODER_LR", None)
 
                 # Create decoder instance
                 decoder = (
@@ -732,6 +739,19 @@ class UnReflect_Model(nn.Module):
                     logger.info(
                         f"Loaded pre-trained decoder weights from {pretrained_path}"
                     )
+
+                # Freeze decoder if decoder_lr is 0 (or None and from_pretrained was set)
+                # If decoder_lr is explicitly 0, freeze regardless of pretrained status
+                if decoder_lr is not None and decoder_lr == 0.0:
+                    for param in decoder.parameters():
+                        param.requires_grad = False
+                    decoder.eval()  # Set to eval mode for frozen decoder
+                    logger.info(
+                        f"Decoder '{decoder_name}' frozen due to DECODER_LR=0.0"
+                    )
+
+                # Store decoder_lr for optimizer setup (will be None if not specified)
+                decoder.decoder_lr = decoder_lr
                 return decoder
             raise TypeError(
                 "Decoder must be DPT_Decoder/FiLMConditionedDPT instance or dict."
@@ -739,10 +759,13 @@ class UnReflect_Model(nn.Module):
 
         self.decoder_names = list(decoders.keys())
         self.decoders = nn.ModuleDict()
+        # Store decoder learning rates for optimizer setup
+        self.decoder_lrs = {}
         for decoder_name, decoder_config in decoders.items():
-            self.decoders[decoder_name] = build_dpt(
-                decoder_config, decoder_name=decoder_name
-            )
+            decoder = build_dpt(decoder_config, decoder_name=decoder_name)
+            self.decoders[decoder_name] = decoder
+            # Store the learning rate for this decoder (None means use default/base LR)
+            self.decoder_lrs[decoder_name] = getattr(decoder, "decoder_lr", None)
 
     def _rgb_tokens(self, rgb_preproc):
         """Extract DINOv3 tokens and infer (Hp, Wp) if wrapper doesn’t return them."""
@@ -990,7 +1013,17 @@ class TokenInpainter(nn.Module):
     Output: X  = (B, N, C) refined tokens; we will take X at masked positions
     """
 
-    def __init__(self, dim=768, depth=4, heads=16, drop=0.0):
+    def __init__(
+        self,
+        dim=768,
+        depth=4,
+        heads=16,
+        drop=0.0,
+        use_positional_encoding=True,
+        use_final_norm=None,  # Not used in base TokenInpainter, but accepted for compatibility
+        use_local_prior=None,  # Not used in base TokenInpainter, but accepted for compatibility
+        seed_noise_std=None,  # Not used in base TokenInpainter, but accepted for compatibility
+    ):
         super().__init__()
         self.blocks = nn.ModuleList(
             [_TransformerBlk(dim, heads, drop) for _ in range(depth)]
@@ -1003,21 +1036,21 @@ class TokenInpainter(nn.Module):
         self.mask_indicator = nn.Parameter(torch.zeros(1, 1, dim))
         nn.init.trunc_normal_(self.mask_indicator, std=0.02)
         # Enable fixed 2D sinusoidal positional encodings
-        self.use_positional_encoding = True
+        self.use_positional_encoding = use_positional_encoding
 
     def forward(self, T: torch.Tensor, pm_bool: torch.Tensor):
         # T: [B, N, C], pm_bool: [B, N] (True = hole)
         B, N, C = T.shape
-        mask = pm_bool.unsqueeze(-1)                     # [B, N, 1]
-        mask_tok = self.mask_token                      # [1, 1, C]
+        mask = pm_bool.unsqueeze(-1)  # [B, N, 1]
+        mask_tok = self.mask_token  # [1, 1, C]
         # Seed masked positions with learned token, keep context as-is
         T_seed = torch.where(mask, mask_tok.expand(B, N, C), T)
 
         # Add positional encodings (crucial for spatial reasoning in attention)
         if self.use_positional_encoding:
-            hw = int(N ** 0.5)
+            hw = int(N**0.5)
             if hw * hw != N:
-                hw = int(round(N ** 0.5))
+                hw = int(round(N**0.5))
             pos = self._build_2d_sincos_pos_embed(hw, hw, C, T_seed.device)  # [1,N,C]
             T_seed = T_seed + pos
 
@@ -1034,7 +1067,9 @@ class TokenInpainter(nn.Module):
         return self.out_proj(X)
 
     @staticmethod
-    def _build_2d_sincos_pos_embed(h: int, w: int, dim: int, device: torch.device) -> torch.Tensor:
+    def _build_2d_sincos_pos_embed(
+        h: int, w: int, dim: int, device: torch.device
+    ) -> torch.Tensor:
         """
         Create 2D sinusoidal positional embeddings of shape [1, h*w, dim].
         """
@@ -1048,9 +1083,13 @@ class TokenInpainter(nn.Module):
         return pos
 
     @staticmethod
-    def _build_1d_sincos_embed(dim: int, length: int, device: torch.device) -> torch.Tensor:
+    def _build_1d_sincos_embed(
+        dim: int, length: int, device: torch.device
+    ) -> torch.Tensor:
         assert dim % 2 == 0, "1D pos dim must be even"
-        positions = torch.arange(length, device=device, dtype=torch.float32).unsqueeze(1)  # [L,1]
+        positions = torch.arange(length, device=device, dtype=torch.float32).unsqueeze(
+            1
+        )  # [L,1]
         div_term = torch.exp(
             torch.arange(0, dim, 2, device=device, dtype=torch.float32)
             * (-(torch.log(torch.tensor(10000.0, device=device))))
@@ -1061,6 +1100,195 @@ class TokenInpainter(nn.Module):
         emb[:, 0::2] = torch.sin(angles)
         emb[:, 1::2] = torch.cos(angles)
         return emb
+
+
+# --------- pre-norm transformer bits (no key padding) ---------
+
+
+class _PreNorm(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.fn = fn
+
+    def forward(self, x):
+        return self.fn(self.norm(x))
+
+
+class _MLP(nn.Module):
+    def __init__(self, dim, mlp_ratio=4.0, drop=0.0):
+        super().__init__()
+        hid = int(dim * mlp_ratio)
+        self.fc1 = nn.Linear(dim, hid)
+        self.fc2 = nn.Linear(hid, dim)
+        self.act = nn.GELU()
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+
+
+class _SelfAttn(nn.Module):
+    def __init__(self, dim, heads=8, drop=0.0, bias=True):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(
+            dim, heads, dropout=drop, bias=bias, batch_first=True
+        )
+
+    def forward(self, x):
+        # full self-attention over all tokens; no key padding/masking
+        out, _ = self.attn(x, x, x, need_weights=False)
+        return out
+
+
+class _TransformerBlk(nn.Module):
+    def __init__(self, dim, heads=8, drop=0.0, mlp_ratio=4.0):
+        super().__init__()
+        self.attn = _PreNorm(dim, _SelfAttn(dim, heads, drop))
+        self.mlp = _PreNorm(dim, _MLP(dim, mlp_ratio, drop))
+
+    def forward(self, x):
+        x = x + self.attn(x)
+        x = x + self.mlp(x)
+        return x
+
+
+# --------- positionals + fixed local mean prior (depthwise) ---------
+
+
+def _build_1d_sincos_embed(dim: int, length: int, device: torch.device) -> torch.Tensor:
+    assert dim % 2 == 0
+    pos = torch.arange(length, device=device, dtype=torch.float32).unsqueeze(1)  # [L,1]
+    i = torch.arange(0, dim, 2, device=device, dtype=torch.float32)
+    div = torch.exp(-(math.log(10000.0)) * i / (dim // 2))
+    ang = pos * div
+    emb = torch.empty((length, dim), device=device, dtype=torch.float32)
+    emb[:, 0::2] = torch.sin(ang)
+    emb[:, 1::2] = torch.cos(ang)
+    return emb
+
+
+def _build_2d_sincos_pos_embed(
+    h: int, w: int, dim: int, device: torch.device
+) -> torch.Tensor:
+    assert dim % 2 == 0
+    half = dim // 2
+    eh = _build_1d_sincos_embed(half, h, device)[:, None, :].expand(h, w, half)
+    ew = _build_1d_sincos_embed(half, w, device)[None, :, :].expand(h, w, half)
+    return torch.cat([eh, ew], dim=-1).reshape(1, h * w, dim)
+
+
+def _local_mean_prior(T, pm_bool, H, W, k=3):
+    """
+    Depthwise box-filter local mean of *visible* neighbors for masked seeds.
+    T: [B,N,C], pm_bool: [B,N] (True=masked). Returns [B,N,C].
+    """
+    B, N, C = T.shape
+    x = T.transpose(1, 2).reshape(B, C, H, W)  # B,C,H,W
+    vis = (~pm_bool).float().reshape(B, 1, H, W)  # B,1,H,W  (1 = visible)
+    pad = k // 2
+    kernel = torch.ones(1, 1, k, k, device=T.device, dtype=T.dtype)
+
+    # per-channel numerator via depthwise conv
+    num = F.conv2d(x * vis, kernel.expand(C, 1, k, k), padding=pad, groups=C)  # B,C,H,W
+    den = F.conv2d(vis, kernel, padding=pad).clamp_min(1e-4)  # B,1,H,W
+    den = den.repeat(1, C, 1, 1)  # B,C,H,W
+
+    mean = (num / den).reshape(B, C, N).transpose(1, 2)  # B,N,C
+    return mean
+
+
+# --------- TokenInpainter (same API & mask semantics) ---------
+
+
+class TokenInpainter_Improved(nn.Module):
+    """
+    Completes masked patch tokens from context.
+    Input:  T  = (B, N, C) tokens for a selected DINO layer
+            pm = (B, N)    boolean mask at patch resolution (True = masked/hole)
+    Output: X  = (B, N, C) refined tokens; downstream will take masked positions.
+    """
+
+    def __init__(
+        self,
+        dim=768,
+        depth=4,
+        heads=16,
+        drop=0.1,
+        use_positional_encoding=True,
+        use_final_norm=True,
+        use_local_prior=True,
+        seed_noise_std=0.01,
+    ):
+        super().__init__()
+        self.blocks = nn.ModuleList(
+            [_TransformerBlk(dim, heads, drop) for _ in range(depth)]
+        )
+        self.out_proj = nn.Linear(dim, dim, bias=True)
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, dim))
+        nn.init.trunc_normal_(self.mask_token, std=0.02)
+        self.mask_indicator = nn.Parameter(torch.zeros(1, 1, dim))
+        nn.init.trunc_normal_(self.mask_indicator, std=0.02)
+        self.use_positional_encoding = use_positional_encoding
+
+        # internal niceties (do NOT change mask semantics)
+        self._final_norm = nn.LayerNorm(dim) if use_final_norm else None
+        self._use_local_prior = use_local_prior  # only affects masked seeds
+        self._seed_noise_std = seed_noise_std  # small train-time noise on masked seeds
+
+    def forward(self, T: torch.Tensor, pm_bool: torch.Tensor):
+        # T: [B,N,C], pm_bool: [B,N] (True = hole)
+        B, N, C = T.shape
+        device = T.device
+
+        # infer (H,W) like your original; require perfect square
+        hw = int(round(N**0.5))
+        assert hw * hw == N, (
+            "Token count N must be a perfect square (pass flattened grid)."
+        )
+        H = W = hw
+
+        mask = pm_bool.unsqueeze(-1)  # [B,N,1]
+
+        # (1) seed masked positions with learned token (same as your logic)
+        T_seed = torch.where(mask, self.mask_token.expand(B, N, C), T)
+
+        # optional: blend a local mean *only for masked positions* (does not alter visible tokens)
+        if self._use_local_prior:
+            mean_prior = _local_mean_prior(T, pm_bool, H, W, k=5)
+            T_seed = torch.where(mask, 0.5 * T_seed + 0.5 * mean_prior, T_seed)
+
+        # tiny stochasticity on masked seeds during training (robustness)
+        if self.training and self._seed_noise_std > 0:
+            noise = torch.randn_like(T_seed) * self._seed_noise_std
+            T_seed = torch.where(mask, T_seed + noise, T_seed)
+
+        # (2) add positionals to all tokens (unchanged) + mask indicator only at masked sites
+        if self.use_positional_encoding:
+            pos = _build_2d_sincos_pos_embed(H, W, C, device).expand(B, N, C)
+            X = T_seed + pos
+        else:
+            X = T_seed
+
+        X = X + torch.where(
+            mask, self.mask_indicator.expand(B, N, C), torch.zeros_like(X)
+        )
+
+        # (3) full self-attention across all tokens (NO key padding/masking) — same as your behavior
+        for blk in self.blocks:
+            X = blk(X)
+
+        # Apply final normalization if enabled
+        if self._final_norm is not None:
+            X = self._final_norm(X)
+
+        # (4) project ALL tokens (your original returns out_proj(X) for all positions)
+        return self.out_proj(X)
 
 
 class UnReflect_Model_TokenInpainter(UnReflect_Model):
@@ -1083,15 +1311,43 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
             dinov3=dinov3, decoders=decoders, patch_size=patch_size, **kwargs
         )
         dim = self.embed_dim
-        self.token_inpaint = TokenInpainter(dim=dim, **(token_inpainter_cfg or {}))
-        
+
+        # Extract TokenInpainter class and module from config
+        if token_inpainter_cfg is None:
+            token_inpainter_cfg = {}
+
+        # Get class name and module (with defaults for backward compatibility)
+        token_inpainter_class_name = token_inpainter_cfg.pop(
+            "token_inpainter_class", "TokenInpainter"
+        )
+        token_inpainter_module_name = token_inpainter_cfg.pop(
+            "token_inpainter_module", "models"
+        )
+
+        # Dynamically import the module
+        token_inpainter_module = importlib.import_module(token_inpainter_module_name)
+
+        # Get the TokenInpainter class from the module
+        TokenInpainterClass = getattr(
+            token_inpainter_module, token_inpainter_class_name
+        )
+
+        # Filter kwargs to only include parameters that the constructor accepts
+        # This prevents errors when passing unexpected parameters
+        sig = inspect.signature(TokenInpainterClass.__init__)
+        accepted_params = set(sig.parameters.keys()) - {"self"}  # Exclude 'self'
+        filtered_cfg = {
+            k: v for k, v in token_inpainter_cfg.items() if k in accepted_params
+        }
+
+        # Instantiate the TokenInpainter with filtered config
+        self.token_inpaint = TokenInpainterClass(dim=dim, **filtered_cfg)
+
     def extract_tokens(self, image):
         rgb_in = self.dinov3.preprocess_image(image)
-        tokens_list = self.dinov3(rgb_in)[
-            "selected_hidden_states"
-        ] 
+        tokens_list = self.dinov3(rgb_in)["selected_hidden_states"]
         return tokens_list
-    
+
     def forward(self, model_input_dict):
         x = model_input_dict["rgb"]  # (B,3,H,W)
         rgb_in = self.dinov3.preprocess_image(x)
@@ -1122,7 +1378,6 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
                 threshold=0.1,
                 invert=False,
             )
-            
 
         # patchmask_bool = 1 : MUST IMPAINT THE TOKEN
         # patchmask_bool = 0 : IS TEACHER TOKEN
@@ -1131,25 +1386,23 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
         ### THIRD: Inpaint the tokens in the mask
         completed_tokens = []
         for n, T in enumerate(tokens_list):  # (B,N,C)
-            T_inpainted = self.token_inpaint(T, torch.logical_not(patchmask_bool))  # refined all tokens
-            
-            # ### ! REMOVE - DEBUG ONLY
+            T_inpainted = self.token_inpaint(
+                T, torch.logical_not(patchmask_bool)
+            )  # refined all tokens
+
+            # ### ! REMOVE - DEBUG ONLY : WAS TESTING IF MASKING OPERATION WAS INVERTED
             # if "diffuse_tokens" in model_input_dict:
             #     T_inpainted = model_input_dict["diffuse_tokens"][n]
-            # ###                                                                    
-            
+            # ###
+
             # keep teacher tokens on context; use predicted tokens on masked patches
             T_comp = torch.where(
                 patchmask_bool.unsqueeze(-1), T_inpainted, T
             )  # (B,N,C)
             completed_tokens.append(T_comp)
 
-        # outputs["tokens_teacher"] = tokens_list
         outputs["tokens_inpainted"] = T_inpainted
         outputs["tokens_completed"] = completed_tokens
-        print("Inpainted",torch.max(T_inpainted[-1]).item(), torch.min(T_inpainted[-1]).item())
-        print("Completed",torch.max(completed_tokens[-1]).item(), torch.min(completed_tokens[-1]).item())
-
         # 4) Decode with completed tokens (do NOT pass mask to decoder)
         for name, dec in self.decoders.items():
             if name == "highlight":

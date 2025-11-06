@@ -5,6 +5,7 @@ parameters:
   MODEL:
     value:
       MODEL_CLASS: "UnReflect_Model_TokenInpainter"
+      MODEL_MODULE: "models"  # Module name to import model classes from (default: "models")
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"
         IMAGE_SIZE: 448
@@ -21,14 +22,7 @@ parameters:
           DROPOUT: 0.1
           OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 3
-        # specular:
-        #   FEATURE_DIM: 1024
-        #   REASSEMBLE_OUT_CHANNELS: [384,768,1024,1536]
-        #   REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-        #   READOUT_TYPE: "ignore"
-        #   USE_BN: False
-        #   OUTPUT_IMAGE_SIZE: [448,448]
-        #   OUTPUT_CHANNELS: 4
+          DECODER_LR: 1.0e-7  # Set to 0 to freeze, or specify learning rate to unfreeze
         highlight:
           USE_FILM: False
           FEATURE_DIM: 1024
@@ -39,8 +33,19 @@ parameters:
           DROPOUT: 0.1
           OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 1
+      TOKEN_INPAINTER:
+        TOKEN_INPAINTER_CLASS: "TokenInpainter_Improved"  
+        TOKEN_INPAINTER_MODULE: "models"  
+        TOKEN_INPAINTER_LR: 1.0e-5
+        DEPTH: 8  # Number of transformer blocks
+        HEADS: 16  # Number of attention heads
+        DROP: 0.1  # Dropout rate
+        USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
+        USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
+        USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
+        SEED_NOISE_STD: 0.01  # Standard deviation of noise added to masked seeds during training  
 
-  USE_TORCH_COMPILE:
+  USE_TORCH_COMPILE:  
     value: False
 
   ### DATA                                                                      
@@ -55,7 +60,7 @@ parameters:
         LOAD_RGB_ONLY: True
         
       HOUSECAT6D:
-        VAL_SCENES: ["val_scene1","val_scene2"] #,"scene33","scene34"]
+        VAL_SCENES: ["val_scene1","val_scene2"]
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize+crop"
         FEW_IMAGES: False
@@ -164,14 +169,14 @@ parameters:
   LIGHT_ABOVE_BELOW_ANGLE:
     value: [0, 360]
   DATASET_HIGHLIGHT_DILATION:
-    value: 51
+    value: 25
   DATASET_HIGHLIGHT_THRESHOLD:
-    value: 0.875
+    value: 0.93
 
   ### OPTIMIZATION                                                                      
   LEARNING_RATE:
     value: 1.0e-5
-  WEIGHT_DECAY:
+  WEIGHT_DECAY:   
     value: 0.0
   EPOCHS:
     value: 100
@@ -197,9 +202,9 @@ parameters:
   SWITCH_OPTIMIZER_EPOCH:
     value: null
   OPTIMIZER_BOOTSTRAP_NAME:
-    value: "AdamW" 
+    value: "Adam" 
   OPTIMIZER_REFINING_NAME:
-    value: "AdamW"    
+    value: "Adam"    
   EARLY_STOPPING_PATIENCE:
     value: 20
   SAVE_INTERVAL:
@@ -211,7 +216,7 @@ parameters:
   DIFFUSE_LOSS_WEIGHT:
     value: 0.0
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 0.0
+    value: 1.0
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
     value: 0.0
   SATURATION_RING_LOSS_WEIGHT:
@@ -246,21 +251,19 @@ parameters:
     value: 2.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
   # Highlight rendering parameters
   HIGHLIGHT_COLOR:
-    value: [1.0, 1.0, 1.0]
+    value: [1.0, 1.0, 1.0]  
   CLAMP_RECONSTRUCTION:
     value: True
   
   # Context and regularization weights
   WEIGHT_CONTEXT_IDENTITY:
-    value: 1.0
+    value: 0.00
   WEIGHT_RING_GRAD:
-    value: 0.0
+    value: 0.00
   WEIGHT_TV_IN_HOLE:
-    value: 1.0
+    value: 0.00
   RING_DILATE_KERNEL:
-    value: 15
-  
-  # Token-space loss parameters
+    value: 17
   WEIGHT_TOKEN_INPAINT:
     value: 1.0
   TOKEN_FEAT_ALPHA:
@@ -282,5 +285,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "Proper token inpainting"
+    value: "BT416, same parameters, Improved impainter"
   
