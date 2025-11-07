@@ -748,10 +748,10 @@ class Engine:
                     1,
                 )
                 patch_inpaint_mask = pixel_mask_to_patch_mask(
-                    pixel_inpaint_mask, patch_size=16, threshold=0.1
+                    pixel_inpaint_mask, patch_size=16, threshold=0.1, invert=False
                 )
                 # Intersect: supervise only masked (inpaint) patches that are also supervised
-                patch_mask_sup_bool = (patch_inpaint_mask.bool() & torch.logical_not(patch_supervision_mask).bool())
+                patch_mask_sup_bool = (patch_inpaint_mask.bool() & patch_supervision_mask.bool())
 
                 # Token inpainter ground truth
                 diffuse_teacher_tokens = self.model.extract_tokens(
@@ -778,12 +778,8 @@ class Engine:
                     "rgb_highlighted": rgb_highlighted,
                     "specular": specular,
                     "highlight": pixel_inpaint_mask,  # BOTH real and virtual
-                    # "hole_mask": pixel_inpaint_mask,
                     "tokens_teacher": diffuse_teacher_tokens,
-                    "patch_mask_sup": patch_mask_sup_bool.int(),
-                    # "patch_mask_inpaint": patch_inpaint_mask.int(),
-                    #     "patch_inpaint_mask": patch_inpaint_mask.float(),
-                    #     "patch_supervision_mask": patch_supervision_mask.float(),
+                    "patch_mask_sup": patch_mask_sup_bool.int(), # Ised in loss
                 }
                 del sample  # Clean up. All necessary data is already on GPU.
 
@@ -797,7 +793,7 @@ class Engine:
                 ### Forward pass
                 model_input = {
                         "rgb": gt_decomposition["rgb_highlighted"],
-                        # "patch_mask_override": pixel_inpaint_mask,
+                        "patch_mask_override": pixel_inpaint_mask,
                         # "diffuse_tokens": diffuse_teacher_tokens,
                     }
                 pred_decomposition = self.model(model_input)

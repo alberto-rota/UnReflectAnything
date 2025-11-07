@@ -1069,9 +1069,9 @@ class PolarHighlighter(nn.Module):
             #     )
             #     > 0
             # ).int()
-            dataset_highlights_inverse_binary_mask = (dataset_highlights_soft_mask > 0).int()
+            dataset_highlights_bool_mask = (dataset_highlights_soft_mask > 0).int()
             result["supervision_mask"] = (
-                dataset_highlights_inverse_binary_mask
+                dataset_highlights_bool_mask
             )
             result["dataset_highlights_soft_mask"] = dataset_highlights_soft_mask
 

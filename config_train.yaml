@@ -22,7 +22,7 @@ parameters:
           DROPOUT: 0.1
           OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 3
-          DECODER_LR: 1.0e-7  # Set to 0 to freeze, or specify learning rate to unfreeze
+          DECODER_LR: 0.0
         highlight:
           USE_FILM: False
           FEATURE_DIM: 1024
@@ -34,16 +34,16 @@ parameters:
           OUTPUT_IMAGE_SIZE: [448,448]
           OUTPUT_CHANNELS: 1
       TOKEN_INPAINTER:
-        TOKEN_INPAINTER_CLASS: "TokenInpainter_Improved"  
-        TOKEN_INPAINTER_MODULE: "models"  
-        TOKEN_INPAINTER_LR: 1.0e-5
-        DEPTH: 8  # Number of transformer blocks
+        TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"  
+        TOKEN_INPAINTER_MODULE: "token_inpainters"  
+        TOKEN_INPAINTER_LR: 1.0e-4
+        DEPTH: 6  # Number of transformer blocks
         HEADS: 16  # Number of attention heads
-        DROP: 0.1  # Dropout rate
+        DROP: 0.0  # Dropout rate 
         USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
         USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
         USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
-        SEED_NOISE_STD: 0.01  # Standard deviation of noise added to masked seeds during training  
+        SEED_NOISE_STD: 0.001  # Standard deviation of noise added to masked seeds during training  
 
   USE_TORCH_COMPILE:  
     value: False
@@ -64,12 +64,12 @@ parameters:
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize+crop"
         FEW_IMAGES: False
-        SAMPLE_EVERY_N: 2
+        SAMPLE_EVERY_N: 4
         LOAD_RGB_ONLY: True
 
       CROMO:
         TRAIN_SCENES: ["kitchen"]
-        VAL_SCENES: "station"
+        # VAL_SCENES: "station"
         TARGET_SIZE: [448,448]
         RESIZE_MODE: "resize"
         FEW_IMAGES: False
@@ -137,9 +137,9 @@ parameters:
 
 
   BATCH_SIZE: # Max batch size with img size 448 is 32
-    value: 32
+    value: 30
   NUM_WORKERS:
-    value: 4
+    value: 8
   SHUFFLE:
     value: True
   PIN_MEMORY:
@@ -175,7 +175,7 @@ parameters:
 
   ### OPTIMIZATION                                                                      
   LEARNING_RATE:
-    value: 1.0e-5
+    value: 5.0e-4
   WEIGHT_DECAY:   
     value: 0.0
   EPOCHS:
@@ -249,7 +249,6 @@ parameters:
     value: 1.0      # used only if BALANCE_MODE == 'pos_weight'
   HLREG_FOCAL_GAMMA:
     value: 2.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
-  # Highlight rendering parameters
   HIGHLIGHT_COLOR:
     value: [1.0, 1.0, 1.0]  
   CLAMP_RECONSTRUCTION:
@@ -257,11 +256,11 @@ parameters:
   
   # Context and regularization weights
   WEIGHT_CONTEXT_IDENTITY:
-    value: 0.00
+    value: 1.0
   WEIGHT_RING_GRAD:
-    value: 0.00
-  WEIGHT_TV_IN_HOLE:
-    value: 0.00
+    value: 0.0
+  WEIGHT_TV_IN_HOLE: # LEAVE TO 0.0
+    value: 0.0
   RING_DILATE_KERNEL:
     value: 17
   WEIGHT_TOKEN_INPAINT:
@@ -285,5 +284,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "BT416, same parameters, Improved impainter"
+    value: "patch_mask_sup_bool = (patch_inpaint_mask.bool() & patch_supervision_mask.bool()) + DEC FINETUNE"
   
