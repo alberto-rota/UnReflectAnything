@@ -73,10 +73,13 @@ def create_model_from_config(config: DotMap, device: torch.device):
 
     # # RGB Encoder configuration
     rgb_encoder_config = model_config.get("RGB_ENCODER", {})
+    encoder_name = rgb_encoder_config.get(
+        "ENCODER", "facebook/dinov3-vits16-pretrain-lvd1689m"
+    )
+    is_convnext = "convnext" in encoder_name.lower()
+    
     dinov3_cfg = {
-        "model_name": rgb_encoder_config.get(
-            "ENCODER", "facebook/dinov3-vits16-pretrain-lvd1689m"
-        ),
+        "model_name": encoder_name,
         "image_size": rgb_encoder_config.get("IMAGE_SIZE", min(target_size)),
         "freeze_backbone": rgb_encoder_config.get("FREEZE_BACKBONE", True),
         "return_selected_layers": rgb_encoder_config.get(
@@ -85,7 +88,7 @@ def create_model_from_config(config: DotMap, device: torch.device):
         "return_last_hidden_state": rgb_encoder_config.get(
             "RETURN_LAST_HIDDEN_STATE", False
         ),
-        "return_as_feature_maps": False,
+        "return_as_feature_maps": is_convnext,  # ConvNeXt should return spatial maps
         "return_cls_token": False,
     }
 
@@ -153,7 +156,11 @@ def create_model_from_config(config: DotMap, device: torch.device):
             "highlight_decoder": decoder_cfg,
         }
 
-    shared_dinov3 = models_module.DINOv3(dinov3_cfg).to(device)
+    # Use DINOv3_ConvNext if encoder name contains "convnext"
+    if is_convnext:
+        shared_dinov3 = models_module.DINOv3_ConvNext(dinov3_cfg).to(device)
+    else:
+        shared_dinov3 = models_module.DINOv3(dinov3_cfg).to(device)
     # Create the main model
     model_class_str = model_config.get("MODEL_CLASS", "RGBPOLDecomposer")
     # Get the model class from the string name
@@ -185,6 +192,7 @@ def create_model_from_config(config: DotMap, device: torch.device):
             "use_positional_encoding": token_inpainter_config.get("USE_POSITIONAL_ENCODING", True),
             "use_final_norm": token_inpainter_config.get("USE_FINAL_NORM", True),
             "use_local_prior": token_inpainter_config.get("USE_LOCAL_PRIOR", True),
+            "local_prior_weight": token_inpainter_config.get("LOCAL_PRIOR_WEIGHT", 0.5),
             "seed_noise_std": token_inpainter_config.get("SEED_NOISE_STD", 0.01),
         }
         model_kwargs["token_inpainter_cfg"] = token_inpainter_cfg

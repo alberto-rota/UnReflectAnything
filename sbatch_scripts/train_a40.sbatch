@@ -2,7 +2,7 @@
 #SBATCH --gres=gpu:a40:1
 #SBATCH --partition=a40
 #SBATCH --time=1-00:00:00
-#SBATCH --job-name=train_a40_asap
+#SBATCH --job-name=train_A40
 #SBATCH --mail-user=alberto1.rota@polimi.it
 #SBATCH --mail-type=ALL
 #SBATCH --nodes=1

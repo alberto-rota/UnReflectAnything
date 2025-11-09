@@ -732,8 +732,11 @@ class Engine:
 
                 # The supervision mask is the inverse of the dataset highlights binary mask, inflated
                 # --> Supervision mask is 1 if the pixel is to be supervised, 0 if to be excluded from supervision
-
-                pixel_supervision_mask = highlight_result["supervision_mask"]
+                if "supervision_mask" in highlight_result:
+                    pixel_supervision_mask = highlight_result["supervision_mask"]
+                else:
+                    pixel_supervision_mask = torch.ones_like(highlight_result["highlight"])
+                
                 if phase != "Training":
                     pixel_supervision_mask = torch.ones_like(pixel_supervision_mask)
                 patch_supervision_mask = pixel_mask_to_patch_mask(
@@ -793,7 +796,7 @@ class Engine:
                 ### Forward pass
                 model_input = {
                         "rgb": gt_decomposition["rgb_highlighted"],
-                        "patch_mask_override": pixel_inpaint_mask,
+                        # "patch_mask_override": pixel_inpaint_mask,
                         # "diffuse_tokens": diffuse_teacher_tokens,
                     }
                 pred_decomposition = self.model(model_input)
@@ -994,6 +997,7 @@ class Engine:
                             * torch.logical_not(patch_mask_to_pixel_mask(
                                 patch_supervision_mask, patch_size=16
                             )).int()[0]
+                            
                         )  # (1, H, W) in [0,1]
                         token_sup_mask = patch_mask_to_pixel_mask(
                             patch_supervision_mask, patch_size=16
@@ -1082,40 +1086,40 @@ class Engine:
                             )
                             * token_inpaint_mask_sup
                         )
-                        gt_decomposition["token_inpaint_sup_full"] = (
-                            rgb(
-                                diffuse_teacher_tokens[-1]
-                                .reshape(
-                                    -1, patch_resolution, patch_resolution, embed_dim
-                                )
-                                .permute(0, 3, 1, 2)
-                                .detach()[0],
-                                pca=pca,
-                                resize=(
-                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                                ),
-                                as_tensor=True,
-                                blackout=False,
-                            )
-                        )
-                        pred_decomposition["token_inpaint_sup_full"] = (
-                            rgb(
-                                pred_decomposition["tokens_completed"][-1]
-                                .reshape(
-                                    -1, patch_resolution, patch_resolution, embed_dim
-                                )
-                                .permute(0, 3, 1, 2)
-                                .detach()[0],
-                                pca=pca,
-                                resize=(
-                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                                ),
-                                as_tensor=True,
-                                blackout=False,
-                            )
-                        )
+                        # gt_decomposition["token_inpaint_sup_full"] = (
+                        #     rgb(
+                        #         diffuse_teacher_tokens[-1]
+                        #         .reshape(
+                        #             -1, patch_resolution, patch_resolution, embed_dim
+                        #         )
+                        #         .permute(0, 3, 1, 2)
+                        #         .detach()[0],
+                        #         pca=pca,
+                        #         resize=(
+                        #             self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                        #             self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                        #         ),
+                        #         as_tensor=True,
+                        #         blackout=False,
+                        #     )
+                        # )
+                        # pred_decomposition["token_inpaint_sup_full"] = (
+                        #     rgb(
+                        #         pred_decomposition["tokens_completed"][-1]
+                        #         .reshape(
+                        #             -1, patch_resolution, patch_resolution, embed_dim
+                        #         )
+                        #         .permute(0, 3, 1, 2)
+                        #         .detach()[0],
+                        #         pca=pca,
+                        #         resize=(
+                        #             self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                        #             self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                        #         ),
+                        #         as_tensor=True,
+                        #         blackout=False,
+                        #     )
+                        # )
                         # gt_decomposition["token_inpaint_sup_HL"] = (
                         #     rgb(
                         #         highlight_teacher_tokens[-1]
@@ -1140,12 +1144,36 @@ class Engine:
                         # gt_decomposition["patch_mask_inpaint"] = (
                         #     token_inpaint_mask.int()
                         # )
-                        del gt_decomposition["patch_mask_sup"]
-                        del pred_decomposition["tokens_completed"]
-                        del pred_decomposition["tokens_inpainted"]
-                        del gt_decomposition["tokens_teacher"]
-                        del gt_decomposition["specular"]
-
+                        
+                        ### REMOVING A BUNCH OF DEBUF STUFF FROM THE PLOTTING ROUTINES
+                        try:
+                            del gt_decomposition["patch_mask_sup"]
+                        except Exception:
+                            pass
+                        try:
+                            del gt_decomposition["masked_tokens"]
+                        except Exception:
+                            pass
+                        try:
+                            del gt_decomposition["supervision_mask"]
+                        except Exception:
+                            pass
+                        try:
+                            del pred_decomposition["tokens_completed"]
+                        except Exception:
+                            pass
+                        try:
+                            del pred_decomposition["tokens_inpainted"]
+                        except Exception:
+                            pass
+                        try:
+                            del gt_decomposition["tokens_teacher"]
+                        except Exception:
+                            pass
+                        try:
+                            del gt_decomposition["specular"]
+                        except Exception:
+                            pass
                     if "patch_mask" in pred_decomposition:
                         del pred_decomposition["patch_mask"]
 
@@ -1522,11 +1550,6 @@ class Engine:
                     "Input RGB Highlighted Image",
                 ),
                 ("images/GT_Highlight", "highlight", "Input RGB Highlighted Image"),
-                (
-                    "images/GT_MaskedDiffuse",
-                    "masked_diffuse",
-                    "Masked Diffuse Image",
-                ),
             ]
 
             for key, tensor_key, caption in input_images:

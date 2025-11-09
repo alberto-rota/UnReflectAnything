@@ -267,6 +267,412 @@ class DINOv3(nn.Module):
         return processed_batch.to(image_tensor.device)
 
 
+class DINOv3_ConvNext(nn.Module):
+    """
+    Configurable DINOv3 ConvNeXt model with flexible return options.
+    Supports returning hidden states and feature maps in various formats.
+    ConvNeXt models output spatial feature maps directly (not token sequences).
+    """
+
+    def __init__(self, config):
+        """
+        Initialize DINOv3 ConvNeXt model with configuration.
+
+        Args:
+            config: dict containing:
+                - model_name: str, DINOv3 ConvNeXt model name (default: "facebook/dinov3-convnext-large-pretrain-lvd1689m")
+                - image_size: int, input image size (default: 896). The input image will be preprocessed to have this size (square)
+                - freeze_backbone: bool, whether to freeze DINOv3 parameters (default: True)
+                - return_last_hidden_state: bool, return last hidden state (default: True)
+                - return_all_hidden_states: bool, return all hidden states (default: False)
+                - return_selected_layers: list[int], specific layer indices to return (default: None)
+                - return_as_feature_maps: bool, return as spatial feature maps (default: True for ConvNeXt)
+                - return_cls_token: bool, return CLS token (default: False). For ConvNeXt, uses global average pooling
+                - return_register_tokens: bool, return register tokens (default: False). Not available for ConvNeXt, returns empty tensor
+        """
+        super().__init__()
+
+        # Configuration with defaults
+        self.config = {
+            "model_name": "facebook/dinov3-convnext-large-pretrain-lvd1689m",
+            "image_size": 896,
+            "freeze_backbone": True,
+            "return_last_hidden_state": True,
+            "return_all_hidden_states": False,
+            "return_selected_layers": [1,2,3,4],
+            "return_patch_tokens_only": True,
+            "return_as_feature_maps": True,  # Default True for ConvNeXt (native format)
+            "return_cls_token": False,
+            "return_register_tokens": False,
+            **config,  # Override defaults with user config
+        }
+        # Override defaults with user config
+        self.config["return_selected_layers"] = [1,2,3,4]
+        # DINOv3 ConvNeXt backbone
+        self.dinov3 = AutoModel.from_pretrained(self.config["model_name"])
+        self.processor = AutoImageProcessor.from_pretrained(self.config["model_name"])
+        self.processor.size = {
+            "height": self.config["image_size"],
+            "width": self.config["image_size"],
+        }
+
+        # Freeze parameters if requested
+        if self.config["freeze_backbone"]:
+            for param in self.dinov3.parameters():
+                param.requires_grad = False
+
+        # Model properties - ConvNeXt outputs spatial feature maps
+        # Get feature dimension from model config
+        self.feature_dim = getattr(self.dinov3.config, "hidden_size", None) or getattr(
+            self.dinov3.config, "embed_dim", None
+        )
+        if self.feature_dim is None:
+            # Fallback: try to infer from model structure
+            # ConvNeXt models typically have hidden_sizes in config
+            if hasattr(self.dinov3.config, "hidden_sizes"):
+                self.feature_dim = self.dinov3.config.hidden_sizes[-1]
+            else:
+                raise ValueError(
+                    "Could not determine feature_dim from model config. Please specify manually."
+                )
+
+        # ConvNeXt uses patch size similar to ViT, typically 4 or 16
+        # DINOv3 ConvNeXt uses patch_size=4 based on the architecture
+        self.patch_size = getattr(self.dinov3.config, "patch_size", 4)
+        self.dinov3.config.image_size = self.config["image_size"]
+
+    def get_patch_spatial_dims(self, input_height, input_width):
+        """Calculate spatial dimensions of feature maps based on input size."""
+        # ConvNeXt typically downsamples by a factor related to patch_size
+        # For DINOv3 ConvNeXt, the final feature map is typically H/patch_size x W/patch_size
+        patch_h = input_height // self.patch_size
+        patch_w = input_width // self.patch_size
+        return patch_h, patch_w
+
+    def feature_maps_to_tokens(self, feature_maps):
+        """
+        Convert spatial feature maps to token sequence format for API compatibility.
+        Handles both [B, C, H, W] and [B, N, C] input formats.
+
+        Args:
+            feature_maps: [B, C, H, W] or [B, N, C] - Spatial feature maps or tokens from ConvNeXt
+
+        Returns:
+            [B, N, C] - Token-like sequence format
+        """
+        if len(feature_maps.shape) == 4:
+            # Input is [B, C, H, W] - convert to tokens
+            B, C, H, W = feature_maps.shape
+            # Flatten spatial dimensions and transpose to [B, N, C]
+            tokens = feature_maps.flatten(2).transpose(1, 2)  # [B, H*W, C]
+            return tokens
+        elif len(feature_maps.shape) == 3:
+            # Input is already [B, N, C] - return as-is
+            return feature_maps
+        else:
+            raise ValueError(
+                f"Unexpected feature_maps shape: {feature_maps.shape}. Expected 3D [B, N, C] or 4D [B, C, H, W]"
+            )
+
+    def extract_cls_token(self, feature_maps):
+        """
+        Extract CLS-like token from feature maps using global average pooling.
+        ConvNeXt doesn't have CLS tokens, so we use global average pooling.
+        Handles both [B, C, H, W] and [B, N, C] input formats.
+
+        Args:
+            feature_maps: [B, C, H, W] or [B, N, C] - Spatial feature maps or tokens from ConvNeXt
+
+        Returns:
+            [B, C] - Global pooled features (CLS-like token)
+        """
+        if len(feature_maps.shape) == 4:
+            # Input is [B, C, H, W] - use global average pooling
+            return F.adaptive_avg_pool2d(feature_maps, (1, 1)).squeeze(-1).squeeze(-1)
+        elif len(feature_maps.shape) == 3:
+            # Input is [B, N, C] - use mean pooling over sequence dimension
+            return feature_maps.mean(dim=1)  # [B, C]
+        else:
+            raise ValueError(
+                f"Unexpected feature_maps shape: {feature_maps.shape}. Expected 3D [B, N, C] or 4D [B, C, H, W]"
+            )
+
+    def extract_register_tokens(self, feature_maps):
+        """
+        Extract register-like tokens from feature maps.
+        ConvNeXt doesn't have register tokens, so we sample 4 corner locations or first 4 tokens.
+        Handles both [B, C, H, W] and [B, N, C] input formats.
+
+        Args:
+            feature_maps: [B, C, H, W] or [B, N, C] - Spatial feature maps or tokens from ConvNeXt
+
+        Returns:
+            [B, 4, C] - Sampled corner features (for API compatibility)
+        """
+        if len(feature_maps.shape) == 4:
+            # Input is [B, C, H, W] - sample 4 corner locations
+            B, C, H, W = feature_maps.shape
+            # Vectorized sampling of 4 corner locations: top-left, top-right, bottom-left, bottom-right
+            corners = torch.stack(
+                [
+                    feature_maps[:, :, 0, 0],      # top-left
+                    feature_maps[:, :, 0, W - 1],   # top-right
+                    feature_maps[:, :, H - 1, 0],   # bottom-left
+                    feature_maps[:, :, H - 1, W - 1], # bottom-right
+                ],
+                dim=1,
+            )  # [B, 4, C]
+            return corners
+        elif len(feature_maps.shape) == 3:
+            # Input is [B, N, C] - take first 4 tokens or pad if needed
+            B, N, C = feature_maps.shape
+            if N >= 4:
+                return feature_maps[:, :4, :]  # [B, 4, C]
+            else:
+                # Pad with zeros if we have fewer than 4 tokens
+                padding = torch.zeros(B, 4 - N, C, device=feature_maps.device, dtype=feature_maps.dtype)
+                return torch.cat([feature_maps, padding], dim=1)  # [B, 4, C]
+        else:
+            raise ValueError(
+                f"Unexpected feature_maps shape: {feature_maps.shape}. Expected 3D [B, N, C] or 4D [B, C, H, W]"
+            )
+
+    def forward(self, rgb_image):
+        """
+        Forward pass with configurable return options.
+
+        Args:
+            rgb_image: [B, 3, H, W] - Input RGB images (should be preprocessed for DINOv3)
+                      Can be any size as long as H and W are divisible by patch_size
+
+        Returns:
+            dict containing requested outputs based on config:
+                - 'last_hidden_state': [B, C, H', W'] (if return_as_feature_maps=True) 
+                                      or [B, H'*W', C] (if return_as_feature_maps=False)
+                - 'cls_token': [B, C] - Global pooled features (CLS-like token)
+                - 'register_tokens': [B, 4, C] - Sampled corner features (for compatibility)
+                - 'all_hidden_states': List of feature maps or token sequences
+                - 'selected_hidden_states': List of selected layer outputs
+        """
+        batch_size, _, input_h, input_w = rgb_image.shape
+
+        # Ensure input dimensions are compatible with patch size
+        assert input_h % self.patch_size == 0, (
+            f"Height {input_h} must be divisible by patch size {self.patch_size}"
+        )
+        assert input_w % self.patch_size == 0, (
+            f"Width {input_w} must be divisible by patch size {self.patch_size}"
+        )
+
+        # Calculate expected spatial dimensions
+        patch_h, patch_w = self.get_patch_spatial_dims(input_h, input_w)
+
+        # Get DINOv3 ConvNeXt outputs
+        need_all_hidden_states = (
+            self.config["return_all_hidden_states"]
+            or self.config["return_selected_layers"] is not None
+        )
+
+        outputs = self.dinov3(rgb_image, output_hidden_states=need_all_hidden_states)
+
+        # ConvNeXt outputs are spatial feature maps: [B, C, H', W']
+        # The actual spatial dimensions may differ from patch_h/patch_w due to downsampling
+        # We'll use the actual output dimensions
+
+        # Prepare return dictionary
+        result = {}
+
+        # Get last hidden state - could be [B, C, H', W'] or [B, N, C] depending on model
+        if not hasattr(outputs, "last_hidden_state") or outputs.last_hidden_state is None:
+            raise ValueError(
+                "Model did not return last_hidden_state. Check model output structure."
+            )
+        last_hidden = outputs.last_hidden_state
+        
+        # Detect the format of the output
+        is_spatial = len(last_hidden.shape) == 4  # [B, C, H, W]
+        is_tokens = len(last_hidden.shape) == 3   # [B, N, C]
+
+        # Return last hidden state
+        if self.config["return_last_hidden_state"]:
+            if self.config["return_as_feature_maps"]:
+                if is_spatial:
+                    result["last_hidden_state"] = last_hidden  # [B, C, H', W']
+                elif is_tokens:
+                    # Convert tokens to spatial format if needed
+                    # This requires knowing the spatial dimensions, which we can infer
+                    B, N, C = last_hidden.shape
+                    # Try to infer spatial dimensions from input size
+                    # For ConvNeXt, typically N = (H/patch_size) * (W/patch_size)
+                    # We'll reshape assuming square patches
+                    spatial_size = int(N ** 0.5)
+                    if spatial_size * spatial_size == N:
+                        # Perfect square - reshape to spatial
+                        result["last_hidden_state"] = last_hidden.transpose(1, 2).view(B, C, spatial_size, spatial_size)
+                    else:
+                        # Not a perfect square, keep as tokens but warn
+                        result["last_hidden_state"] = last_hidden
+                else:
+                    result["last_hidden_state"] = last_hidden
+            else:
+                # Convert to token-like format for compatibility
+                result["last_hidden_state"] = self.feature_maps_to_tokens(
+                    last_hidden
+                )  # [B, N, C]
+
+        # Return CLS token (global average pooling)
+        if self.config["return_cls_token"]:
+            cls_token = self.extract_cls_token(last_hidden)  # [B, C]
+            result["cls_token"] = cls_token
+
+        # Return register tokens (corner sampling)
+        if self.config["return_register_tokens"]:
+            register_tokens = self.extract_register_tokens(
+                last_hidden
+            )  # [B, 4, C]
+            result["register_tokens"] = register_tokens
+
+        # Return all hidden states
+        if self.config["return_all_hidden_states"]:
+            all_hidden = outputs.hidden_states  # Tuple of [B, C, H', W'] or [B, N, C]
+            if all_hidden is None:
+                raise ValueError(
+                    "Model did not return hidden_states. Make sure output_hidden_states=True "
+                    "is passed to the model forward call."
+                )
+            # Convert tuple to list if needed
+            if isinstance(all_hidden, tuple):
+                all_hidden = list(all_hidden)
+            if self.config["return_as_feature_maps"]:
+                # Convert tokens to spatial maps if needed
+                converted_hidden = []
+                for h in all_hidden:
+                    if len(h.shape) == 3:
+                        # It's tokens [B, N, C], convert to spatial
+                        B, N, C = h.shape
+                        # Infer spatial dimensions assuming square patches
+                        spatial_size = int(N ** 0.5)
+                        if spatial_size * spatial_size == N:
+                            # Perfect square - reshape to spatial
+                            h_spatial = h.transpose(1, 2).view(B, C, spatial_size, spatial_size)
+                            converted_hidden.append(h_spatial)
+                        else:
+                            # Not a perfect square, use patch dimensions
+                            h_spatial = h.transpose(1, 2).view(B, C, patch_h, patch_w)
+                            converted_hidden.append(h_spatial)
+                    else:
+                        # Already spatial [B, C, H, W]
+                        converted_hidden.append(h)
+                result["all_hidden_states"] = converted_hidden
+            else:
+                # Convert each to token-like format (or keep as tokens)
+                result["all_hidden_states"] = [
+                    self.feature_maps_to_tokens(h) for h in all_hidden
+                ]
+
+        # Return selected hidden states
+        if self.config["return_selected_layers"] is not None:
+            selected_layers = self.config["return_selected_layers"]
+            if not hasattr(outputs, "hidden_states"):
+                raise AttributeError(
+                    f"Model outputs do not have 'hidden_states' attribute. "
+                    f"Available attributes: {dir(outputs)}"
+                )
+            all_hidden = outputs.hidden_states
+            if all_hidden is None:
+                raise ValueError(
+                    "Model did not return hidden_states. Make sure output_hidden_states=True "
+                    "is passed to the model forward call."
+                )
+            # Convert tuple to list if needed
+            if isinstance(all_hidden, tuple):
+                all_hidden = list(all_hidden)
+            elif not isinstance(all_hidden, (list, tuple)):
+                raise TypeError(
+                    f"Expected hidden_states to be a tuple or list, got {type(all_hidden)}"
+                )
+            # Check if we have any layers
+            if len(all_hidden) == 0:
+                raise ValueError(
+                    "Model returned empty hidden_states. The model may not support "
+                    "output_hidden_states or may have a different structure."
+                )
+            # Validate layer indices
+            max_layer_idx = len(all_hidden) - 1
+            invalid_layers = [i for i in selected_layers if i > max_layer_idx or i < 0]
+            if invalid_layers:
+                raise IndexError(
+                    f"Selected layer indices {invalid_layers} are out of range. "
+                    f"Model has {len(all_hidden)} layers (indices 0-{max_layer_idx})."
+                )
+            try:
+                selected_hidden = [all_hidden[i] for i in selected_layers]
+            except (IndexError, TypeError) as e:
+                raise IndexError(
+                    f"Failed to access hidden states at indices {selected_layers}. "
+                    f"Model has {len(all_hidden)} layers. Error: {e}"
+                ) from e
+            if self.config["return_as_feature_maps"]:
+                # Convert tokens to spatial maps if needed
+                converted_hidden = []
+                for h in selected_hidden:
+                    if len(h.shape) == 3:
+                        # It's tokens [B, N, C], convert to spatial
+                        B, N, C = h.shape
+                        # Infer spatial dimensions assuming square patches
+                        spatial_size = int(N ** 0.5)
+                        if spatial_size * spatial_size == N:
+                            # Perfect square - reshape to spatial
+                            h_spatial = h.transpose(1, 2).view(B, C, spatial_size, spatial_size)
+                            converted_hidden.append(h_spatial)
+                        else:
+                            # Not a perfect square, use patch dimensions
+                            h_spatial = h.transpose(1, 2).view(B, C, patch_h, patch_w)
+                            converted_hidden.append(h_spatial)
+                    else:
+                        # Already spatial [B, C, H, W]
+                        converted_hidden.append(h)
+                result["selected_hidden_states"] = converted_hidden
+            else:
+                # Convert each to token-like format (or keep as tokens)
+                result["selected_hidden_states"] = [
+                    self.feature_maps_to_tokens(h) for h in selected_hidden
+                ]
+
+        return result
+
+    def preprocess_image(self, image_tensor):
+        """
+        Preprocess image for DINOv3 ConvNeXt using the proper processor.
+
+        Args:
+            image_tensor: [B, 3, H, W] - Raw image tensor with values in [0, 1]
+
+        Returns:
+            [B, 3, H, W] - Preprocessed tensor ready for DINOv3 ConvNeXt
+        """
+        import PIL.Image
+
+        # Vectorized conversion to [0, 255] range and permute dimensions
+        # [B, 3, H, W] -> [B, H, W, 3]
+        img_batch = (image_tensor * 255).byte().permute(0, 2, 3, 1)  # [B, H, W, 3]
+
+        # Convert entire batch to numpy for PIL processing
+        img_numpy = img_batch.cpu().numpy()  # [B, H, W, 3]
+
+        # Create PIL images from the entire batch
+        pil_images = [
+            PIL.Image.fromarray(img_numpy[i], mode="RGB")
+            for i in range(img_numpy.shape[0])
+        ]
+
+        # Process entire batch at once using the processor
+        processed = self.processor(images=pil_images, return_tensors="pt")
+        processed_batch = processed["pixel_values"]  # [B, 3, H, W]
+
+        return processed_batch.to(image_tensor.device)
+
+
 class DPTReassembleLayer(nn.Module):
     """
     Reassemble layer to convert transformer tokens to spatial feature maps.
@@ -378,7 +784,7 @@ class DPTFeatureFusionBlock(nn.Module):
             nn.Conv2d(
                 out_channels, out_channels, kernel_size=3, padding=1, bias=not use_bn
             ),
-            nn.BatchNorm2d(out_channels) if use_bn else nn.Identity(),
+            nn.BatchNorm2d(out_channels) if use_bn else nn.Identity(),  
         )
 
         self.relu = nn.ReLU(inplace=True)
@@ -580,6 +986,361 @@ class DPT_Decoder(nn.Module):
         return rgb_output
 
 
+class DPTReassembleLayer_ConvNext(nn.Module):
+    """
+    Reassemble layer for ConvNeXt feature maps (already spatial).
+    Handles projection and upsampling/downsampling without token reshaping.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        scale_factor: float,
+        readout_type: str = "ignore",
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.scale_factor = scale_factor
+        self.readout_type = readout_type
+
+        # Readout projection if using "project" method
+        if readout_type == "project":
+            self.readout_project = nn.Sequential(
+                nn.Conv2d(2 * in_channels, in_channels, kernel_size=1), nn.GELU()
+            )
+
+        # Channel projection
+        self.proj = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+        # Spatial resampling based on scale factor
+        if scale_factor == 4.0:
+            # 4x upsampling
+            self.resample = nn.ConvTranspose2d(
+                out_channels,
+                out_channels,
+                kernel_size=8,
+                stride=4,
+                padding=2,
+                bias=True,
+            )
+        elif scale_factor == 2.0:
+            # 2x upsampling
+            self.resample = nn.ConvTranspose2d(
+                out_channels,
+                out_channels,
+                kernel_size=4,
+                stride=2,
+                padding=1,
+                bias=True,
+            )
+        elif scale_factor == 1.0:
+            # No resampling
+            self.resample = nn.Identity()
+        elif scale_factor == 0.5:
+            # 0.5x downsampling
+            self.resample = nn.Conv2d(
+                out_channels,
+                out_channels,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                bias=True,
+            )
+
+    def forward(self, feature_map: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            feature_map: [B, C, H, W] - Spatial feature maps from ConvNeXt (already spatial)
+        Returns:
+            [B, out_channels, H', W'] - Spatial feature map after projection and resampling
+        """
+        # Project channels
+        feature_map = self.proj(feature_map)  # [B, out_channels, H, W]
+
+        # Resample spatial resolution
+        output = self.resample(feature_map)  # [B, out_channels, H', W']
+
+        return output
+
+
+class DPT_Decoder_ConvNext(nn.Module):
+    """
+    DPT decoder adapted for ConvNeXt feature maps.
+    Works with spatial feature maps directly (no token reshaping needed).
+    Implements multi-scale reassembly, progressive fusion, and RGB prediction head.
+
+    Dropout:
+        Controlled by config["dropout"] (float in [0,1]). Applied as 2D dropout
+        after each fusion addition and between stages in the head to regularize
+        training. Shapes are preserved; tensor dims are:
+        - inputs hidden_states: List[4] of [B, C, H, W] (spatial feature maps)
+        - output: [B, C_out, H, W]
+    """
+
+    def __init__(self, config: Optional[Dict] = None):
+        super().__init__()
+        # Default configuration
+        default_config = {
+            "feature_dim": 768,  # ConvNeXt feature dimension (can be int or list)
+            "reassemble_out_channels": [96, 192, 384, 768],  # Neck hidden sizes
+            "reassemble_factors": [4.0, 2.0, 1.0, 0.5],  # Spatial scale factors
+            "fusion_hidden_size": 256,
+            "readout_type": "ignore",  # 'ignore', 'add', or 'project'
+            "use_bn": False,
+            "dropout": 0.0,
+            "output_image_size": (448, 448),  # If None, maintains input size
+            "output_channels": 3,  # Set to 4 for RGBA output
+        }
+
+        self.config = {**default_config, **(config or {})}
+        self.config["feature_dim"] = [192, 384, 768, 1536]
+        self.out_image_size = self.config["output_image_size"]
+        
+        # Handle feature_dim: can be int (same for all) or list (per-stage)
+        feature_dim = self.config["feature_dim"]
+        if isinstance(feature_dim, int):
+            # Use same feature_dim for all stages
+            feature_dims = [feature_dim] * len(self.config["reassemble_out_channels"])
+        elif isinstance(feature_dim, (list, tuple)):
+            # Use per-stage feature dimensions
+            if len(feature_dim) != len(self.config["reassemble_out_channels"]):
+                raise ValueError(
+                    f"feature_dim list length ({len(feature_dim)}) must match "
+                    f"reassemble_out_channels length ({len(self.config['reassemble_out_channels'])})"
+                )
+            feature_dims = list(feature_dim)
+        else:
+            raise TypeError(
+                f"feature_dim must be int or list/tuple, got {type(feature_dim)}"
+            )
+        
+        # Create reassemble layers for multi-scale feature extraction
+        self.reassemble_layers = nn.ModuleList(
+            [
+                DPTReassembleLayer_ConvNext(
+                    in_channels=in_ch,
+                    out_channels=out_ch,
+                    scale_factor=scale,
+                    readout_type=self.config["readout_type"],
+                )
+                for in_ch, out_ch, scale in zip(
+                    feature_dims,
+                    self.config["reassemble_out_channels"],
+                    self.config["reassemble_factors"],
+                )
+            ]
+        )
+
+        # Create fusion blocks for progressive feature combination
+        fusion_in_channels = self.config["reassemble_out_channels"]
+        self.fusion_blocks = nn.ModuleList(
+            [
+                DPTFeatureFusionBlock(
+                    in_channels=ch,
+                    out_channels=self.config["fusion_hidden_size"],
+                    use_bn=self.config["use_bn"],
+                )
+                for ch in fusion_in_channels
+            ]
+        )
+
+        # Dropout used after fusion additions and inside head stages
+        p = float(self.config.get("dropout", 0.0))
+        self.drop2d = nn.Dropout2d(p) if p and p > 0.0 else nn.Identity()
+
+        # RGB prediction head - split into stages to avoid large intermediate tensors
+        # This allows progressive upsampling to handle very large output sizes
+        self.rgb_head_stage1 = nn.Sequential(
+            # First stage: 256 -> 128 channels with spatial refinement
+            nn.Conv2d(self.config["fusion_hidden_size"], 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128) if self.config["use_bn"] else nn.Identity(),
+            nn.ReLU(inplace=True),
+            self.drop2d,
+        )
+        self.rgb_head_stage2 = nn.Sequential(
+            # Second stage: 128 -> 64 channels with feature refinement
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64) if self.config["use_bn"] else nn.Identity(),
+            nn.ReLU(inplace=True),
+            self.drop2d,
+        )
+        self.rgb_head_stage3 = nn.Sequential(
+            # Third stage: 64 -> 32 channels
+            nn.Conv2d(64, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32) if self.config["use_bn"] else nn.Identity(),
+            nn.ReLU(inplace=True),
+            self.drop2d,
+        )
+        self.rgb_head_final = nn.Sequential(
+            # Final RGB projection
+            nn.Conv2d(32, self.config["output_channels"], kernel_size=1),
+            nn.Sigmoid(),  # Output in [0, 1] range
+        )
+
+    def forward(
+        self,
+        hidden_states: List[torch.Tensor],
+    ) -> torch.Tensor:
+        """
+        Forward pass through DPT decoder for ConvNeXt.
+
+        Args:
+            hidden_states: List of 4 tensors from DINOv3_ConvNext selected layers
+                          Each tensor: [B, C, H, W] (spatial feature maps)
+                          Can have different channel dimensions per stage
+
+        Returns:
+            rgb_output: [B, 3, H, W] - RGB image in [0, 1] range
+        """
+        input_height, input_width = self.out_image_size
+        
+        # Validate input
+        if len(hidden_states) != len(self.reassemble_layers):
+            raise ValueError(
+                f"Expected {len(self.reassemble_layers)} hidden states, "
+                f"got {len(hidden_states)}"
+            )
+        
+        # Apply reassemble layers to create multi-scale feature maps
+        reassembled_features = []
+        for i, (hidden_state, reassemble) in enumerate(zip(hidden_states, self.reassemble_layers)):
+            # Verify channel dimension matches
+            actual_channels = hidden_state.shape[1]
+            expected_channels = reassemble.in_channels
+            if actual_channels != expected_channels:
+                actual_dims = [h.shape[1] for h in hidden_states]
+                raise ValueError(
+                    f"Stage {i}: Expected {expected_channels} channels, "
+                    f"got {actual_channels} channels. "
+                    f"Hidden state shape: {hidden_state.shape}.\n\n"
+                    f"To fix this, set 'feature_dim' in your decoder config to:\n"
+                    f"  feature_dim: {actual_dims}\n\n"
+                    f"Or in YAML format:\n"
+                    f"  FEATURE_DIM: {actual_dims}\n\n"
+                    f"Current decoder config feature_dim: {self.config.get('feature_dim', 'not set')}"
+                )
+            feature_map = reassemble(hidden_state)  # [B, out_ch, H', W']
+            reassembled_features.append(feature_map)
+
+        # Progressive fusion from smallest to largest scale
+        # Use actual spatial dimensions from reassembled features to ensure matching
+        
+        # Start with smallest scale (stage 3)
+        fused = self.fusion_blocks[3](reassembled_features[3])  # [B, 256, H3, W3]
+        h3, w3 = fused.shape[2], fused.shape[3]
+        
+        # Interpolate to match stage 2 size
+        h2, w2 = reassembled_features[2].shape[2], reassembled_features[2].shape[3]
+        fused = F.interpolate(
+            fused, size=(h2, w2), mode="bilinear", align_corners=True
+        )  # [B, 256, H2, W2]
+
+        # Add stage 2 features
+        stage2_fused = self.fusion_blocks[2](reassembled_features[2])  # [B, 256, H2, W2]
+        # Ensure spatial dimensions match (should already match, but be safe)
+        if fused.shape[2:] != stage2_fused.shape[2:]:
+            stage2_fused = F.interpolate(
+                stage2_fused, size=(fused.shape[2], fused.shape[3]), 
+                mode="bilinear", align_corners=True
+            )
+        fused = fused + stage2_fused  # [B, 256, H2, W2]
+        fused = self.drop2d(fused)
+        
+        # Interpolate to match stage 1 size
+        h1, w1 = reassembled_features[1].shape[2], reassembled_features[1].shape[3]
+        fused = F.interpolate(
+            fused, size=(h1, w1), mode="bilinear", align_corners=True
+        )  # [B, 256, H1, W1]
+
+        # Add stage 1 features
+        stage1_fused = self.fusion_blocks[1](reassembled_features[1])  # [B, 256, H1, W1]
+        # Ensure spatial dimensions match
+        if fused.shape[2:] != stage1_fused.shape[2:]:
+            stage1_fused = F.interpolate(
+                stage1_fused, size=(fused.shape[2], fused.shape[3]), 
+                mode="bilinear", align_corners=True
+            )
+        fused = fused + stage1_fused  # [B, 256, H1, W1]
+        fused = self.drop2d(fused)
+        
+        # Interpolate to match stage 0 size
+        h0, w0 = reassembled_features[0].shape[2], reassembled_features[0].shape[3]
+        fused = F.interpolate(
+            fused, size=(h0, w0), mode="bilinear", align_corners=True
+        )  # [B, 256, H0, W0]
+
+        # Add stage 0 features
+        stage0_fused = self.fusion_blocks[0](reassembled_features[0])  # [B, 256, H0, W0]
+        # Ensure spatial dimensions match
+        if fused.shape[2:] != stage0_fused.shape[2:]:
+            stage0_fused = F.interpolate(
+                stage0_fused, size=(fused.shape[2], fused.shape[3]), 
+                mode="bilinear", align_corners=True
+            )
+        fused = fused + stage0_fused  # [B, 256, H0, W0]
+        fused = self.drop2d(fused)
+        
+        # Apply RGB head with progressive upsampling to avoid large intermediate tensors
+        # Calculate target size early to do progressive upsampling
+        target_size = self.config["output_image_size"] or (input_height, input_width)
+        target_h, target_w = target_size
+        
+        # Stage 1: Process at current resolution
+        x = self.rgb_head_stage1(fused)  # [B, 128, H, W]
+        
+        # Progressive upsampling: process at lower resolution first, then upsample
+        # This avoids creating huge intermediate tensors
+        # Calculate safe intermediate size (max 896x896 to avoid INT_MAX issues with batch_size=32)
+        max_safe_size = 896
+        current_h, current_w = x.shape[2], x.shape[3]
+        
+        # If target is very large, process at intermediate size first
+        if target_h > max_safe_size or target_w > max_safe_size:
+            # Process stage 2 at current or intermediate size
+            intermediate_h = min(max_safe_size, max(current_h * 2, target_h // 2))
+            intermediate_w = min(max_safe_size, max(current_w * 2, target_w // 2))
+            
+            # Upsample to intermediate size if needed
+            if x.shape[2:] != (intermediate_h, intermediate_w):
+                x = F.interpolate(
+                    x, size=(intermediate_h, intermediate_w), mode="bilinear", align_corners=True
+                )
+            
+            # Stage 2: Process at intermediate size
+            x = self.rgb_head_stage2(x)  # [B, 64, H_intermediate, W_intermediate]
+            
+            # Stage 3: Process at intermediate size
+            x = self.rgb_head_stage3(x)  # [B, 32, H_intermediate, W_intermediate]
+            
+            # Final RGB projection at intermediate size
+            x = self.rgb_head_final(x)  # [B, 3, H_intermediate, W_intermediate]
+            
+            # Final upsample to target size
+            rgb_output = F.interpolate(
+                x, size=(target_h, target_w), mode="bilinear", align_corners=True
+            )
+        else:
+            # Target size is manageable, process normally
+            # Upsample to target size after stage 1
+            if x.shape[2:] != (target_h, target_w):
+                x = F.interpolate(
+                    x, size=(target_h, target_w), mode="bilinear", align_corners=True
+                )
+            
+            # Stage 2: Process
+            x = self.rgb_head_stage2(x)  # [B, 64, H_target, W_target]
+            
+            # Stage 3: Process
+            x = self.rgb_head_stage3(x)  # [B, 32, H_target, W_target]
+            
+            # Final RGB projection
+            rgb_output = self.rgb_head_final(x)  # [B, 3, H_target, W_target]
+
+        return rgb_output
+
+
 class UnReflect_Model(nn.Module):
     """
     RGB with flexible DPT decoders.
@@ -612,23 +1373,82 @@ class UnReflect_Model(nn.Module):
     ):
         super().__init__()
 
-        # ---- RGB (DINOv3) ----
-        # Accept either an instance or a DINOv3(**cfg) dict
-        self.dinov3 = _build(dinov3, DINOv3)
+        # ---- Detect ConvNeXt from encoder config ----
+        # Check if encoder name contains "convnext" (case-insensitive)
+        is_convnext = False
+        if isinstance(dinov3, dict):
+            model_name = dinov3.get("model_name", "").lower()
+            is_convnext = "convnext" in model_name
+        elif isinstance(dinov3, (DINOv3, DINOv3_ConvNext)):
+            # If it's already an instance, check its type
+            is_convnext = isinstance(dinov3, DINOv3_ConvNext)
+            if isinstance(dinov3, DINOv3):
+                model_name = dinov3.config.get("model_name", "").lower()
+                is_convnext = "convnext" in model_name
+
+        # ---- RGB (DINOv3 or DINOv3_ConvNext) ----
+        # Accept either an instance or a DINOv3(**cfg) / DINOv3_ConvNext(**cfg) dict
+        if is_convnext:
+            self.dinov3 = _build(dinov3, DINOv3_ConvNext)
+            self.use_convnext = True
+        else:
+            self.dinov3 = _build(dinov3, DINOv3)
+            self.use_convnext = False
 
         self.image_size = self.dinov3.config["image_size"]
         self.patch_size = patch_size
         self.embed_dim = self.dinov3.feature_dim
 
-        # ---- Decoders (DPT_Decoder) ----
+        # For ConvNeXt, try to detect per-stage feature dimensions from model config
+        convnext_feature_dims = None
+        if self.use_convnext:
+            # Try to get feature dimensions from ConvNeXt model config
+            if hasattr(self.dinov3.dinov3, "config"):
+                model_config = self.dinov3.dinov3.config
+                # ConvNeXt models typically have hidden_sizes in config
+                if hasattr(model_config, "hidden_sizes"):
+                    all_feature_dims = list(model_config.hidden_sizes)
+                    # Get selected layers to match feature dimensions
+                    selected_layers = self.dinov3.config.get("return_selected_layers", None)
+                    if selected_layers is not None and len(selected_layers) > 0:
+                        # Map selected layer indices to feature dimensions
+                        # Note: hidden_sizes might include initial embedding, so we need to map correctly
+                        # For ConvNeXt, hidden_sizes typically corresponds to stage outputs
+                        # If we have more stages than selected layers, we need to map correctly
+                        if len(all_feature_dims) >= len(selected_layers):
+                            # Try to map selected layers to feature dimensions
+                            # This is a heuristic - may need adjustment based on actual model structure
+                            max_layer = max(selected_layers)
+                            if max_layer < len(all_feature_dims):
+                                # Use feature dimensions corresponding to selected layers
+                                convnext_feature_dims = [all_feature_dims[i] for i in selected_layers]
+                            else:
+                                # Fallback: use last N dimensions
+                                convnext_feature_dims = all_feature_dims[-len(selected_layers):]
+                        else:
+                            # Not enough stages, use what we have
+                            convnext_feature_dims = all_feature_dims
+                    else:
+                        # No selected layers specified, use last 4 stages
+                        if len(all_feature_dims) >= 4:
+                            convnext_feature_dims = all_feature_dims[-4:]
+                        else:
+                            convnext_feature_dims = all_feature_dims
+                    # if convnext_feature_dims:
+                    #     logger.info(
+                    #         f"ConvNeXt feature dimensions: {convnext_feature_dims}"
+                    #     )
+
+        # ---- Decoders (DPT_Decoder or DPT_Decoder_ConvNext) ----
         # Handle flexible decoder configuration with legacy support
         def build_dpt(dec, decoder_name=None):
-            """Build a decoder from config or instance (standard or FiLM-conditioned).
+            """Build a decoder from config or instance (standard, FiLM-conditioned, or ConvNext).
 
-            Accepts either an instantiated `DPT_Decoder`/`FiLMConditionedDPT` or a
+            Accepts either an instantiated `DPT_Decoder`/`DPT_Decoder_ConvNext`/`FiLMConditionedDPT` or a
             config dict. When a config dict is provided, if it contains
             `use_film` (or `USE_FILM`) set to True, a `FiLMConditionedDPT` is
-            created; otherwise a standard `DPT_Decoder` is created. The config
+            created; otherwise a standard `DPT_Decoder` or `DPT_Decoder_ConvNext` is created
+            based on whether we're using ConvNeXt encoder. The config
             dict is passed as a single dictionary argument to the decoder's
             constructor, augmented with the resolved `feature_dim`.
 
@@ -639,7 +1459,7 @@ class UnReflect_Model(nn.Module):
                 dec: Decoder instance or config dict
                 decoder_name: Optional decoder name for prefix stripping when loading weights
             """
-            if isinstance(dec, (DPT_Decoder, FiLMConditionedDPT)):
+            if isinstance(dec, (DPT_Decoder, DPT_Decoder_ConvNext, FiLMConditionedDPT)):
                 return dec
             if isinstance(dec, dict):
                 # Extract pretrained path before building decoder
@@ -651,8 +1471,19 @@ class UnReflect_Model(nn.Module):
                 # Determine whether to build FiLM-conditioned or standard decoder
                 use_film = bool(dec.get("use_film", dec.get("USE_FILM", False)))
                 # Build config dict for the decoder class
+                # For ConvNeXt, use detected feature dimensions if available, otherwise use embed_dim
+                # But allow explicit feature_dim in decoder config to override auto-detection
+                if "feature_dim" in dec or "FEATURE_DIM" in dec:
+                    # User explicitly set feature_dim, use it
+                    feature_dim = dec.get("feature_dim", dec.get("FEATURE_DIM", self.embed_dim))
+                elif is_convnext and convnext_feature_dims is not None:
+                    # Use auto-detected dimensions
+                    feature_dim = convnext_feature_dims
+                else:
+                    # Fallback to embed_dim
+                    feature_dim = self.embed_dim
                 config = {
-                    "feature_dim": self.embed_dim,
+                    "feature_dim": feature_dim,
                     **dec,
                 }
                 # Remove the control flags from the config passed into the module
@@ -662,10 +1493,13 @@ class UnReflect_Model(nn.Module):
                 config.pop("FROM_PRETRAINED", None)
                 config.pop("DECODER_LR", None)
 
-                # Create decoder instance
-                decoder = (
-                    FiLMConditionedDPT(config) if use_film else DPT_Decoder(config)
-                )
+                # Create decoder instance - use ConvNext decoder if using ConvNext encoder
+                if use_film:
+                    decoder = FiLMConditionedDPT(config)
+                elif is_convnext:
+                    decoder = DPT_Decoder_ConvNext(config)
+                else:
+                    decoder = DPT_Decoder(config)
 
                 # Load pretrained weights and freeze if path is specified and not empty
                 if pretrained_path and pretrained_path != "":
@@ -721,12 +1555,42 @@ class UnReflect_Model(nn.Module):
                                     break
 
                     # Load weights with strict=False to handle partial matches
+                    # Filter out keys with shape mismatches before loading
+                    filtered_state_dict = {}
+                    incompatible_keys = []
+                    model_state_dict = decoder.state_dict()
+                    
+                    for key, value in state_dict.items():
+                        if key in model_state_dict:
+                            model_shape = model_state_dict[key].shape
+                            checkpoint_shape = value.shape
+                            if model_shape == checkpoint_shape:
+                                filtered_state_dict[key] = value
+                            else:
+                                incompatible_keys.append(
+                                    f"{key}: checkpoint shape {checkpoint_shape} != model shape {model_shape}"
+                                )
+                        else:
+                            # Key not in model, skip it
+                            pass
+                    
+                    # Load filtered state dict
                     missing_keys, unexpected_keys = decoder.load_state_dict(
-                        state_dict, strict=False
+                        filtered_state_dict, strict=False
                     )
+                    
+                    # Log warnings about incompatible keys
+                    if incompatible_keys:
+                        import warnings
+                        warnings.warn(
+                            f"Some weights from {pretrained_path} had incompatible shapes and were skipped:\n"
+                            + "\n".join(incompatible_keys[:10])  # Show first 10
+                            + (f"\n... and {len(incompatible_keys) - 10} more" if len(incompatible_keys) > 10 else "")
+                            + "\nThis is likely because the pretrained model used different feature_dim values."
+                        )
+                    
                     if missing_keys:
                         import warnings
-
                         warnings.warn(
                             f"Some keys were missing when loading pretrained decoder from {pretrained_path}: {missing_keys[: min(5, len(missing_keys))]}..."
                         )
@@ -759,7 +1623,7 @@ class UnReflect_Model(nn.Module):
                 decoder.decoder_lr = decoder_lr
                 return decoder
             raise TypeError(
-                "Decoder must be DPT_Decoder/FiLMConditionedDPT instance or dict."
+                "Decoder must be DPT_Decoder/DPT_Decoder_ConvNext/FiLMConditionedDPT instance or dict."
             )
 
         self.decoder_names = list(decoders.keys())
@@ -786,24 +1650,43 @@ class UnReflect_Model(nn.Module):
         return tokens, (Hp, Wp)
 
     def forward(self, model_input_dict):
-        # 1) RGB → DINO tokens
+        # 1) RGB → DINO tokens/features
 
         rgb_in = self.dinov3.preprocess_image(model_input_dict["rgb"])
-        rgb_tokens = self.dinov3(rgb_in)["selected_hidden_states"]
+        dinov3_output = self.dinov3(rgb_in)
+        rgb_features = dinov3_output["selected_hidden_states"]
+
+        # For ConvNeXt, ensure features are spatial feature maps [B, C, H, W]
+        # For regular DINOv3, they are tokens [B, N, C]
+        if self.use_convnext:
+            # ConvNeXt outputs might be tokens, convert to spatial if needed
+            # But if return_as_feature_maps=True, they should already be spatial
+            # Check first feature to determine format
+            if len(rgb_features[0].shape) == 3:
+                # It's tokens [B, N, C], but ConvNext decoder expects spatial
+                # This shouldn't happen if config is correct, but handle gracefully
+                logger.warning(
+                    "ConvNeXt encoder returned tokens but decoder expects spatial maps. "
+                    "Set return_as_feature_maps=True in encoder config."
+                )
 
         # 6) Decode with flexible decoder heads
         outputs = {}
         for decoder_name in self.decoder_names:
-            decoder_output = self.decoders[decoder_name](rgb_tokens)
+            decoder_output = self.decoders[decoder_name](rgb_features)
             outputs[decoder_name] = decoder_output
 
         # Optional: Add tokens for debugging/analysis
         # outputs.update({
-        #     "rgb_tokens": rgb_tokens,
+        #     "rgb_tokens": rgb_features,
         # })
 
         return outputs
 
+    def extract_tokens(self, image):
+        rgb_in = self.dinov3.preprocess_image(image)
+        tokens_list = self.dinov3(rgb_in)["selected_hidden_states"]
+        return tokens_list
 
 class RGBDistillDecomposer(UnReflect_Model):
     def __init__(self):
@@ -878,7 +1761,7 @@ class FiLMConditionedDPT(DPT_Decoder):
         gamma, beta = torch.chunk(ab, 2, dim=1)
         return gamma * x + beta
 
-    def forward(self, hidden_states, return_mask: bool = True):
+    def forward(self, hidden_states, return_mask: bool = False):
         # Standard reassembly part (unchanged)
         H, W = self.out_image_size
         ph, pw = H // 16, W // 16
@@ -973,6 +1856,11 @@ class UnReflect_Model_FiLMConditioned(UnReflect_Model):
             outputs[name] = dec(tokens_list)
             # outputs["mask_pyr"] = mask_pyr
         return outputs
+    
+    def extract_tokens(self, image):
+        rgb_in = self.dinov3.preprocess_image(image)
+        tokens_list = self.dinov3(rgb_in)["selected_hidden_states"]
+        return tokens_list
 
 
 class UnReflect_Model_TokenInpainter(UnReflect_Model):
@@ -1001,19 +1889,19 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
             token_inpainter_cfg = {}
 
         # Get class name and module (with defaults for backward compatibility)
-        token_inpainter_class_name = token_inpainter_cfg.pop(
+        self.token_inpainter_class_name = token_inpainter_cfg.pop(
             "token_inpainter_class", "TokenInpainter"
         )
-        token_inpainter_module_name = token_inpainter_cfg.pop(
+        self.token_inpainter_module_name = token_inpainter_cfg.pop(
             "token_inpainter_module", "models"
         )
 
         # Dynamically import the module
-        token_inpainter_module = importlib.import_module(token_inpainter_module_name)
+        token_inpainter_module = importlib.import_module(self.token_inpainter_module_name)
 
         # Get the TokenInpainter class from the module
         TokenInpainterClass = getattr(
-            token_inpainter_module, token_inpainter_class_name
+            token_inpainter_module, self.token_inpainter_class_name
         )
 
         # Filter kwargs to only include parameters that the constructor accepts
@@ -1049,34 +1937,51 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
 
         ### SECOND: Construct patch-level mask - From the prediction or override from GT if provided
         if "patch_mask_override" in model_input_dict:
-            patchmask_bool = pixel_mask_to_patch_mask(
+            patchmask = pixel_mask_to_patch_mask(
                 model_input_dict["patch_mask_override"],
                 patch_size=self.patch_size,
                 threshold=0.1,
                 invert=False,
+                soft=True if "soft" in self.token_inpainter_class_name.lower() else False
             )
         else:
-            patchmask_bool = pixel_mask_to_patch_mask(
+            patchmask = pixel_mask_to_patch_mask(
                 outputs["highlight"],
                 patch_size=self.patch_size,
                 threshold=0.1,
                 invert=False,
+                soft=True if "soft" in self.token_inpainter_class_name.lower() else False
             )
 
-        # patchmask_bool = 1 : MUST IMPAINT THE TOKEN
-        # patchmask_bool = 0 : IS TEACHER TOKEN
-        outputs["patch_mask"] = patchmask_bool
+        # patchmask = 1 : MUST IMPAINT THE TOKEN
+        # patchmask = 0 : IS TEACHER TOKEN
+        outputs["patch_mask"] = patchmask
 
         ### THIRD: Inpaint the tokens in the mask
+        # Detect if using soft masks (float) or boolean masks
+        is_soft_mask = patchmask.dtype.is_floating_point
+        
         completed_tokens = []
         for n, T in enumerate(tokens_list):  # (B,N,C)
-            T_inpainted = self.token_inpaint(
-                T, torch.logical_not(patchmask_bool)
-            )  # refined all tokens
-            # keep teacher tokens on context; use predicted tokens on masked patches
-            T_comp = torch.where(
-                patchmask_bool.unsqueeze(-1), T_inpainted, T
-            )  # (B,N,C)
+            # Prepare visibility mask for token inpainter
+            # TokenInpainter expects: True/1.0 = visible/teacher, False/0.0 = masked/inpaint
+            if is_soft_mask:
+                visibility_mask = 1.0 - patchmask  # [B, N] float in [0,1]
+            else:
+                visibility_mask = torch.logical_not(patchmask)  # [B, N] bool
+            
+            T_inpainted = self.token_inpaint(T, visibility_mask)  # refined all tokens
+            
+            # Blend: keep teacher tokens on context; use predicted tokens on masked patches
+            if is_soft_mask:
+                # Soft blending: patchmask=1.0 → use T_inpainted, patchmask=0.0 → use T
+                patchmask_expanded = patchmask.unsqueeze(-1)  # [B, N, 1]
+                T_comp = patchmask_expanded * T_inpainted + (1.0 - patchmask_expanded) * T  # (B,N,C)
+            else:
+                # Boolean selection: use torch.where
+                T_comp = torch.where(
+                    patchmask.unsqueeze(-1), T_inpainted, T
+                )  # (B,N,C)
             completed_tokens.append(T_comp)
 
         outputs["tokens_inpainted"] = T_inpainted

@@ -980,7 +980,17 @@ class PolarHighlighter(nn.Module):
                 "light_dir": zeros_1hw(3),
                 "view_dir": zeros_1hw(3),
                 "stokes_highlighted": zeros_1hw(3) if pol is not None else None,
+                "supervision_mask": torch.ones_like(zeros_1hw(1)),
             }
+            if (
+                return_dataset_highlights
+                and dataset_highlight_threshold is not None
+                and dataset_highlight_dilation is not None
+            ):
+                result["dataset_highlights_soft_mask"] = get_soft_highlight_map(
+                    rgb,
+                    threshold=dataset_highlight_threshold,
+            )
             return result
 
         depth, normals, moge_intrinsics = self.compute_geometry(

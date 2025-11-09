@@ -1,0 +1,302 @@
+{
+    "training": {
+        "MODEL": {
+            "MODEL_CLASS": "UnReflect_Model_TokenInpainter",
+            "MODEL_MODULE": "models",
+            "RGB_ENCODER": {
+                "ENCODER": "facebook/dinov3-vitl16-pretrain-lvd1689m",
+                "IMAGE_SIZE": 448,
+                "RETURN_SELECTED_LAYERS": [
+                    3,
+                    6,
+                    9,
+                    12
+                ]
+            },
+            "DECODERS": {
+                "diffuse": {
+                    "USE_FILM": false,
+                    "FEATURE_DIM": 1024,
+                    "REASSEMBLE_OUT_CHANNELS": [
+                        768,
+                        1024,
+                        1536,
+                        2048
+                    ],
+                    "REASSEMBLE_FACTORS": [
+                        4.0,
+                        2.0,
+                        1.0,
+                        0.5
+                    ],
+                    "READOUT_TYPE": "ignore",
+                    "FROM_PRETRAINED": "weights/rgb_decoder.pth",
+                    "USE_BN": false,
+                    "DROPOUT": 0.1,
+                    "OUTPUT_IMAGE_SIZE": [
+                        448,
+                        448
+                    ],
+                    "OUTPUT_CHANNELS": 3,
+                    "DECODER_LR": 0.0
+                },
+                "highlight": {
+                    "USE_FILM": false,
+                    "FEATURE_DIM": 1024,
+                    "REASSEMBLE_OUT_CHANNELS": [
+                        384,
+                        768,
+                        1024,
+                        1536
+                    ],
+                    "REASSEMBLE_FACTORS": [
+                        4.0,
+                        2.0,
+                        1.0,
+                        0.5
+                    ],
+                    "READOUT_TYPE": "ignore",
+                    "USE_BN": false,
+                    "DROPOUT": 0.1,
+                    "OUTPUT_IMAGE_SIZE": [
+                        448,
+                        448
+                    ],
+                    "OUTPUT_CHANNELS": 1
+                }
+            },
+            "TOKEN_INPAINTER": {
+                "TOKEN_INPAINTER_CLASS": "TokenInpainter_Prior",
+                "TOKEN_INPAINTER_MODULE": "token_inpainters",
+                "TOKEN_INPAINTER_LR": 0.0005,
+                "DEPTH": 6,
+                "HEADS": 16,
+                "DROP": 0.1,
+                "USE_POSITIONAL_ENCODING": true,
+                "USE_FINAL_NORM": true,
+                "USE_LOCAL_PRIOR": true,
+                "SEED_NOISE_STD": 0.001
+            }
+        },
+        "USE_TORCH_COMPILE": false,
+        "DATASETS": {
+            "SCRREAM": {
+                "VAL_SCENES": [
+                    "scene10_full_00",
+                    "scene11_full_00",
+                    "scene044_full_00",
+                    "scene04_reduced_00",
+                    "scene04_reduced_01",
+                    "scene04_reduced_02"
+                ],
+                "TARGET_SIZE": [
+                    448,
+                    448
+                ],
+                "RESIZE_MODE": "resize+crop",
+                "FEW_IMAGES": false,
+                "SAMPLE_EVERY_N": 4,
+                "LOAD_RGB_ONLY": true
+            },
+            "HOUSECAT6D": {
+                "VAL_SCENES": [
+                    "val_scene1",
+                    "val_scene2"
+                ],
+                "TARGET_SIZE": [
+                    448,
+                    448
+                ],
+                "RESIZE_MODE": "resize+crop",
+                "FEW_IMAGES": false,
+                "SAMPLE_EVERY_N": 4,
+                "LOAD_RGB_ONLY": true
+            },
+            "CROMO": {
+                "TRAIN_SCENES": [
+                    "kitchen"
+                ],
+                "TARGET_SIZE": [
+                    448,
+                    448
+                ],
+                "RESIZE_MODE": "resize",
+                "FEW_IMAGES": false,
+                "SAMPLE_EVERY_N": 8,
+                "LOAD_RGB_ONLY": true
+            },
+            "PSD": {
+                "TRAIN_SCENES": "PSD_Train",
+                "VAL_SCENES": "PSD_Val",
+                "TARGET_SIZE": [
+                    448,
+                    448
+                ],
+                "RESIZE_MODE": "resize+crop",
+                "FEW_IMAGES": false,
+                "SAMPLE_EVERY_N": 1,
+                "LOAD_RGB_ONLY": true
+            },
+            "SCARED": {
+                "VAL_SCENES": [
+                    "v22",
+                    "v23",
+                    "v24",
+                    "v25",
+                    "v26",
+                    "v27",
+                    "v28",
+                    "v29",
+                    "v30",
+                    "v31",
+                    "v32",
+                    "v33",
+                    "v34"
+                ],
+                "TARGET_SIZE": [
+                    448,
+                    448
+                ],
+                "RESIZE_MODE": "resize+crop",
+                "SAMPLE_EVERY_N": 4,
+                "LOAD_RGB_ONLY": true,
+                "FEW_IMAGES": false,
+                "HIGHLIGHT_ENABLE": false,
+                "HIGHLIGHT_BRIGHTNESS_THRESHOLD": 0.9,
+                "HIGHLIGHT_RETURN_MASK": true,
+                "HIGHLIGHT_RECT_SIZE": [
+                    1000,
+                    1000
+                ],
+                "HIGHLIGHT_RETURN_RECT_AS_RGB": false,
+                "HIGHLIGHT_RETURN_RECT": true
+            },
+            "STEREOMIS_TRACKING": {
+                "VAL_SCENES": [
+                    "P2_2"
+                ],
+                "TARGET_SIZE": [
+                    448,
+                    448
+                ],
+                "RESIZE_MODE": "resize+crop",
+                "SAMPLE_EVERY_N": 10,
+                "LOAD_RGB_ONLY": true,
+                "FEW_IMAGES": false,
+                "HIGHLIGHT_ENABLE": false,
+                "HIGHLIGHT_BRIGHTNESS_THRESHOLD": 0.9,
+                "HIGHLIGHT_RETURN_MASK": true,
+                "HIGHLIGHT_RECT_SIZE": [
+                    800,
+                    800
+                ],
+                "HIGHLIGHT_RETURN_RECT_AS_RGB": false,
+                "HIGHLIGHT_RETURN_RECT": true
+            },
+            "CHOLEC80": {
+                "VAL_SCENES": [
+                    "val"
+                ],
+                "TARGET_SIZE": [
+                    448,
+                    448
+                ],
+                "RESIZE_MODE": "resize+crop",
+                "SAMPLE_EVERY_N": 50,
+                "LOAD_RGB_ONLY": true,
+                "FEW_IMAGES": false,
+                "HIGHLIGHT_ENABLE": false,
+                "HIGHLIGHT_BRIGHTNESS_THRESHOLD": 0.9,
+                "HIGHLIGHT_RETURN_MASK": true,
+                "HIGHLIGHT_RECT_SIZE": [
+                    800,
+                    800
+                ],
+                "HIGHLIGHT_RETURN_RECT_AS_RGB": false,
+                "HIGHLIGHT_RETURN_RECT": true
+            }
+        },
+        "BATCH_SIZE": 30,
+        "NUM_WORKERS": 12,
+        "SHUFFLE": true,
+        "PIN_MEMORY": true,
+        "PREFETCH_FACTOR": 2,
+        "MOGE_MODEL": "Ruicheng/moge-2-vits-normal",
+        "SURFACE_ROUGHNESS": 8.0,
+        "INTENSITY": 1.5,
+        "LIGHT_DISTANCE_RANGE": [
+            0.0,
+            1
+        ],
+        "LIGHT_LEFT_RIGHT_ANGLE": [
+            0,
+            360
+        ],
+        "LIGHT_ABOVE_BELOW_ANGLE": [
+            0,
+            360
+        ],
+        "DATASET_HIGHLIGHT_DILATION": 25,
+        "DATASET_HIGHLIGHT_THRESHOLD": 0.875,
+        "LEARNING_RATE": 0.0005,
+        "WEIGHT_DECAY": 0.0,
+        "EPOCHS": 20,
+        "GRADIENT_ACCUMULATION_STEPS": 1,
+        "WARMUP_STEPS": 2,
+        "GRADIENT_CLIPPING_MAX_NORM": 8,
+        "LR_SCHEDULER": {
+            "ONPLATEAU": {
+                "PATIENCE": 5,
+                "FACTOR": 0.1
+            },
+            "STEPWISE": {
+                "N_STEPS": 4,
+                "GAMMA": 0.5
+            }
+        },
+        "SWITCH_OPTIMIZER_EPOCH": null,
+        "OPTIMIZER_BOOTSTRAP_NAME": "Adam",
+        "OPTIMIZER_REFINING_NAME": "Adam",
+        "EARLY_STOPPING_PATIENCE": 20,
+        "SAVE_INTERVAL": 1000,
+        "SPECULAR_LOSS_WEIGHT": 0.0,
+        "DIFFUSE_LOSS_WEIGHT": 0.5,
+        "HIGHLIGHT_LOSS_WEIGHT": 1.0,
+        "IMAGE_RECONSTRUCTION_LOSS_WEIGHT": 0.0,
+        "SATURATION_RING_LOSS_WEIGHT": 0.0,
+        "RING_KERNEL_SIZE": 11,
+        "RING_VAR_WEIGHT": 0.5,
+        "RING_TEXTURE_WEIGHT": 1.0,
+        "HLREG_W_L1": 1.0,
+        "HLREG_USE_CHARB": true,
+        "HLREG_W_DICE": 0.2,
+        "HLREG_W_SSIM": 0.0,
+        "HLREG_W_GRAD": 0.0,
+        "HLREG_W_TV": 0.0,
+        "HLREG_BALANCE_MODE": "auto",
+        "HLREG_POS_WEIGHT": 1.0,
+        "HLREG_FOCAL_GAMMA": 2.0,
+        "HIGHLIGHT_COLOR": [
+            1.0,
+            1.0,
+            1.0
+        ],
+        "CLAMP_RECONSTRUCTION": true,
+        "WEIGHT_CONTEXT_IDENTITY": 0.0,
+        "WEIGHT_RING_GRAD": 0.0,
+        "WEIGHT_TV_IN_HOLE": 0.0,
+        "RING_DILATE_KERNEL": 17,
+        "WEIGHT_TOKEN_INPAINT": 1.0,
+        "TOKEN_FEAT_ALPHA": 0.5,
+        "LOG_INTERVAL": 1,
+        "WANDB_LOG_INTERVAL": 1,
+        "IMAGE_LOG_INTERVAL": 2,
+        "NO_WANDB": false,
+        "MODEL_WATCHER_FREQ_WANDB": 50,
+        "WANDB_ENTITY": "unreflect-anything",
+        "WANDB_PROJECT": "UnReflectAnything",
+        "NOTES": "Baseline + DiffuseLoss",
+        "RECORD": false,
+        "name": "still-elevator-560"
+    }
+}

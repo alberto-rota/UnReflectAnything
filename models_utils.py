@@ -318,28 +318,50 @@ def load_best_model_by_run(
 
 
 def pixel_mask_to_patch_mask(
-    mask_hw: torch.Tensor, patch_size: int, threshold: float = 0.0, invert: bool = False
+    mask_hw: torch.Tensor, patch_size: int, threshold: float = 0.0, invert: bool = False, soft: bool = False
 ) -> torch.Tensor:
     """
-    mask_hw: (B,1,H,W) in [0,1]; returns boolean (B, N) where N=(H/P)*(W/P)
-    A patch is considered masked if ANY pixel in it is masked.
+    Convert pixel mask to patch mask.
+    
+    Args:
+        mask_hw: (B, 1, H, W) in [0,1]
+        patch_size: int, spatial size of each patch
+        threshold: float, threshold for determining masked pixels
+        invert: bool, if True, invert the mask
+        soft: bool, if True, output soft values in [0,1] representing proportion of pixels above threshold
+        
+    Returns:
+        patch_mask: (B, N) where N=(H/P)*(W/P)
+            - If soft=False: boolean tensor (patch is masked if ANY pixel is above threshold)
+            - If soft=True: float tensor in [0,1] (proportion of pixels above threshold in each patch)
     """
     m = (mask_hw > threshold).float()
-    m_small = F.max_pool2d(m, kernel_size=patch_size, stride=patch_size)
-    pm = m_small.flatten(1).bool()  # (B, 1)
+    if soft:
+        # Use average pooling to get proportion of pixels above threshold in each patch
+        m_small = F.avg_pool2d(m, kernel_size=patch_size, stride=patch_size)
+        pm = m_small.flatten(1)  # (B, N) in [0,1]
+    else:
+        # Use max pooling to check if ANY pixel is above threshold
+        m_small = F.max_pool2d(m, kernel_size=patch_size, stride=patch_size)
+        pm = m_small.flatten(1).bool()  # (B, N) boolean
     if invert:
-        pm = torch.logical_not(pm)
+        if soft:
+            pm = 1.0 - pm
+        else:
+            pm = torch.logical_not(pm)
     return pm
 
 def patch_mask_to_pixel_mask(
-    patch_mask: torch.Tensor, patch_size: int
+    patch_mask: torch.Tensor, patch_size: int, soft: bool = False
 ) -> torch.Tensor:
     """
-    Given a patch mask (B, N) (boolean), upsample to pixel mask (B,1,H,W) in [0,1] using nearest neighbor.
+    Convert patch mask to pixel mask.
 
     Args:
         patch_mask: (B, N) boolean or float tensor, where N = (H/P)*(W/P)
         patch_size: int, spatial size of each patch
+        soft: bool, if True, use bilinear interpolation for smooth transitions; 
+              if False, use nearest neighbor interpolation
 
     Returns:
         mask_hw: (B, 1, H, W) float tensor in [0,1]
@@ -350,10 +372,20 @@ def patch_mask_to_pixel_mask(
 
     # Reshape (B, N) -> (B, 1, grid, grid)
     patch_mask_grid = patch_mask.reshape(B, 1, patch_grid_size, patch_grid_size).float()
-    # Upsample to (B, 1, H, W) using nearest-neighbor
-    pixel_mask = torch.nn.functional.interpolate(
-        patch_mask_grid,
-        scale_factor=patch_size,
-        mode="nearest"
-    )
+    # Upsample to (B, 1, H, W)
+    if soft:
+        # Use bilinear interpolation for smooth transitions
+        pixel_mask = torch.nn.functional.interpolate(
+            patch_mask_grid,
+            scale_factor=patch_size,
+            mode="bilinear",
+            align_corners=False
+        )
+    else:
+        # Use nearest-neighbor interpolation
+        pixel_mask = torch.nn.functional.interpolate(
+            patch_mask_grid,
+            scale_factor=patch_size,
+            mode="nearest"
+        )
     return pixel_mask

@@ -3,7 +3,7 @@
 #SBATCH --partition=a100
 #SBATCH --constraint=a100_80
 #SBATCH --time=1-00:00:00
-#SBATCH --job-name=train_a100_80_asap
+#SBATCH --job-name=train_A180
 #SBATCH --mail-user=alberto1.rota@polimi.it
 #SBATCH --mail-type=ALL
 #SBATCH --nodes=1
@@ -26,4 +26,4 @@ cd $WORK/UnReflectAnything
 source $WORK/UnReflectAnything/.venv/bin/activate
 
 # # Running training
-python train.py -nd
+python train.py -nd --resume-run true-sound-556

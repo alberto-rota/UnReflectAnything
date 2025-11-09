@@ -4,128 +4,131 @@ parameters:
   ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:
-      MODEL_CLASS: "UnReflect_Model_TokenInpainter"
+      MODEL_CLASS: "UnReflect_Model_TokenInpainter"  # Main model class name (must match class in models.py)
       MODEL_MODULE: "models"  # Module name to import model classes from (default: "models")
       RGB_ENCODER:
-        ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"
-        IMAGE_SIZE: 448
-        RETURN_SELECTED_LAYERS: [3, 6, 9, 12]
+        # "facebook/dinov3-convnext-large-pretrain-lvd1689m" "facebook/dinov3-vitl16-pretrain-lvd1689m"
+        ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"  # DINOv3 encoder model name (HuggingFace format)
+        IMAGE_SIZE: 448  # Input image size (height and width in pixels)
+        RETURN_SELECTED_LAYERS: [3, 6, 9, 12]  # Transformer layer indices to extract features from (0-indexed)
       DECODERS:
         diffuse:
-          USE_FILM: False
-          FEATURE_DIM: 1024
-          REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-          READOUT_TYPE: "ignore"
-          FROM_PRETRAINED: "weights/rgb_decoder.pth"
-          USE_BN: False
-          DROPOUT: 0.1
-          OUTPUT_IMAGE_SIZE: [448,448]
-          OUTPUT_CHANNELS: 3
-          DECODER_LR: 0.0
+          USE_FILM: False  # Enable FiLM (Feature-wise Linear Modulation) conditioning in decoder
+          FEATURE_DIM: 1024  # Feature dimension for decoder (should match encoder output)
+          REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]  # Output channels for each decoder stage (DPT-style reassembly)
+          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]  # Spatial upsampling factors for each stage
+          READOUT_TYPE: "ignore"  # Readout type for DPT decoder ("ignore", "project", etc.)
+          FROM_PRETRAINED: "weights/rgb_decoder.pth"  # Path to pretrained decoder weights (optional)
+          USE_BN: False  # Use batch normalization in decoder
+          DROPOUT: 0.1  # Dropout rate in decoder layers
+          OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
+          OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
+          DECODER_LR: 0.0  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
         highlight:
-          USE_FILM: False
-          FEATURE_DIM: 1024
-          REASSEMBLE_OUT_CHANNELS: [384,768,1024,1536]
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-          READOUT_TYPE: "ignore"
-          USE_BN: False
-          DROPOUT: 0.1
-          OUTPUT_IMAGE_SIZE: [448,448]
-          OUTPUT_CHANNELS: 1
+          USE_FILM: False  # Enable FiLM conditioning in highlight decoder
+          FEATURE_DIM: 1024  # Feature dimension for highlight decoder
+          REASSEMBLE_OUT_CHANNELS: [96,192,384,768]  # Output channels for each decoder stage
+          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]  # Spatial upsampling factors for each stage
+          READOUT_TYPE: "ignore"  # Readout type for DPT decoder
+          USE_BN: False  # Use batch normalization in decoder
+          DROPOUT: 0.1  # Dropout rate in decoder layers
+          OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
+          OUTPUT_CHANNELS: 1  # Number of output channels (1 for highlight mask)
+          DECODER_LR: 5.0e-4  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
       TOKEN_INPAINTER:
-        TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"  
-        TOKEN_INPAINTER_MODULE: "token_inpainters"  
-        TOKEN_INPAINTER_LR: 1.0e-4
+        TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"  # Token inpainter class name
+        TOKEN_INPAINTER_MODULE: "token_inpainters"  # Module name to import token inpainter from
+        TOKEN_INPAINTER_LR: 1.0e-4  # Learning rate for token inpainter (can differ from base LR)
         DEPTH: 6  # Number of transformer blocks
         HEADS: 16  # Number of attention heads
-        DROP: 0.0  # Dropout rate 
+        DROP: 0 # Dropout rate 
         USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
         USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
         USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
+        LOCAL_PRIOR_WEIGHT: 0.25  # Weight for local prior blending (0.0 = only mask_token, 1.0 = only local mean)
         SEED_NOISE_STD: 0.001  # Standard deviation of noise added to masked seeds during training  
 
-  USE_TORCH_COMPILE:  
+  USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
 
   ### DATA                                                                      
   DATASETS:
     value:
       SCRREAM:
-        VAL_SCENES: ["scene10_full_00","scene11_full_00","scene044_full_00","scene04_reduced_00","scene04_reduced_01","scene04_reduced_02"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize+crop"
-        FEW_IMAGES: False
-        SAMPLE_EVERY_N: 4
-        LOAD_RGB_ONLY: True
+        VAL_SCENES: ["scene10_full_00","scene11_full_00","scene044_full_00","scene04_reduced_00","scene04_reduced_01","scene04_reduced_02"]  # List of validation scene names
+        TARGET_SIZE: [448,448]  # Target image size [height, width] in pixels
+        RESIZE_MODE: "resize+crop"  # Image resizing mode: "resize", "crop", "resize+crop", or "pad"
+        FEW_IMAGES: False  # If True, load only first 10 images per scene (for quick debugging)
+        SAMPLE_EVERY_N: 4  # Load every Nth frame from each scene (1 = all frames, 4 = every 4th frame)
+        LOAD_RGB_ONLY: True  # If True, ignore polarization data and load only RGB images
         
       HOUSECAT6D:
-        VAL_SCENES: ["val_scene1","val_scene2"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize+crop"
-        FEW_IMAGES: False
-        SAMPLE_EVERY_N: 4
-        LOAD_RGB_ONLY: True
+        VAL_SCENES: ["val_scene1","val_scene2"]  # Validation scene names
+        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        RESIZE_MODE: "resize+crop"  # Image resizing mode
+        FEW_IMAGES: False  # Load only first 10 images if True
+        SAMPLE_EVERY_N: 4  # Load every Nth frame
+        LOAD_RGB_ONLY: True  # Ignore polarization data if True
 
       CROMO:
-        TRAIN_SCENES: ["kitchen"]
-        # VAL_SCENES: "station"
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize"
-        FEW_IMAGES: False
-        SAMPLE_EVERY_N: 8
-        LOAD_RGB_ONLY: True
+        TRAIN_SCENES: ["kitchen"]  # Training scene names (list or string)
+        # VAL_SCENES: "station"  # Validation scene names (optional)
+        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        RESIZE_MODE: "resize"  # Image resizing mode
+        FEW_IMAGES: False  # Load only first 10 images if True
+        SAMPLE_EVERY_N: 8  # Load every Nth frame
+        LOAD_RGB_ONLY: True  # Ignore polarization data if True
     
       PSD:
-        TRAIN_SCENES: "PSD_Train"
-        VAL_SCENES: "PSD_Val"
-        TARGET_SIZE: [448,448]  
-        RESIZE_MODE: "resize+crop"
-        FEW_IMAGES: False
-        SAMPLE_EVERY_N: 1
-        LOAD_RGB_ONLY: True
+        TRAIN_SCENES: "PSD_Train"  # Training scene name (string or list)
+        VAL_SCENES: "PSD_Val"  # Validation scene name (string or list)
+        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        RESIZE_MODE: "resize+crop"  # Image resizing mode
+        FEW_IMAGES: False  # Load only first 10 images if True
+        SAMPLE_EVERY_N: 1  # Load every Nth frame (1 = all frames)
+        LOAD_RGB_ONLY: True  # Ignore polarization data if True
 
       SCARED:
-        VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 4
-        LOAD_RGB_ONLY: True
-        FEW_IMAGES: False
-        HIGHLIGHT_ENABLE: False  
-        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-        HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [1000, 1000]
-        HIGHLIGHT_RETURN_RECT_AS_RGB: False
-        HIGHLIGHT_RETURN_RECT: True
+        VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]  # Validation scene names
+        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        RESIZE_MODE: "resize+crop"  # Image resizing mode
+        SAMPLE_EVERY_N: 4  # Load every Nth frame
+        LOAD_RGB_ONLY: True  # Ignore polarization data if True
+        FEW_IMAGES: False  # Load only first 10 images if True
+        HIGHLIGHT_ENABLE: False  # Enable highlight detection/processing in dataset
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9  # Brightness threshold for highlight detection (0-1)
+        HIGHLIGHT_RETURN_MASK: True  # Return highlight mask in dataset output
+        HIGHLIGHT_RECT_SIZE: [1000, 1000]  # Size of highlight rectangle region [height, width]
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False  # Return highlight rectangle as RGB if True
+        HIGHLIGHT_RETURN_RECT: True  # Return highlight rectangle region if True
       
       STEREOMIS_TRACKING:
-        VAL_SCENES: ["P2_2"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 10
-        LOAD_RGB_ONLY: True
-        FEW_IMAGES: False
-        HIGHLIGHT_ENABLE: False  
-        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-        HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [800, 800]
-        HIGHLIGHT_RETURN_RECT_AS_RGB: False
-        HIGHLIGHT_RETURN_RECT: True
+        VAL_SCENES: ["P2_2"]  # Validation scene names
+        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        RESIZE_MODE: "resize+crop"  # Image resizing mode
+        SAMPLE_EVERY_N: 10  # Load every Nth frame
+        LOAD_RGB_ONLY: True  # Ignore polarization data if True
+        FEW_IMAGES: False  # Load only first 10 images if True
+        HIGHLIGHT_ENABLE: False  # Enable highlight detection/processing
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9  # Brightness threshold for highlight detection
+        HIGHLIGHT_RETURN_MASK: True  # Return highlight mask in dataset output
+        HIGHLIGHT_RECT_SIZE: [800, 800]  # Size of highlight rectangle region
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False  # Return highlight rectangle as RGB if True
+        HIGHLIGHT_RETURN_RECT: True  # Return highlight rectangle region if True
 
       CHOLEC80:
-        VAL_SCENES: ["val"]
-        TARGET_SIZE: [448,448]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 50
-        LOAD_RGB_ONLY: True
-        FEW_IMAGES: False
-        HIGHLIGHT_ENABLE: False  
-        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9
-        HIGHLIGHT_RETURN_MASK: True
-        HIGHLIGHT_RECT_SIZE: [800, 800]
-        HIGHLIGHT_RETURN_RECT_AS_RGB: False
-        HIGHLIGHT_RETURN_RECT: True
+        VAL_SCENES: ["val"]  # Validation scene names
+        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        RESIZE_MODE: "resize+crop"  # Image resizing mode
+        SAMPLE_EVERY_N: 50  # Load every Nth frame
+        LOAD_RGB_ONLY: True  # Ignore polarization data if True
+        FEW_IMAGES: False  # Load only first 10 images if True
+        HIGHLIGHT_ENABLE: False  # Enable highlight detection/processing
+        HIGHLIGHT_BRIGHTNESS_THRESHOLD: 0.9  # Brightness threshold for highlight detection
+        HIGHLIGHT_RETURN_MASK: True  # Return highlight mask in dataset output
+        HIGHLIGHT_RECT_SIZE: [800, 800]  # Size of highlight rectangle region
+        HIGHLIGHT_RETURN_RECT_AS_RGB: False  # Return highlight rectangle as RGB if True
+        HIGHLIGHT_RETURN_RECT: True  # Return highlight rectangle region if True
 
       # POLARGB:
       #   TRAIN_SCENES: "train"
@@ -135,154 +138,144 @@ parameters:
       #   SAMPLE_EVERY_N: 1
       #   LOAD_RGB_ONLY: True
 
-
   BATCH_SIZE: # Max batch size with img size 448 is 32
-    value: 30
+    value: 32  # Number of samples per batch (adjust based on GPU memory)
   NUM_WORKERS:
-    value: 8
+    value: 8  # Number of data loading worker processes (0 = main process only)
   SHUFFLE:
-    value: True
+    value: True  # Shuffle training data each epoch (False for validation/test)
   PIN_MEMORY:
-    value: True
+    value: True  # Pin memory in DataLoader for faster GPU transfer (recommended: True)
   PREFETCH_FACTOR:
-    value: 2
+    value: 2  # Number of batches to prefetch per worker (higher = more memory usage)
   
   ### HIGHLIGHTS                                                        
   MOGE_MODEL:
-    value: "Ruicheng/moge-2-vits-normal"
+    value: "Ruicheng/moge-2-vits-normal"  # MoGe model name for normal estimation (HuggingFace format)
   SURFACE_ROUGHNESS:
-    value: 8.0
+    value: 8.0  # Blinn-Phong surface roughness exponent (higher = sharper highlights)
   INTENSITY:
-    value: 1.5
-  # NORMAL_NOISE:
-  #   value: 1
-  # NORMAL_NOISE_CELLS:
-  #   value: 8
-  # NORMAL_NOISE_OCTAVES:
-  #   value: 4
-  # NORMAL_NOISE_FALLOFF:
-  #   value: 4
+    value: 1.5  # Specular highlight intensity multiplier
   LIGHT_DISTANCE_RANGE:
-    value: [0.0, 1]
+    value: [0.0, 1]  # Range for light source distance sampling [min, max] (normalized)
   LIGHT_LEFT_RIGHT_ANGLE:
-    value: [0, 360]
+    value: [0, 360]  # Range for light source horizontal angle [min, max] in degrees
   LIGHT_ABOVE_BELOW_ANGLE:
-    value: [0, 360]
+    value: [0, 360]  # Range for light source vertical angle [min, max] in degrees
   DATASET_HIGHLIGHT_DILATION:
-    value: 25
+    value: 25  # Dilation kernel size (pixels) for dataset highlight masks
   DATASET_HIGHLIGHT_THRESHOLD:
-    value: 0.93
+    value: 0.93  # Brightness threshold (0-1) for detecting highlights in dataset images
+  HIGHLIGHT_COLOR:
+    value: [1.0, 1.0, 1.0]  # RGB color for synthetic highlights (normalized 0-1)
+  CLAMP_RECONSTRUCTION:
+    value: True  # Clamp reconstructed images to [0, 1] range if True
 
   ### OPTIMIZATION                                                                      
   LEARNING_RATE:
-    value: 5.0e-4
+    value: 1.0e-4  # Base learning rate for optimizer
   WEIGHT_DECAY:   
-    value: 0.0
+    value: 0.0  # L2 regularization weight (0.0 = no weight decay)
   EPOCHS:
-    value: 100
+    value: 25  # Maximum number of training epochs
   GRADIENT_ACCUMULATION_STEPS:
-    value: 1
+    value: 1  # Number of steps to accumulate gradients before optimizer step (1 = no accumulation)
   WARMUP_STEPS:
-    value: 2
+    value: 50  # Number of warmup steps for learning rate schedule (linear warmup from 0 to LR)
   GRADIENT_CLIPPING_MAX_NORM:
-    value: 8
+    value: 8  # Maximum gradient norm for clipping (set to -1 to disable clipping)
   LR_SCHEDULER: 
     value: 
-      ONPLATEAU:
-        PATIENCE: 5
-        FACTOR: 0.1
-      # COSINE:
-      #   N_PERIODS: 5
-      STEPWISE:
-        N_STEPS: 4
-        GAMMA: 0.5
-      # EXPONENTIAL:
-      #   GAMMA: 0.5
+      ONPLATEAU:  # ReduceLROnPlateau scheduler (reduces LR when validation metric plateaus)
+        PATIENCE: 5  # Number of epochs to wait before reducing LR
+        FACTOR: 0.1  # Factor by which LR is reduced (new_lr = old_lr * factor)
+      # COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
+      #   N_PERIODS: 5  # Number of cosine periods over training
+      STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
+        N_STEPS: 4  # Number of times to reduce LR during training
+        GAMMA: 0.5  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
+      # EXPONENTIAL:  # ExponentialLR scheduler (exponential decay)
+      #   GAMMA: 0.5  # Multiplicative factor for exponential decay
 
   SWITCH_OPTIMIZER_EPOCH:
-    value: null
+    value: null  # Epoch number to switch from bootstrap to refining optimizer (null = no switch)
   OPTIMIZER_BOOTSTRAP_NAME:
-    value: "Adam" 
+    value: "Adam"  # Optimizer name for initial training phase ("Adam", "SGD", etc.)
   OPTIMIZER_REFINING_NAME:
-    value: "Adam"    
+    value: "Adam"  # Optimizer name for refining phase (used after SWITCH_OPTIMIZER_EPOCH)
   EARLY_STOPPING_PATIENCE:
-    value: 20
+    value: 20  # Number of epochs without improvement before stopping training
   SAVE_INTERVAL:
-    value: 1000
+    value: 1000  # Number of training steps between model checkpoints
   
   ### LOSS WEIGHTS (relative to the total loss, NOT NORMALIZED LATER)                                                                              
   SPECULAR_LOSS_WEIGHT:
-    value: 0.0
+    value: 0.0  # Weight for specular component reconstruction loss
   DIFFUSE_LOSS_WEIGHT:
-    value: 0.0
+    value: 0.0  # Weight for diffuse component reconstruction loss
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 1.0
+    value: 1.0  # Weight for highlight mask regression loss
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
-    value: 0.0
+    value: 0.0  # Weight for full image reconstruction loss
   SATURATION_RING_LOSS_WEIGHT:
-    value: 0.0
+    value: 0.0  # Weight for saturation ring consistency loss (around highlight regions)
   RING_KERNEL_SIZE:
-    value: 11
+    value: 11  # Kernel size (odd number) for saturation ring dilation around highlights
   RING_VAR_WEIGHT:
-    value: 0.5
+    value: 0.5  # Weight for variance matching in saturation ring loss (vs mean matching)
   RING_TEXTURE_WEIGHT:
-    value: 1.0
-  
-  ### LOSS PARAMETERS
-  # Highlight regression loss parameters
+    value: 1.0  # Weight for texture consistency term in saturation ring loss
   HLREG_W_L1:
-    value: 1.0
+    value: 1.0  # Weight for L1 loss in highlight regression
   HLREG_USE_CHARB:
-    value: True
+    value: True  # Use Charbonnier loss (smooth L1) instead of standard L1 if True
   HLREG_W_DICE:
-    value: 0.2
+    value: 0.2  # Weight for Dice loss in highlight regression (for mask overlap)
   HLREG_W_SSIM:
-    value: 0.0
+    value: 0.0  # Weight for SSIM loss in highlight regression
   HLREG_W_GRAD:
-    value: 0.0
+    value: 0.0  # Weight for gradient loss in highlight regression
   HLREG_W_TV:
-    value: 0.0  
-  # Highlight regression stabilization (optional)
+    value: 0.0  # Weight for total variation loss in highlight regression
   HLREG_BALANCE_MODE:
-    value: "auto"   # 'none' | 'auto' | 'pos_weight'
+    value: "auto"   # Class balancing mode for highlight regression: 'none' | 'auto' | 'pos_weight'
   HLREG_POS_WEIGHT:
-    value: 1.0      # used only if BALANCE_MODE == 'pos_weight'
+    value: 1.0      # Positive class weight (used only if BALANCE_MODE == 'pos_weight')
   HLREG_FOCAL_GAMMA:
-    value: 2.0      # 0.0 keeps old behavior; try 1.0-2.0 if gradients vanish
-  HIGHLIGHT_COLOR:
-    value: [1.0, 1.0, 1.0]  
-  CLAMP_RECONSTRUCTION:
-    value: True
+    value: 2.0      # Focal loss gamma parameter (0.0 = standard BCE, 1.0-2.0 helps with gradient vanishing)
   
-  # Context and regularization weights
-  WEIGHT_CONTEXT_IDENTITY:
-    value: 1.0
-  WEIGHT_RING_GRAD:
-    value: 0.0
-  WEIGHT_TV_IN_HOLE: # LEAVE TO 0.0
-    value: 0.0
-  RING_DILATE_KERNEL:
-    value: 17
   WEIGHT_TOKEN_INPAINT:
-    value: 1.0
+    value: 1.0  # Weight for token-space inpainting loss (L1 + cosine similarity in feature space)
+  #####################################################################################
+  # LEAVE ALL THESE AT 0.0 
+  #####################################################################################
+  WEIGHT_CONTEXT_IDENTITY:
+    value: 0.0  # Weight for L1 loss on context (non-masked) regions (identity preservation)
+  WEIGHT_RING_GRAD:
+    value: 0.0  # Weight for gradient matching loss on saturation ring
+  WEIGHT_TV_IN_HOLE:
+    value: 0.0  # Weight for total variation loss inside masked/hole regions
+  #####################################################################################
+  RING_DILATE_KERNEL:
+    value: 17  # Dilation kernel size (odd number) for creating ring mask around highlights
   TOKEN_FEAT_ALPHA:
-    value: 0.5
+    value: 0.5  # Mixing factor for token feature loss: alpha * L1 + (1-alpha) * (1-cosine_sim)
 
   ### LOGGING, RESULTS AND WANDB                                                                 
   LOG_INTERVAL:
-    value: 1
+    value: 1  # Number of training steps between console log outputs
   WANDB_LOG_INTERVAL:
-    value: 1
+    value: 1  # Number of training steps between WandB metric logs
   IMAGE_LOG_INTERVAL:
-    value: 2
+    value: 5  # Number of training steps between image logging to WandB
   NO_WANDB:
-    value: False
+    value: False  # Disable WandB logging if True (useful for local debugging)
   MODEL_WATCHER_FREQ_WANDB:
-    value: 50
+    value: 50  # Frequency (in steps) for logging model parameter histograms to WandB
   WANDB_ENTITY:
-    value: "unreflect-anything"
+    value: "unreflect-anything"  # WandB organization/entity name
   WANDB_PROJECT:
-    value: "UnReflectAnything"
+    value: "UnReflectAnything"  # WandB project name
   NOTES:
-    value: "patch_mask_sup_bool = (patch_inpaint_mask.bool() & patch_supervision_mask.bool()) + DEC FINETUNE"
+    value: "Baseline Prior"  # Notes/description for this training run
   
