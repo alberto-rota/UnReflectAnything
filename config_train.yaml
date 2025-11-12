@@ -19,13 +19,13 @@ parameters:
           REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]  # Output channels for each decoder stage (DPT-style reassembly)
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]  # Spatial upsampling factors for each stage
           READOUT_TYPE: "ignore"  # Readout type for DPT decoder ("ignore", "project", etc.)
-          # FROM_PRETRAINED: "weights/rgb_decoder.pth"  # Path to pretrained decoder weights (optional)
+          FROM_PRETRAINED: "weights/rgb_decoder.pth"  # Path to pretrained decoder weights (optional)
           USE_BN: False  # Use batch normalization in decoder
           DROPOUT: 0.1  # Dropout rate in decoder layers
           OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
           OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
-          DECODER_LR: 1.0e-4 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
-          NUM_FUSION_BLOCKS_TRAINABLE: 3  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
+          DECODER_LR: 1.0e-3 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
+          NUM_FUSION_BLOCKS_TRAINABLE: 1  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
           TRAIN_RGB_HEAD: True  # Whether to train RGB head (true/false, null = train if DECODER_LR != 0)
         highlight:
           USE_FILM: False  # Enable FiLM conditioning in highlight decoder
@@ -54,7 +54,7 @@ parameters:
         LOCAL_PRIOR_KERNEL: 5  # Kernel size for local prior blending (> 1)
         SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training  
   INPAINT_MASK_DILATION:
-    value: 11  # Dilation kernel size (pixels) for inpaint mask - Must be odd
+    value: 17  # Dilation kernel size (pixels) for inpaint mask - Must be odd
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
 
@@ -66,7 +66,7 @@ parameters:
         TARGET_SIZE: [448,448]  # Target image size [height, width] in pixels
         RESIZE_MODE: "resize+crop"  # Image resizing mode: "resize", "crop", "resize+crop", or "pad"
         FEW_IMAGES: False  # If True, load only first 10 images per scene (for quick debugging)
-        SAMPLE_EVERY_N: 4  # Load every Nth frame from each scene (1 = all frames, 4 = every 4th frame)
+        SAMPLE_EVERY_N: 2  # Load every Nth frame from each scene (1 = all frames, 4 = every 4th frame)
         LOAD_RGB_ONLY: True  # If True, ignore polarization data and load only RGB images
         
       HOUSECAT6D:
@@ -74,7 +74,7 @@ parameters:
         TARGET_SIZE: [448,448]  # Target image size [height, width]
         RESIZE_MODE: "resize+crop"  # Image resizing mode
         FEW_IMAGES: False  # Load only first 10 images if True
-        SAMPLE_EVERY_N: 4  # Load every Nth frame
+        SAMPLE_EVERY_N: 2  # Load every Nth frame
         LOAD_RGB_ONLY: True  # Ignore polarization data if True
 
       CROMO:
@@ -83,7 +83,7 @@ parameters:
         TARGET_SIZE: [448,448]  # Target image size [height, width]
         RESIZE_MODE: "resize"  # Image resizing mode
         FEW_IMAGES: False  # Load only first 10 images if True
-        SAMPLE_EVERY_N: 8  # Load every Nth frame
+        SAMPLE_EVERY_N: 4  # Load every Nth frame
         LOAD_RGB_ONLY: True  # Ignore polarization data if True
     
       PSD:
@@ -99,7 +99,7 @@ parameters:
         VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]  # Validation scene names
         TARGET_SIZE: [448,448]  # Target image size [height, width]
         RESIZE_MODE: "resize+crop"  # Image resizing mode
-        SAMPLE_EVERY_N: 4  # Load every Nth frame
+        SAMPLE_EVERY_N: 16  # Load every Nth frame
         LOAD_RGB_ONLY: True  # Ignore polarization data if True
         FEW_IMAGES: False  # Load only first 10 images if True
         HIGHLIGHT_ENABLE: False  # Enable highlight detection/processing in dataset
@@ -113,7 +113,7 @@ parameters:
         VAL_SCENES: ["P2_2"]  # Validation scene names
         TARGET_SIZE: [448,448]  # Target image size [height, width]
         RESIZE_MODE: "resize+crop"  # Image resizing mode
-        SAMPLE_EVERY_N: 10  # Load every Nth frame
+        SAMPLE_EVERY_N: 20  # Load every Nth frame
         LOAD_RGB_ONLY: True  # Ignore polarization data if True
         FEW_IMAGES: False  # Load only first 10 images if True
         HIGHLIGHT_ENABLE: False  # Enable highlight detection/processing
@@ -146,7 +146,7 @@ parameters:
       #   LOAD_RGB_ONLY: True
 
   BATCH_SIZE: # Max batch size with img size 448 is 32
-    value: 32  # Number of samples per batch (adjust based on GPU memory)
+    value: 16  # Number of samples per batch (adjust based on GPU memory)
   NUM_WORKERS:
     value: 8  # Number of data loading worker processes (0 = main process only)
   SHUFFLE:
@@ -303,4 +303,4 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"  # WandB project name
   NOTES:
-    value: "FTuned TKI. Seam + HPen. 3 DPT layers unfrozen"  # Notes/description for this training run
+    value: "Final - TKI Learns, Decoder Learns faster"  # Notes/description for this training run

@@ -197,7 +197,7 @@ def create_model_from_config(config: DotMap, device: torch.device):
             "use_final_norm": token_inpainter_config.get("USE_FINAL_NORM", True),
             "use_local_prior": token_inpainter_config.get("USE_LOCAL_PRIOR", True),
             "local_prior_weight": token_inpainter_config.get("LOCAL_PRIOR_WEIGHT", 0.5),
-            "local_prior_kernel": token_inpainter_config.get("LOCAL_PRIOR_KERNEL", 3),
+            "local_prior_kernel": 7,#token_inpainter_config.get("LOCAL_PRIOR_KERNEL", 5),
             "seed_noise_std": token_inpainter_config.get("SEED_NOISE_STD", 0.01),
         }
         model_kwargs["token_inpainter_cfg"] = token_inpainter_cfg
