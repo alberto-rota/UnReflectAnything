@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from transformers import AutoImageProcessor, AutoModel
 
 from logger import get_logger
-from models_utils import pixel_mask_to_patch_mask
+from models_utils import pixel_mask_to_patch_mask, feather_token_mask
 
 logger = get_logger(__name__).set_context("MODEL")
 
@@ -1387,6 +1387,11 @@ class UnReflect_Model(nn.Module):
                 is_convnext = "convnext" in model_name
 
         # ---- RGB (DINOv3 or DINOv3_ConvNext) ----
+        # Extract encoder learning rate before building encoder
+        encoder_lr = None
+        if isinstance(dinov3, dict):
+            encoder_lr = dinov3.get("encoder_lr", dinov3.get("RGB_ENCODER_LR", None))
+        
         # Accept either an instance or a DINOv3(**cfg) / DINOv3_ConvNext(**cfg) dict
         if is_convnext:
             self.dinov3 = _build(dinov3, DINOv3_ConvNext)
@@ -1394,6 +1399,21 @@ class UnReflect_Model(nn.Module):
         else:
             self.dinov3 = _build(dinov3, DINOv3)
             self.use_convnext = False
+
+        # Freeze encoder if encoder_lr is explicitly 0.0
+        if encoder_lr is not None and encoder_lr == 0.0:
+            for param in self.dinov3.parameters():
+                param.requires_grad = False
+            self.dinov3.eval()
+            logger.info("RGB Encoder frozen due to RGB_ENCODER_LR=0.0")
+        else:
+            # Ensure encoder is trainable if LR is set (or None, which will be handled in optimizer)
+            self.dinov3.train()
+            if encoder_lr is not None:
+                logger.info(f"RGB Encoder trainable with RGB_ENCODER_LR={encoder_lr}")
+
+        # Store encoder learning rate for optimizer setup
+        self.encoder_lr = encoder_lr
 
         self.image_size = self.dinov3.config["image_size"]
         self.patch_size = patch_size
@@ -1468,6 +1488,15 @@ class UnReflect_Model(nn.Module):
                 )
                 # Extract decoder learning rate
                 decoder_lr = dec.get("decoder_lr", dec.get("DECODER_LR", None))
+                # Extract selective freezing parameters (before building config)
+                num_fusion_blocks_trainable = dec.get(
+                    "num_fusion_blocks_trainable", 
+                    dec.get("NUM_FUSION_BLOCKS_TRAINABLE", None)
+                )
+                train_rgb_head = dec.get(
+                    "train_rgb_head",
+                    dec.get("TRAIN_RGB_HEAD", None)
+                )
                 # Determine whether to build FiLM-conditioned or standard decoder
                 use_film = bool(dec.get("use_film", dec.get("USE_FILM", False)))
                 # Build config dict for the decoder class
@@ -1492,6 +1521,10 @@ class UnReflect_Model(nn.Module):
                 config.pop("from_pretrained", None)
                 config.pop("FROM_PRETRAINED", None)
                 config.pop("DECODER_LR", None)
+                config.pop("num_fusion_blocks_trainable", None)
+                config.pop("NUM_FUSION_BLOCKS_TRAINABLE", None)
+                config.pop("train_rgb_head", None)
+                config.pop("TRAIN_RGB_HEAD", None)
 
                 # Create decoder instance - use ConvNext decoder if using ConvNext encoder
                 if use_film:
@@ -1579,6 +1612,22 @@ class UnReflect_Model(nn.Module):
                         filtered_state_dict, strict=False
                     )
                     
+                    # Print confirmation about weight loading status
+                    total_model_keys = len(model_state_dict)
+                    loaded_keys = len(filtered_state_dict)
+                    has_issues = bool(incompatible_keys or missing_keys or unexpected_keys)
+                    
+                    if not has_issues and loaded_keys == total_model_keys:
+                        logger.info(f"✓ Decoder '{decoder_name}': Successfully loaded all {loaded_keys} state dict keys from {pretrained_path}")
+                    else:
+                        logger.info(f"⚠ Decoder '{decoder_name}': Loaded {loaded_keys}/{total_model_keys} state dict keys from {pretrained_path}")
+                        if incompatible_keys:
+                            logger.info(f"  - {len(incompatible_keys)} keys had incompatible shapes and were skipped")
+                        if missing_keys:
+                            logger.info(f"  - {len(missing_keys)} keys were missing from checkpoint")
+                        if unexpected_keys:
+                            logger.info(f"  - {len(unexpected_keys)} unexpected keys in checkpoint")
+                    
                     # Log warnings about incompatible keys
                     if incompatible_keys:
                         import warnings
@@ -1595,10 +1644,10 @@ class UnReflect_Model(nn.Module):
                             f"Some keys were missing when loading pretrained decoder from {pretrained_path}: {missing_keys[: min(5, len(missing_keys))]}..."
                         )
 
-                    # Freeze all decoder parameters
+                    # Freeze all decoder parameters initially (will be selectively unfrozen below if needed)
                     for param in decoder.parameters():
                         param.requires_grad = False
-                    decoder.eval()  # Set to eval mode for frozen decoder
+                    # Don't set to eval mode yet - we may selectively unfreeze below
                     logger.info(
                         f"Loaded pre-trained decoder weights from {pretrained_path}"
                     )
@@ -1613,12 +1662,94 @@ class UnReflect_Model(nn.Module):
                         f"Decoder '{decoder_name}' frozen due to DECODER_LR=0.0"
                     )
                 else:
-                    for param in decoder.parameters():
-                        param.requires_grad = True
-                    decoder.train()  
-                    logger.info(
-                        f"Decoder '{decoder_name}' un-frozen due to DECODER_LR={decoder_lr}"
-                    )
+                    # Apply selective freezing if parameters are specified
+                    if num_fusion_blocks_trainable is not None or train_rgb_head is not None:
+                        # If pretrained weights were loaded, we already froze everything above
+                        # Otherwise, freeze everything first
+                        if not (pretrained_path and pretrained_path != ""):
+                            for param in decoder.parameters():
+                                param.requires_grad = False
+                        
+                        # Then selectively unfreeze based on config
+                        # Freeze/unfreeze reassemble layers (typically frozen)
+                        for param in decoder.reassemble_layers.parameters():
+                            param.requires_grad = False
+                        
+                        # Handle fusion blocks: train the last N blocks (highest indices)
+                        # fusion_blocks[3] is smallest scale, fusion_blocks[0] is largest scale
+                        if num_fusion_blocks_trainable is not None:
+                            num_fusion_blocks_trainable = int(num_fusion_blocks_trainable)
+                            num_blocks = len(decoder.fusion_blocks)
+                            if num_fusion_blocks_trainable < 0 or num_fusion_blocks_trainable > num_blocks:
+                                raise ValueError(
+                                    f"NUM_FUSION_BLOCKS_TRAINABLE must be between 0 and {num_blocks}, "
+                                    f"got {num_fusion_blocks_trainable}"
+                                )
+                            # Train the last N blocks (from the end)
+                            # e.g., if num_fusion_blocks_trainable=2, train blocks [2] and [3]
+                            start_idx = num_blocks - num_fusion_blocks_trainable
+                            for i in range(start_idx, num_blocks):
+                                for param in decoder.fusion_blocks[i].parameters():
+                                    param.requires_grad = True
+                            logger.info(
+                                f"Decoder '{decoder_name}': Training {num_fusion_blocks_trainable} "
+                                f"fusion blocks (indices {start_idx} to {num_blocks-1})"
+                            )
+                        else:
+                            # If not specified, train all fusion blocks
+                            for fusion_block in decoder.fusion_blocks:
+                                for param in fusion_block.parameters():
+                                    param.requires_grad = True
+                        
+                        # Handle RGB head
+                        if train_rgb_head is not None:
+                            train_rgb_head = bool(train_rgb_head)
+                            # Check if it's ConvNext decoder (has split head stages) or standard decoder
+                            if hasattr(decoder, "rgb_head_stage1"):
+                                # ConvNext decoder: has rgb_head_stage1, stage2, stage3, final
+                                rgb_head_modules = [
+                                    decoder.rgb_head_stage1,
+                                    decoder.rgb_head_stage2,
+                                    decoder.rgb_head_stage3,
+                                    decoder.rgb_head_final,
+                                ]
+                            elif hasattr(decoder, "rgb_head"):
+                                # Standard decoder: has single rgb_head Sequential
+                                rgb_head_modules = [decoder.rgb_head]
+                            else:
+                                # FiLM decoder also has rgb_head
+                                rgb_head_modules = [decoder.rgb_head]
+                            
+                            for rgb_head_module in rgb_head_modules:
+                                for param in rgb_head_module.parameters():
+                                    param.requires_grad = train_rgb_head
+                            
+                            logger.info(
+                                f"Decoder '{decoder_name}': RGB head trainable = {train_rgb_head}"
+                            )
+                        else:
+                            # If not specified, train RGB head by default
+                            if hasattr(decoder, "rgb_head_stage1"):
+                                for module in [decoder.rgb_head_stage1, decoder.rgb_head_stage2, 
+                                             decoder.rgb_head_stage3, decoder.rgb_head_final]:
+                                    for param in module.parameters():
+                                        param.requires_grad = True
+                            elif hasattr(decoder, "rgb_head"):
+                                for param in decoder.rgb_head.parameters():
+                                    param.requires_grad = True
+                        
+                        decoder.train()
+                        logger.info(
+                            f"Decoder '{decoder_name}' selectively frozen/unfrozen"
+                        )
+                    else:
+                        # No selective freezing specified, train everything
+                        for param in decoder.parameters():
+                            param.requires_grad = True
+                        decoder.train()  
+                        logger.info(
+                            f"Decoder '{decoder_name}' un-frozen due to DECODER_LR={decoder_lr}"
+                        )
                 # Store decoder_lr for optimizer setup (will be None if not specified)
                 decoder.decoder_lr = decoder_lr
                 return decoder
@@ -1895,6 +2026,9 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
         self.token_inpainter_module_name = token_inpainter_cfg.pop(
             "token_inpainter_module", "models"
         )
+        
+        # Extract pretrained path before filtering (not passed to constructor)
+        pretrained_path = token_inpainter_cfg.pop("from_pretrained", "")
 
         # Dynamically import the module
         token_inpainter_module = importlib.import_module(self.token_inpainter_module_name)
@@ -1914,6 +2048,121 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
 
         # Instantiate the TokenInpainter with filtered config
         self.token_inpaint = TokenInpainterClass(dim=dim, **filtered_cfg)
+        
+        # Load pretrained weights if path is specified and not empty
+        if pretrained_path and pretrained_path != "":
+            if not os.path.exists(pretrained_path):
+                raise FileNotFoundError(
+                    f"Pretrained token inpainter weights not found at: {pretrained_path}"
+                )
+
+            # Load checkpoint (handle both raw state_dict and checkpoint formats)
+            checkpoint = torch.load(
+                pretrained_path, map_location="cpu", weights_only=False
+            )
+
+            # Extract state dict (handle both formats)
+            state_dict = checkpoint
+            if isinstance(checkpoint, dict):
+                # Try common checkpoint keys
+                state_dict = (
+                    checkpoint.get("model_state_dict")
+                    or checkpoint.get("state_dict")
+                    or checkpoint
+                )
+
+            # Strip common prefixes if state dict was saved as part of larger model
+            # Handle cases like "token_inpaint.weight" -> "weight" or "token_inpainter.weight" -> "weight"
+            if isinstance(state_dict, dict) and len(state_dict) > 0:
+                sample_key = next(iter(state_dict.keys()))
+                if "." in sample_key:
+                    # Try to find token inpainter-specific prefix pattern
+                    prefix_options = [
+                        "token_inpaint.",
+                        "token_inpainter.",
+                    ]
+                    for prefix in prefix_options:
+                        # Check if any keys start with this prefix
+                        matching_keys = [
+                            k for k in state_dict.keys() if k.startswith(prefix)
+                        ]
+                        if matching_keys:
+                            # Strip token inpainter prefix from matching keys, keep others as-is
+                            stripped_dict = {}
+                            for k, v in state_dict.items():
+                                if k.startswith(prefix):
+                                    stripped_dict[k[len(prefix) :]] = v
+                                else:
+                                    stripped_dict[k] = v
+                            state_dict = stripped_dict
+                            break
+
+            # Load weights with strict=False to handle partial matches
+            # Filter out keys with shape mismatches before loading
+            filtered_state_dict = {}
+            incompatible_keys = []
+            model_state_dict = self.token_inpaint.state_dict()
+            
+            for key, value in state_dict.items():
+                if key in model_state_dict:
+                    model_shape = model_state_dict[key].shape
+                    checkpoint_shape = value.shape
+                    if model_shape == checkpoint_shape:
+                        filtered_state_dict[key] = value
+                    else:
+                        incompatible_keys.append(
+                            f"{key}: checkpoint shape {checkpoint_shape} != model shape {model_shape}"
+                        )
+                else:
+                    # Key not in model, skip it
+                    pass
+            
+            # Load filtered state dict
+            missing_keys, unexpected_keys = self.token_inpaint.load_state_dict(
+                filtered_state_dict, strict=False
+            )
+            
+            # Print confirmation about weight loading status
+            total_model_keys = len(model_state_dict)
+            loaded_keys = len(filtered_state_dict)
+            has_issues = bool(incompatible_keys or missing_keys or unexpected_keys)
+            
+            if not has_issues and loaded_keys == total_model_keys:
+                logger.info(f"✓ Token Inpainter: Successfully loaded all {loaded_keys} state dict keys from {pretrained_path}")
+            else:
+                logger.info(f"⚠ Token Inpainter: Loaded {loaded_keys}/{total_model_keys} state dict keys from {pretrained_path}")
+                if incompatible_keys:
+                    logger.info(f"  - {len(incompatible_keys)} keys had incompatible shapes and were skipped")
+                if missing_keys:
+                    logger.info(f"  - {len(missing_keys)} keys were missing from checkpoint")
+                if unexpected_keys:
+                    logger.info(f"  - {len(unexpected_keys)} unexpected keys in checkpoint")
+            
+            # Log warnings about incompatible keys
+            if incompatible_keys:
+                import warnings
+                warnings.warn(
+                    f"Some weights from {pretrained_path} had incompatible shapes and were skipped:\n"
+                    + "\n".join(incompatible_keys[:10])  # Show first 10
+                    + (f"\n... and {len(incompatible_keys) - 10} more" if len(incompatible_keys) > 10 else "")
+                    + "\nThis is likely because the pretrained model used different architecture parameters."
+                )
+            
+            if missing_keys:
+                logger.warning(
+                    f"Missing keys when loading pretrained token inpainter from {pretrained_path}: {missing_keys[:5]}"
+                    + (f" (and {len(missing_keys) - 5} more)" if len(missing_keys) > 5 else "")
+                )
+            
+            if unexpected_keys:
+                logger.warning(
+                    f"Unexpected keys when loading pretrained token inpainter from {pretrained_path}: {unexpected_keys[:5]}"
+                    + (f" (and {len(unexpected_keys) - 5} more)" if len(unexpected_keys) > 5 else "")
+                )
+            
+            logger.info(
+                f"Loaded pretrained token inpainter weights from {pretrained_path}"
+            )
 
     def extract_tokens(self, image):
         rgb_in = self.dinov3.preprocess_image(image)
@@ -1921,6 +2170,8 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
         return tokens_list
 
     def forward(self, model_input_dict):
+        if "inpaint_mask_dilation" not in model_input_dict:
+            model_input_dict["inpaint_mask_dilation"] = 5
         x = model_input_dict["rgb"]  # (B,3,H,W)
         rgb_in = self.dinov3.preprocess_image(x)
         tokens_list = self.dinov3(rgb_in)[
@@ -1936,60 +2187,70 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
         outputs["highlight"] = hl_soft
 
         ### SECOND: Construct patch-level mask - From the prediction or override from GT if provided
-        if "patch_mask_override" in model_input_dict:
-            patchmask = pixel_mask_to_patch_mask(
-                model_input_dict["patch_mask_override"],
-                patch_size=self.patch_size,
-                threshold=0.1,
-                invert=False,
-                soft=True if "soft" in self.token_inpainter_class_name.lower() else False
-            )
-        else:
-            patchmask = pixel_mask_to_patch_mask(
-                outputs["highlight"],
-                patch_size=self.patch_size,
-                threshold=0.1,
-                invert=False,
-                soft=True if "soft" in self.token_inpainter_class_name.lower() else False
-            )
+        # Get the initial mask (GT override if present, else from highlight prediction)
+        pixel_inpaint_mask = model_input_dict.get("inpaint_mask_override", outputs["highlight"])
+        pixel_inpaint_mask = torch.nn.functional.max_pool2d(
+            pixel_inpaint_mask.float(),
+            kernel_size=model_input_dict["inpaint_mask_dilation"],
+            stride=1,
+            padding=model_input_dict["inpaint_mask_dilation"] // 2,
+        ) > 0
+        patch_inpaint_mask = pixel_mask_to_patch_mask(
+            pixel_inpaint_mask,
+            patch_size=self.patch_size,
+            threshold=0.1,
+            invert=False,
+            soft="soft" in self.token_inpainter_class_name.lower()
+        )
 
-        # patchmask = 1 : MUST IMPAINT THE TOKEN
-        # patchmask = 0 : IS TEACHER TOKEN
-        outputs["patch_mask"] = patchmask
+        if "soft" in self.token_inpainter_class_name.lower():
+            patch_inpaint_mask = feather_token_mask(patch_inpaint_mask, radius_tokens=1, smoothstep=True)
+
+        # 1 if the patch needs to be inpainted, 0 if not
+        outputs["patch_mask"] = patch_inpaint_mask
 
         ### THIRD: Inpaint the tokens in the mask
         # Detect if using soft masks (float) or boolean masks
-        is_soft_mask = patchmask.dtype.is_floating_point
+        is_soft_mask = patch_inpaint_mask.dtype.is_floating_point
         
-        completed_tokens = []
+        completed_tokens = []  # With gradients - for token loss
+        completed_tokens_detached = []  # Detached - for decoders (prevents decoder loss from affecting TokenInpainter)
         for n, T in enumerate(tokens_list):  # (B,N,C)
             # Prepare visibility mask for token inpainter
-            # TokenInpainter expects: True/1.0 = visible/teacher, False/0.0 = masked/inpaint
-            if is_soft_mask:
-                visibility_mask = 1.0 - patchmask  # [B, N] float in [0,1]
-            else:
-                visibility_mask = torch.logical_not(patchmask)  # [B, N] bool
             
-            T_inpainted = self.token_inpaint(T, visibility_mask)  # refined all tokens
+            #### THIS WAS WRONG TokenInpainter expects: True/1.0 = visible/teacher, False/0.0 = masked/inpaint
+            if is_soft_mask:
+                visibility_mask = 1.0 - patch_inpaint_mask  # [B, N] float in [0,1]
+            else:
+                visibility_mask = torch.logical_not(patch_inpaint_mask)  # [B, N] bool
+            
+            T_inpainted = self.token_inpaint(T, visibility_mask)
             
             # Blend: keep teacher tokens on context; use predicted tokens on masked patches
             if is_soft_mask:
-                # Soft blending: patchmask=1.0 → use T_inpainted, patchmask=0.0 → use T
-                patchmask_expanded = patchmask.unsqueeze(-1)  # [B, N, 1]
-                T_comp = patchmask_expanded * T_inpainted + (1.0 - patchmask_expanded) * T  # (B,N,C)
+                # Soft blending: patch_inpaint_mask=1.0 → use T_inpainted, patch_inpaint_mask=0.0 → use T
+                patch_inpaint_mask_expanded = patch_inpaint_mask.unsqueeze(-1)  # [B, N, 1]
+                T_comp = patch_inpaint_mask_expanded * T_inpainted + (1.0 - patch_inpaint_mask_expanded) * T  # (B,N,C)
             else:
-                # Boolean selection: use torch.where
+                # Putting the inpainted tokens where the patch_inpaint_mask is 1
                 T_comp = torch.where(
-                    patchmask.unsqueeze(-1), T_inpainted, T
+                    patch_inpaint_mask.unsqueeze(-1), T_inpainted, T
                 )  # (B,N,C)
+            
+            # Store with gradients for token loss
             completed_tokens.append(T_comp)
-
-        outputs["tokens_inpainted"] = T_inpainted
+            # Store detached version for decoders (prevents decoder loss gradients from reaching TokenInpainter)
+            completed_tokens_detached.append(T_comp.detach())
+            
+        # Store tokens_completed WITH gradients for token loss computation
         outputs["tokens_completed"] = completed_tokens
-        # 4) Decode with completed tokens (do NOT pass mask to decoder)
+        # Store tokens_inpainted for potential direct supervision (if needed)
+        outputs["tokens_inpainted"] = T_inpainted
+        
+        # 4) Decode with DETACHED completed tokens to prevent decoder loss from affecting TokenInpainter
         for name, dec in self.decoders.items():
             if name == "highlight":
                 continue
-            outputs[name] = dec(completed_tokens)
+            outputs[name] = dec(completed_tokens_detached)
 
         return outputs

@@ -90,6 +90,8 @@ def create_model_from_config(config: DotMap, device: torch.device):
         ),
         "return_as_feature_maps": is_convnext,  # ConvNeXt should return spatial maps
         "return_cls_token": False,
+        # Learning rate for RGB encoder - if 0, encoder will be frozen; otherwise sets its learning rate
+        "encoder_lr": rgb_encoder_config.get("RGB_ENCODER_LR", None),
     }
 
     # POL Encoder configuration
@@ -185,6 +187,8 @@ def create_model_from_config(config: DotMap, device: torch.device):
         token_inpainter_cfg = {
             "token_inpainter_class": token_inpainter_config.get("TOKEN_INPAINTER_CLASS", "TokenInpainter"),
             "token_inpainter_module": token_inpainter_config.get("TOKEN_INPAINTER_MODULE", "models"),
+            # Path to pretrained weights - if set and not empty, token inpainter will be loaded
+            "from_pretrained": token_inpainter_config.get("FROM_PRETRAINED", ""),
             # TokenInpainter parameters (will be passed to the class constructor)
             "depth": token_inpainter_config.get("DEPTH", 4),
             "heads": token_inpainter_config.get("HEADS", 16),
@@ -193,6 +197,7 @@ def create_model_from_config(config: DotMap, device: torch.device):
             "use_final_norm": token_inpainter_config.get("USE_FINAL_NORM", True),
             "use_local_prior": token_inpainter_config.get("USE_LOCAL_PRIOR", True),
             "local_prior_weight": token_inpainter_config.get("LOCAL_PRIOR_WEIGHT", 0.5),
+            "local_prior_kernel": token_inpainter_config.get("LOCAL_PRIOR_KERNEL", 3),
             "seed_noise_std": token_inpainter_config.get("SEED_NOISE_STD", 0.01),
         }
         model_kwargs["token_inpainter_cfg"] = token_inpainter_cfg
@@ -207,7 +212,7 @@ def create_model_from_config(config: DotMap, device: torch.device):
             dynamic=config.get("COMPILE_DYNAMIC", None)
         )
         end_time = time.time()
-        logger.info(f"Torch Compile time: {end_time - start_time:.2f} seconds")
+        logger.info(f"Torch Compile time: {end_time - start_time:.2f} seconds",context="MODEL")
     torch.cuda.empty_cache()
     # from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
     # from models import DINOv3

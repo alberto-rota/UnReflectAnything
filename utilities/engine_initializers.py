@@ -119,7 +119,7 @@ def hyperparameters(config):
         "GRADIENT_ACCUMULATION_STEPS", 1
     )  # Gradient accumulation steps, default to 1
     warmup_steps = config.get(
-        "WARMUP_STEPS", 0
+        "WARMUP", 0
     )  # Warmup steps for learning rate, default to 0
     depth_scale_factor = config.get(
         "DEPTH_SCALE_FACTOR", 40
@@ -162,106 +162,168 @@ def hyperparameters(config):
 
 
 def optimizers(model, config):
-    """Initialize optimizers and related components"""
+    """Initialize optimizers and related components
+    
+    Each component must have an explicit learning rate specified:
+    - RGB_ENCODER_LR: Learning rate for RGB encoder (DINOv3)
+    - TOKEN_INPAINTER_LR: Learning rate for token inpainter
+    - DECODER_LR: Learning rate for each decoder (specified per decoder)
+    
+    If a component's LR is set to 0.0, that component will be frozen.
+    If a component's LR is None, an error will be raised.
+    """
     # Main optimizer
+    logger.set_context("OPTIMIZATION")
     optimizer_class = getattr(optimization, config.get("OPTIMIZER_BOOTSTRAP_NAME"))
-    base_lr = config.get("LEARNING_RATE")
     weight_decay = config.get("WEIGHT_DECAY")
     
-    # Get token inpainter learning rate from nested config structure
-    # Try MODEL.value.TOKEN_INPAINTER.TOKEN_INPAINTER_LR first, then fallback to old location
-    token_lr = None  # Track if we found it in nested structure
-    try:
-        # Try nested structure first (MODEL.value.TOKEN_INPAINTER.TOKEN_INPAINTER_LR)
-        model_config = config.get("MODEL", {})
-        if isinstance(model_config, dict):
-            model_value = model_config.get("value", {})
-            if isinstance(model_value, dict):
-                token_inpainter_config = model_value.get("TOKEN_INPAINTER", {})
-                if isinstance(token_inpainter_config, dict):
-                    token_inpainter_lr = token_inpainter_config.get("TOKEN_INPAINTER_LR")
-                    if token_inpainter_lr is not None:
-                        token_lr = token_inpainter_lr
-    except (AttributeError, KeyError, TypeError):
-        pass
+    # Get learning rates directly from config (consistent access pattern)
+    encoder_lr = config.MODEL.RGB_ENCODER.RGB_ENCODER_LR
+    token_lr = config.MODEL.TOKEN_INPAINTER.TOKEN_INPAINTER_LR
     
-    # Fallback to old location if not found in nested structure, or use base_lr as final default
+    # Get decoder-specific learning rates from config
+    decoder_lrs = {}
+    decoders_config = config.MODEL.DECODERS
+    for decoder_name in decoders_config.keys():
+        decoder_lr = decoders_config[decoder_name].DECODER_LR
+        decoder_lrs[decoder_name] = decoder_lr
+    
+    # Validate that all components have explicit learning rates
+    missing_lrs = []
+    if encoder_lr is None:
+        missing_lrs.append("RGB_ENCODER_LR")
     if token_lr is None:
-        token_lr = config.get("LEARNING_RATE_TOKEN_INPAINTER", base_lr)
-
-    # Check if model has decoder-specific learning rates
-    decoder_lrs = getattr(model, "decoder_lrs", {})
+        missing_lrs.append("TOKEN_INPAINTER_LR")
+    for decoder_name, decoder_lr in decoder_lrs.items():
+        if decoder_lr is None:
+            missing_lrs.append(f"DECODER_LR for '{decoder_name}'")
+    
+    if missing_lrs:
+        raise ValueError(
+            f"All components must have explicit learning rates specified. "
+            f"Missing learning rates for: {', '.join(missing_lrs)}. "
+            f"Please set these in the config file. Use 0.0 to freeze a component."
+        )
     
     # Build param groups deterministically
+    encoder_params = []
     token_params = []
-    decoder_param_groups = {}  # decoder_name -> list of params (only for decoders with custom LR)
-    other_params = []
+    decoder_param_groups = {}  # decoder_name -> list of params
     
     for name, p in model.named_parameters():
-        if not p.requires_grad:
-            continue
-        if name.startswith("token_inpaint."):
+        # if not p.requires_grad:
+        #     continue
+        if name.startswith("dinov3."):
+            encoder_params.append(p)
+        elif name.startswith("token_inpaint."):
             token_params.append(p)
         elif name.startswith("decoders."):
             # Extract decoder name from parameter name (format: "decoders.{decoder_name}.{rest}")
             parts = name.split(".")
             if len(parts) >= 2:
                 decoder_name = parts[1]
-                # Check if this decoder has a custom (non-None) learning rate
-                decoder_lr = decoder_lrs.get(decoder_name, None)
-                if decoder_lr is not None:
-                    # Decoder has custom LR - add to separate group
-                    if decoder_name not in decoder_param_groups:
-                        decoder_param_groups[decoder_name] = []
-                    decoder_param_groups[decoder_name].append(p)
-                else:
-                    # Decoder has no custom LR (None/unspecified) - use base LR with other params
-                    other_params.append(p)
+                # All decoders must have explicit LR (already validated above)
+                if decoder_name not in decoder_param_groups:
+                    decoder_param_groups[decoder_name] = []
+                decoder_param_groups[decoder_name].append(p)
             else:
-                # Fallback: add to other_params if format is unexpected
-                other_params.append(p)
+                raise ValueError(f"Unexpected decoder parameter name format: {name}")
         else:
-            other_params.append(p)
+            # Other parameters (shouldn't exist, but handle gracefully)
+            logger.warning(f"Parameter '{name}' does not belong to any recognized component. "
+                          f"It will not be included in optimizer parameter groups.")
 
-    # Build parameter groups list
+    # Build parameter groups list with component names for tracking
     param_groups = []
+    param_group_components = []  # Track which component each group belongs to
     
-    # Add token inpainter group if it has parameters
-    if len(token_params) > 0:
-        param_groups.append({
-            "params": token_params,
-            "lr": token_lr,
-            "weight_decay": weight_decay,
-        })
-    
-    # Add decoder groups with their specific learning rates (only for decoders with custom LR)
-    for decoder_name, decoder_params in decoder_param_groups.items():
-        if len(decoder_params) > 0:
-            decoder_lr = decoder_lrs[decoder_name]  # Already checked to be non-None above
+    # Add encoder group if it has parameters and LR is not 0.0
+    if len(encoder_params) > 0:
+        if encoder_lr == 0.0:
+            # Double-check: encoder should already be frozen, but ensure it
+            for p in encoder_params:
+                p.requires_grad = False
+            # logger.info("RGB Encoder: FROZEN (RGB_ENCODER_LR=0.0)")
+        else:
             param_groups.append({
-                "params": decoder_params,
-                "lr": decoder_lr,
+                "params": encoder_params,
+                "lr": encoder_lr,
                 "weight_decay": weight_decay,
             })
+            param_group_components.append("RGB Encoder")
+            # logger.info(f"RGB Encoder: LR={encoder_lr:.2e}")
     
-    # Add other parameters group (includes decoders without custom LR)
-    if len(other_params) > 0:
-        param_groups.append({
-            "params": other_params,
-            "lr": base_lr,
-            "weight_decay": weight_decay,
-        })
+    # Add token inpainter group if it has parameters and LR is not 0.0
+    if len(token_params) > 0:
+        if token_lr == 0.0:
+            # Freeze token inpainter
+            for p in token_params:
+                p.requires_grad = False
+            # logger.info("Token Inpainter: FROZEN (TOKEN_INPAINTER_LR=0.0)")
+        else:
+            param_groups.append({
+                "params": token_params,
+                "lr": token_lr,
+                "weight_decay": weight_decay,
+            })
+            param_group_components.append("Token Inpainter")
+            # logger.info(f"Token Inpainter: LR={token_lr:.2e}")
+    
+    # Add decoder groups with their specific learning rates
+    for decoder_name, decoder_params in decoder_param_groups.items():
+        if len(decoder_params) > 0:
+            decoder_lr = decoder_lrs[decoder_name]  # Already validated to be non-None
+            if decoder_lr == 0.0:
+                # Double-check: decoder should already be frozen, but ensure it
+                for p in decoder_params:
+                    p.requires_grad = False
+                # logger.info(f"Decoder '{decoder_name}': FROZEN (DECODER_LR=0.0)")
+            else:
+                param_groups.append({
+                    "params": decoder_params,
+                    "lr": decoder_lr,
+                    "weight_decay": weight_decay,
+                })
+                param_group_components.append(f"Decoder '{decoder_name}'")
+                # logger.info(f"Decoder '{decoder_name}': LR={decoder_lr:.2e}")
     
     # Create optimizer with parameter groups
     if len(param_groups) == 0:
-        # Fallback: single group (shouldn't happen if model has parameters)
-        optimizer = optimizer_class(
-            filter(lambda p: p.requires_grad, model.parameters()),
-            lr=base_lr,
-            weight_decay=weight_decay,
-        )
+        # All components are frozen - create optimizer with empty param groups
+        logger.warning("All components are frozen (LR=0.0). Optimizer will have no trainable parameters.")
+        optimizer = optimizer_class([], lr=1e-6, weight_decay=weight_decay)  # Dummy LR for empty optimizer
     else:
         optimizer = optimizer_class(param_groups)
+
+    # Print learning rate summary after optimizer initialization
+
+    
+    # RGB Encoder
+    if encoder_lr == 0.0:
+        logger.info("RGB Encoder : FROZEN (LR=0.0)")
+    else:
+        logger.info(f"RGB Encoder : LR={encoder_lr:.2e}")
+    
+    # Token Inpainter
+    if token_lr == 0.0:
+        logger.info("Token Inpainter : FROZEN (LR=0.0)")
+    else:
+        logger.info(f"Token Inpainter : LR={token_lr:.2e}")
+    
+    # Decoders
+    for decoder_name in sorted(decoder_lrs.keys()):
+        decoder_lr = decoder_lrs[decoder_name]
+        if decoder_lr == 0.0:
+            logger.info(f"Decoder '{decoder_name}': FROZEN (LR=0.0)")
+        else:
+            logger.info(f"Decoder '{decoder_name}': LR={decoder_lr:.2e}")
+    
+    # Verify optimizer parameter groups match
+    logger.info(f"Optimizer parameter groups: {len(optimizer.param_groups)}")
+    for i, group in enumerate(optimizer.param_groups):
+        num_params = sum(p.numel() for p in group['params'])
+        component_name = param_group_components[i] if i < len(param_group_components) else "Unknown"
+        logger.info(f"Group {i} ({component_name}): LR={group['lr']:.2e}, Params={num_params:,}, Weight Decay={group.get('weight_decay', 0.0)}")
 
     # Gradient scaler for mixed precision
     scaler = torch.amp.GradScaler(

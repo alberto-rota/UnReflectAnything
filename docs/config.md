@@ -102,7 +102,7 @@ Similar parameters as SCRREAM with dataset-specific paths and scene configuratio
 - **`WEIGHT_DECAY`**: L2 regularization strength (1e-7)
 - **`EPOCHS`**: Maximum number of training epochs (30)
 - **`GRADIENT_ACCUMULATION_STEPS`**: Steps to accumulate gradients before update (4)
-- **`WARMUP_STEPS`**: Learning rate warmup steps (50)
+- **`WARMUP`**: Learning rate warmup steps (50)
 - **`GRADIENT_CLIPPING_MAX_NORM`**: Maximum gradient norm for clipping (1.0)
 
 #### `LR_SCHEDULER`

@@ -18,7 +18,7 @@ export https_proxy=http://proxy.nhr.fau.de:80
 
 export WS_DIR=/anvme/workspace/v120bb18-unreflectanything
 export DATASET_DIR="$WS_DIR/datasets"
-export RESULTS_DIR="home/atuin/v120bb/v120bb18/UnReflectAnything/results"
+export RESULTS_DIR="/anvme/workspace/v120bb18-unreflectanything/results"
 
 # Python modules
 module load python

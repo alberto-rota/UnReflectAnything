@@ -5,7 +5,7 @@ parameters:
   ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:
-      MODEL_CLASS: "UnReflect_Model_TokenInpainter"  # Main model class name (must match class in models.py)
+      MODEL_CLASS: "UnReflect_Model"  # Main model class name (must match class in models.py)
       MODEL_MODULE: "models"  # Module name to import model classes from (default: "models")
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"  # DINOv3 encoder model name (HuggingFace format)
@@ -24,8 +24,8 @@ parameters:
           DROPOUT: 0.1  # Dropout rate in decoder layers
           OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
           OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
-          DECODER_LR: 1.0e-4 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
-          NUM_FUSION_BLOCKS_TRAINABLE: 3  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
+          DECODER_LR: 1.0e-3 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
+          NUM_FUSION_BLOCKS_TRAINABLE: null  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
           TRAIN_RGB_HEAD: True  # Whether to train RGB head (true/false, null = train if DECODER_LR != 0)
         highlight:
           USE_FILM: False  # Enable FiLM conditioning in highlight decoder
@@ -56,7 +56,7 @@ parameters:
   INPAINT_MASK_DILATION:
     value: 11  # Dilation kernel size (pixels) for inpaint mask - Must be odd
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
-    value: False
+    value: True
 
   ### DATA                                                                      
   DATASETS:
@@ -146,9 +146,9 @@ parameters:
       #   LOAD_RGB_ONLY: True
 
   BATCH_SIZE: # Max batch size with img size 448 is 32
-    value: 32  # Number of samples per batch (adjust based on GPU memory)
+    value: 16  # Number of samples per batch (adjust based on GPU memory)
   NUM_WORKERS:
-    value: 8  # Number of data loading worker processes (0 = main process only)
+    value: 12  # Number of data loading worker processes (0 = main process only)
   SHUFFLE:
     value: True  # Shuffle training data each epoch (False for validation/test)
   PIN_MEMORY:
@@ -162,7 +162,7 @@ parameters:
   SURFACE_ROUGHNESS:
     value: 8.0  # Blinn-Phong surface roughness exponent (higher = sharper highlights)
   INTENSITY:
-    value: 1.5  # Specular highlight intensity multiplier
+    value: 0.0  # Specular highlight intensity multiplier
   LIGHT_DISTANCE_RANGE:
     value: [0.0, 1]  # Range for light source distance sampling [min, max] (normalized)
   LIGHT_LEFT_RIGHT_ANGLE:
@@ -182,15 +182,15 @@ parameters:
 
   ### OPTIMIZATION                                                                      
   LEARNING_RATE:
-    value: 1.0e-7  # Base learning rate for optimizer
+    value: 1.0e-3  # Base learning rate for optimizer
   WEIGHT_DECAY:   
     value: 0.0  # L2 regularization weight (0.0 = no weight decay)
   EPOCHS:
-    value: 25  # Maximum number of training epochs
+    value: 50  # Maximum number of training epochs
   GRADIENT_ACCUMULATION_STEPS:
     value: 1  # Number of steps to accumulate gradients before optimizer step (1 = no accumulation)
   WARMUP:
-    value: 2  # Number of warmup steps for learning rate schedule (linear warmup from 0 to LR)
+    value: 100  # Number of warmup steps for learning rate schedule (linear warmup from 0 to LR)
   GRADIENT_CLIPPING_MAX_NORM:
     value: 8  # Maximum gradient norm for clipping (set to -1 to disable clipping)
   LR_SCHEDULER: 
@@ -222,21 +222,21 @@ parameters:
 
   ### LOSS WEIGHTS (relative to the total loss, NOT NORMALIZED LATER)                                                                              
   SPECULAR_LOSS_WEIGHT:
-    value: 0.0  # Weight for specular component reconstruction loss
+    value: 1.0  # Weight for specular component reconstruction loss
   DIFFUSE_LOSS_WEIGHT:
-    value: 0.5  # Weight for diffuse component reconstruction loss
+    value: 1.0  # Weight for diffuse component reconstruction loss
   HIGHLIGHT_LOSS_WEIGHT:
     value: 1.0  # Weight for highlight mask regression loss
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
     value: 0.0  # Weight for full image reconstruction loss
   SATURATION_RING_LOSS_WEIGHT:
-    value: 0.0  # Weight for saturation ring consistency loss (around highlight regions)
+    value: 0.5  # Weight for saturation ring consistency loss (around highlight regions)
   RING_KERNEL_SIZE:
     value: 11  # Kernel size (odd number) for saturation ring dilation around highlights
   RING_VAR_WEIGHT:
     value: 0.5  # Weight for variance matching in saturation ring loss (vs mean matching)
   RING_TEXTURE_WEIGHT:
-    value: 1.0  # Weight for texture consistency term in saturation ring loss
+    value: 0.0  # Weight for texture consistency term in saturation ring loss
   HLREG_W_L1:
     value: 1.0  # Weight for L1 loss in highlight regression
   HLREG_USE_CHARB:
@@ -257,7 +257,7 @@ parameters:
     value: 2.0      # Focal loss gamma parameter (0.0 = standard BCE, 1.0-2.0 helps with gradient vanishing)
   
   WEIGHT_TOKEN_INPAINT:
-    value: 1.0  # Weight for token-space inpainting loss (L1 + cosine similarity in feature space)
+    value: 0.0  # Weight for token-space inpainting loss (L1 + cosine similarity in feature space)
   WEIGHT_CONTEXT_IDENTITY: 
     value: 0.0  # LEAVE TO 0.0: Weight for L1 loss on context (non-masked) regions (identity preservation) 
   WEIGHT_TV_IN_HOLE:
@@ -275,7 +275,7 @@ parameters:
 
   ### DIFFUSE HIGHLIGHT PENALTY
   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
-    value: 1.0  # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
+    value: 0.0  # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
   DIFFUSE_HL_THRESHOLD:
     value: 0.8  # Brightness/luminance threshold for detecting highlights in diffuse (0.0-1.0)
   DIFFUSE_HL_USE_CHARB:
@@ -285,7 +285,7 @@ parameters:
   DIFFUSE_HL_TARGET_BRIGHTNESS:
     value: null  # Target brightness/luminance for penalized pixels (null = use threshold value)
   DIFFUSE_HL_USE_LUMINANCE:
-    value: False  # If True, use perceptually-weighted luminance (0.299*R + 0.587*G + 0.114*B); if False, use simple mean brightness
+    value: True  # If True, use perceptually-weighted luminance (0.299*R + 0.587*G + 0.114*B); if False, use simple mean brightness
 
   ### LOGGING, RESULTS AND WANDB                                                                 
   LOG_INTERVAL:
@@ -303,4 +303,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"  # WandB project name
   NOTES:
-    value: "FTuned TKI. Seam + HPen. 3 DPT layers unfrozen"  # Notes/description for this training run
+    value: "896 Decoder Pretraining"  # Notes/description for this training run
+  

@@ -1,22 +1,94 @@
+"""
+Main loss module for UnReflectAnything model.
+
+This module contains the composite UnReflectLoss class that combines multiple
+loss terms for training the reflection removal and highlight inpainting model.
+"""
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from loss_utils import (
     SSIMLoss,
     MaskedL1Loss,
+    SeamLoss,
     HighlightRegressionLoss,
+    TokenInpaintLoss,
+    DiffuseHighlightPenaltyLoss,
     reconstruct_image_from_components,
     saturation_ring_blob_consistency,
     _total_variation,
-    _grad_mag,
 )
-
 from models_utils import pixel_mask_to_patch_mask
 
+
 class UnReflectLoss(nn.Module):
+    """
+    Composite loss function for UnReflectAnything model.
+
+    Combines multiple loss terms:
+    - Component losses: specular, diffuse, highlight regression
+    - Reconstruction loss: composite image matching
+    - Context identity: preserve non-hole regions
+    - Seam loss: boundary consistency for inpainting
+    - TV loss: smoothness regularization in holes
+    - Saturation ring loss: color consistency between holes and context
+    - Token inpaint loss: feature-space distillation for masked patches
+
+    Args:
+        # Component loss weights
+        weight_specular_loss: Weight for specular component loss (default: 1.0)
+        weight_diffuse_loss: Weight for diffuse component loss (default: 1.0)
+        weight_highlight_loss: Weight for highlight regression loss (default: 1.0)
+        weight_image_reconstruction: Weight for image reconstruction loss (default: 0.5)
+        weight_alpha_regularization: Weight for alpha channel regularization (default: 0.0, unused)
+
+        # Saturation ring loss parameters
+        weight_saturation_ring: Weight for saturation ring consistency loss (default: 0.0)
+        ring_kernel_size: Odd kernel size for ring dilation (default: 7)
+        ring_var_weight: Weight for variance matching vs mean matching in ring loss (default: 0.5)
+        ring_texture_weight: Weight for texture consistency term in ring loss (default: 1.0)
+
+        # Highlight regression config
+        hlreg_w_l1: Weight for L1/Charbonnier term in highlight regression (default: 1.0)
+        hlreg_use_charb: Use Charbonnier loss instead of L1 for highlight regression (default: True)
+        hlreg_w_dice: Weight for Dice loss in highlight regression (default: 0.2)
+        hlreg_w_ssim: Weight for SSIM loss in highlight regression (default: 0.0)
+        hlreg_w_grad: Weight for gradient loss in highlight regression (default: 0.0)
+        hlreg_w_tv: Weight for TV loss in highlight regression (default: 0.0)
+        hlreg_balance_mode: Class balancing mode for highlight regression: "none", "auto", "pos_weight" (default: "none")
+        hlreg_pos_weight: Weight for positive class when balance_mode="pos_weight" (default: 1.0)
+        hlreg_focal_gamma: Focal loss gamma for highlight regression (0 = disabled) (default: 0.0)
+
+        # Highlight rendering
+        highlight_color: RGB color for highlights (default: (1.0, 1.0, 1.0))
+        clamp_reconstruction: Clamp reconstructed images to [0, 1] (default: True)
+
+        # Context and seam loss parameters
+        weight_context_identity: Weight for L1 loss outside holes (default: 1.0)
+        weight_seam: Weight for gradient matching on ring/seam (default: 0.5)
+        weight_tv_in_hole: Weight for TV loss only inside holes (default: 1e-3)
+        ring_dilate_kernel: Kernel size for ring mask dilation (default: 7)
+
+        # Token-space loss parameters
+        weight_token_inpaint: Weight for token-space feature distillation loss (default: 1.0)
+        token_feat_alpha: Mixing weight: alpha * L1 + (1-alpha) * (1-cosine) in feature space (default: 0.5)
+
+        # Seam loss parameters
+        seam_use_charb: Use Charbonnier loss in seam loss (default: True)
+        seam_weight_grad: Weight for gradient term in seam loss (default: 0.2)
+
+        # Diffuse highlight penalty parameters
+        weight_diffuse_highlight_penalty: Weight for penalty loss on highlights in diffuse output (default: 0.0)
+        diffuse_hl_threshold: Brightness/luminance threshold for detecting highlights in diffuse (default: 0.7)
+        diffuse_hl_use_charb: Use Charbonnier loss for diffuse highlight penalty (default: True)
+        diffuse_hl_penalty_mode: Penalty mode: "brightness" or "pixel" (default: "brightness")
+        diffuse_hl_target_brightness: Target brightness/luminance for penalized pixels (default: threshold)
+        diffuse_hl_use_luminance: If True, use perceptually-weighted luminance; if False, use mean brightness (default: False)
+    """
+
     def __init__(
         self,
-        # Loss weights fot specular, diffuse and highlight reconstruction
+        # Loss weights for specular, diffuse and highlight reconstruction
         weight_specular_loss=1.0,
         weight_diffuse_loss=1.0,
         weight_highlight_loss=1.0,
@@ -39,18 +111,29 @@ class UnReflectLoss(nn.Module):
         # Highlight rendering
         highlight_color=(1.0, 1.0, 1.0),
         clamp_reconstruction=True,
-        weight_context_identity: float = 1.0,   # L1 outside holes
-        weight_ring_grad: float = 0.5,          # gradient match on ring
-        weight_tv_in_hole: float = 1e-3,        # TV only inside holes
-        ring_dilate_kernel: int = 7,            # for ring mask
+        weight_context_identity: float = 1.0,  # L1 outside holes
+        weight_seam: float = 0.5,  # gradient match on ring
+        weight_tv_in_hole: float = 1e-3,  # TV only inside holes
+        ring_dilate_kernel: int = 7,  # for ring mask
         # Token-space loss parameters
-        weight_token_inpaint: float = 1.0,   # λ for token-space loss
-        token_feat_alpha: float = 0.5,       # mix L1 vs (1-cosine) in feature space
-
-        **kwargs
+        weight_token_inpaint: float = 1.0,  # λ for token-space loss
+        token_feat_alpha: float = 0.5,  # mix L1 vs (1-cosine) in feature space
+        seam_use_charb: bool = True,
+        seam_weight_grad: float = 0.2,
+        # Diffuse highlight penalty parameters
+        weight_diffuse_highlight_penalty: float = 0.0,  # Weight for penalty on highlights in diffuse
+        diffuse_hl_threshold: float = 0.7,  # Brightness/luminance threshold for highlight detection
+        diffuse_hl_use_charb: bool = True,  # Use Charbonnier loss
+        diffuse_hl_penalty_mode: str = "brightness",  # "brightness" or "pixel"
+        diffuse_hl_target_brightness: float = None,  # Target brightness/luminance (None = use threshold)
+        diffuse_hl_use_luminance: bool = False,  # Use perceptually-weighted luminance instead of mean brightness
+        **kwargs,
     ):
         super().__init__()
-        # Loading loss weights from params
+
+        # ====================================================================
+        # Store loss weights
+        # ====================================================================
         self.weight_specular_loss = weight_specular_loss
         self.weight_diffuse_loss = weight_diffuse_loss
         self.weight_highlight_loss = weight_highlight_loss
@@ -60,13 +143,36 @@ class UnReflectLoss(nn.Module):
         self.ring_var_weight = ring_var_weight
         self.ring_texture_weight = ring_texture_weight
 
-        # Highlight rendering
+        # Highlight rendering parameters
         self.highlight_color = torch.tensor(highlight_color, dtype=torch.float32)
         self.clamp_reconstruction = clamp_reconstruction
 
-        # Subloss function initialization
+        # Context and seam loss weights
+        self.weight_context_identity = weight_context_identity
+        self.weight_tv_in_hole = weight_tv_in_hole
+        self.weight_seam = weight_seam
+        self.ring_dilate_kernel = ring_dilate_kernel
+
+        # Token-space loss parameters
+        self.weight_token_inpaint = weight_token_inpaint
+        self.token_feat_alpha = token_feat_alpha
+
+        # Diffuse highlight penalty parameters
+        self.weight_diffuse_highlight_penalty = weight_diffuse_highlight_penalty
+
+        # Component weights dictionary for easy access
+        self.component_weights = {
+            "specular": weight_specular_loss,
+            "diffuse": weight_diffuse_loss,
+            "highlight": weight_highlight_loss,
+        }
+
+        # ====================================================================
+        # Initialize sub-loss modules
+        # ====================================================================
         self.masked_ssim_loss = SSIMLoss()
         self.masked_l1_loss = MaskedL1Loss()
+
         self.highlight_regression_loss = HighlightRegressionLoss(
             w_l1=hlreg_w_l1,
             use_charbonnier=hlreg_use_charb,
@@ -79,247 +185,271 @@ class UnReflectLoss(nn.Module):
             focal_gamma=hlreg_focal_gamma,
         )
 
+        self.seam_loss_fn = SeamLoss(
+            ring_kernel=self.ring_dilate_kernel,  # defines boundary ring thickness
+            use_charbonnier=seam_use_charb,  # Charbonnier vs L1
+            weight_l1=1.0,  # pixel diff along seam
+            weight_grad=seam_weight_grad,  # gradient match along seam
+            eps=1e-6,
+            reduction="mean",
+        )
+
+        self.token_inpaint_loss = TokenInpaintLoss(
+            token_feat_alpha=token_feat_alpha,
+        )
+
+        self.diffuse_highlight_penalty_loss = DiffuseHighlightPenaltyLoss(
+            brightness_threshold=diffuse_hl_threshold,
+            use_charbonnier=diffuse_hl_use_charb,
+            penalty_mode=diffuse_hl_penalty_mode,
+            target_brightness=diffuse_hl_target_brightness,
+            use_luminance=diffuse_hl_use_luminance,
+        )
+
+        # ====================================================================
+        # Initialize helper modules and buffers
+        # ====================================================================
+        # Max-pooling for ring mask dilation (cheap morphological dilation)
+        self._ring_pool = nn.MaxPool2d(
+            self.ring_dilate_kernel, stride=1, padding=self.ring_dilate_kernel // 2
+        )
+
         # Small gradient kernels for texture consistency (applied per-channel)
         kx = torch.tensor([[-1.0, 1.0]], dtype=torch.float32).view(1, 1, 1, 2)
         ky = torch.tensor([[-1.0], [1.0]], dtype=torch.float32).view(1, 1, 2, 1)
         self.register_buffer("_ring_kx", kx)
         self.register_buffer("_ring_ky", ky)
 
-        self.component_weights = {
-            "specular": weight_specular_loss,
-            "diffuse": weight_diffuse_loss,
-            "highlight": weight_highlight_loss,
-        }
-        self.weight_context_identity = weight_context_identity
-        self.weight_ring_grad = weight_ring_grad
-        self.weight_tv_in_hole = weight_tv_in_hole
-        self.ring_dilate_kernel = ring_dilate_kernel
-
-        # quick, cheap dilation kernel for ring (max-pool)
-        self._ring_pool = nn.MaxPool2d(self.ring_dilate_kernel, stride=1, padding=self.ring_dilate_kernel//2)
-        self.weight_token_inpaint = weight_token_inpaint
-        self.token_feat_alpha = token_feat_alpha
-    
-    def _token_inpaint_loss(
-        self,
-        tokens_completed: list[torch.Tensor],
-        tokens_teacher: list[torch.Tensor],
-        patch_mask_sup: torch.Tensor,  # (B,N) boolean — supervised masked patches (synthetic ∧ ¬dataset)
-    ) -> torch.Tensor:
+    def forward(
+        self, prediction, ground_truth, pixel_supervision_mask, pixel_inpaint_mask, patch_supervision_mask, patch_inpaint_mask
+    ):
         """
-        Feature-space distillation on masked patches.
-        tokens_*: List[L] of (B, N, C)
-        patch_mask_sup: (B, N) bool — where to supervise (masked & supervised)
+        Compute composite loss for UnReflectAnything model.
+
+        Args:
+            prediction: Dict with predicted components:
+                       - 'diffuse': (B, C, H, W) where C ∈ {3, 4}
+                       - 'specular': (B, C, H, W) where C ∈ {3, 4} (optional)
+                       - 'highlight': (B, 1, H, W) (optional)
+                       - 'tokens_completed': List[L] of (B, N, C) if token loss enabled
+            ground_truth: Dict with ground truth components:
+                          - 'diffuse': (B, C, H, W) (optional)
+                          - 'specular': (B, C, H, W) (optional)
+                          - 'highlight': (B, 1, H, W) (optional)
+                          - 'rgb_highlighted': (B, 3, H, W) input image with highlights
+                          - 'hole_mask': (B, 1, H, W) optional hole mask
+                          - 'patch_mask_sup': (B, N) optional patch mask for token loss
+                          - 'patch_size': int patch size for token loss (if patch_mask_sup not provided)
+                          - 'tokens_teacher': List[L] of (B, N, C) if token loss enabled
+            pixel_supervision_mask: (B, 1, H, W) pixels that contribute to the supervision loss (supervised region)
+            pixel_inpaint_mask: (B, 1, H, W) pixels that need to be inpainted (inpainting region)
+            patch_supervision_mask: (B, N) patches that contribute to the supervision loss (supervised region)
+            patch_inpaint_mask: (B, N) patches that need to be inpainted (inpainting region)
+        Returns:
+            losses: Dict with individual loss terms and 'total' key
         """
-        patch_mask_sup = torch.logical_not(patch_mask_sup)
-        if not isinstance(tokens_completed, (list, tuple)) or not isinstance(tokens_teacher, (list, tuple)):
-            raise ValueError("tokens_completed and tokens_teacher must be lists of tensors.")
-
-        if len(tokens_completed) != len(tokens_teacher):
-            raise ValueError("tokens_completed and tokens_teacher must have same length (layers).")
-
-        l_total = 0.0
-        cos = nn.CosineSimilarity(dim=-1)
-
-        any_mask = patch_mask_sup.any()
-        if not any_mask:
-            return torch.zeros((), device=tokens_teacher[0].device)
-
-        for Tc, Tt in zip(tokens_completed, tokens_teacher):
-            # Tc, Tt: (B, N, C)
-            # Index only masked-supervised positions
-            idx = patch_mask_sup.unsqueeze(-1).expand_as(Tc)  # (B,N,C) bool
-            Tc_m = Tc[idx].view(-1, Tc.shape[-1])            # (M, C)
-            Tt_m = Tt[idx].view(-1, Tt.shape[-1])            # (M, C)
-            if Tc_m.numel() == 0:
-                continue
-            # Normalize features for stable geometry in feature space
-            Tc_n = F.normalize(Tc_m, dim=-1)
-            Tt_n = F.normalize(Tt_m, dim=-1)
-            l1   = (Tc_n - Tt_n).abs().mean()
-            cosd = 1.0 - cos(Tc_n, Tt_n).mean()
-            l_total = l_total + (self.token_feat_alpha * l1 + (1.0 - self.token_feat_alpha) * cosd)
-
-        return l_total / max(1, len(tokens_completed))
-
-    def _make_masks(self, mask_sup: torch.Tensor, hole_mask_opt: torch.Tensor | None):
-        """
-        mask_sup: m_sup (B,1,H,W): where we have GT (synthetic highlight minus dataset highlight)
-        hole_mask_opt: m_hole (B,1,H,W) if provided: union of synthetic ∪ dataset highlights
-        returns: m_sup, m_hole, ring
-        """
-        m_sup = (mask_sup > 0.5).float()
-        if hole_mask_opt is None:
-            m_hole = m_sup.clone()   # fallback: if no explicit hole mask, use supervised mask
-        else:
-            m_hole = (hole_mask_opt > 0.5).float()
-
-        with torch.no_grad():
-            dil = self._ring_pool(m_hole)
-            ring = (dil - m_hole).clamp_(0, 1)
-        return m_sup, m_hole, ring
-
-    def forward(self, prediction, ground_truth, mask=None):
-        """
-        mask: interpreted as m_sup (supervised region).
-        Optionally, pass ground_truth["hole_mask"] (m_hole = synthetic ∪ dataset highlights).
-        """
-        # === MASKS ===
-        # m_sup: where pixel GT is reliable (your synthetic highlight not overlapping dataset highlight)
-        # m_hole: what we want to "repair" (synthetic ∪ dataset highlights)
-        m_sup, m_hole, ring = self._make_masks(
-            mask, ground_truth.get("hole_mask", None)
-        )
 
         losses = {}
-        # === existing component supervision (unchanged), just make sure we use m_sup for pixelwise image matching ===
-        available_components = [k for k in prediction.keys() if k in ground_truth and k != "rgb_highlighted"]
+
+        # ====================================================================
+        # Component supervision losses
+        # ====================================================================
+        # Supervise individual components (specular, diffuse, highlight) on pixel_supervision_mask
+        available_components = [
+            k for k in prediction.keys() if k in ground_truth and k != "rgb_highlighted"
+        ]
         if not available_components:
-            raise ValueError("No matching components found between predictions and ground truth")
+            raise ValueError(
+                "No matching components found between predictions and ground truth"
+            )
 
         for comp_name in available_components:
             pred_comp = prediction[comp_name]
             gt_comp = ground_truth[comp_name]
-
+            
+            # Highlight prediciton is a custom loss. Also there is no masking here
             if comp_name.lower() == "highlight":
-                # your existing highlight regression (e.g., to synthetic highlight, or any target you provide)
                 pred_h = pred_comp.clamp(0, 1)
                 gt_h = gt_comp.clamp(0, 1)
-                hl_loss = self.highlight_regression_loss(pred_h, gt_h)
+                hl_loss = self.highlight_regression_loss(
+                    pred_h, gt_h
+                )  # <--- Mask = None
                 losses["HighlightRegression"] = hl_loss
                 continue
-
-            # Diffuse/specular: supervise RGB channels ONLY on m_sup (do NOT supervise dataset highlights)
+            
+            # Diffuse/specular: supervise RGB channels ONLY on pixel_supervision_mask
             pred_rgb = pred_comp[:, :3]
-            gt_rgb   = gt_comp[:, :3]
-            rgb_l1   = self.masked_l1_loss(pred_rgb, gt_rgb, m_sup)
-            rgb_ssim = self.masked_ssim_loss(pred_rgb, gt_rgb, m_sup)
+            gt_rgb = gt_comp[:, :3]
+            rgb_l1 = self.masked_l1_loss(pred_rgb, gt_rgb, pixel_supervision_mask)
+            rgb_ssim = self.masked_ssim_loss(pred_rgb, gt_rgb, pixel_supervision_mask)
             comp_loss = rgb_l1 + (1.0 - rgb_ssim)
 
+            # Optional alpha channel supervision
             if pred_comp.shape[1] == 4 and gt_comp.shape[1] == 4:
-                alpha_l1 = self.masked_l1_loss(pred_comp[:, 3:4], gt_comp[:, 3:4], m_sup)
+                alpha_l1 = self.masked_l1_loss(
+                    pred_comp[:, 3:4], gt_comp[:, 3:4], pixel_supervision_mask
+                )
                 comp_loss = comp_loss + alpha_l1
 
             losses[f"{comp_name.capitalize()}"] = comp_loss
 
-        # === Reconstruction term (unchanged) but supervise on m_sup ===
+        # ====================================================================
+        # Image reconstruction loss
+        # ====================================================================
+        # Supervise reconstructed composite image on pixel_supervision_mask
         if "rgb_highlighted" in ground_truth and "diffuse" in prediction:
             pred_recon = reconstruct_image_from_components(
-                prediction=prediction, mask=m_sup, clamp_reconstruction=self.clamp_reconstruction
+                prediction=prediction,
+                mask=pixel_supervision_mask,
+                clamp_reconstruction=self.clamp_reconstruction,
             )
             input_rgb = ground_truth["rgb_highlighted"]
-            recon_l1   = self.masked_l1_loss(pred_recon, input_rgb, m_sup)
-            recon_ssim = self.masked_ssim_loss(pred_recon, input_rgb, m_sup)
+            recon_l1 = self.masked_l1_loss(
+                pred_recon, input_rgb, pixel_supervision_mask
+            )
+            recon_ssim = self.masked_ssim_loss(
+                pred_recon, input_rgb, pixel_supervision_mask
+            )
             losses["Reconstruction"] = recon_l1 + (1.0 - recon_ssim)
         else:
             losses["Reconstruction"] = None
 
-        # === NEW: Context identity outside holes ===
+        # ====================================================================
+        # Context identity loss
+        # ====================================================================
+        # Preserve non-hole regions: diffuse should match GT outside holes
         if "diffuse" in prediction and self.weight_context_identity > 0:
             diffuse_pred_rgb = prediction["diffuse"][:, :3]
             if "diffuse" in ground_truth:
                 diffuse_gt_rgb = ground_truth["diffuse"][:, :3]
             else:
-                # if diffuse GT not provided, identity w.r.t. input RGB (safe fallback)
+                # If diffuse GT not provided, identity w.r.t. input RGB (safe fallback)
                 diffuse_gt_rgb = ground_truth["rgb_highlighted"]
 
-            ctx_mask = (1.0 - m_hole).detach()
-            ctx_l1 = self.masked_l1_loss(diffuse_pred_rgb, diffuse_gt_rgb, ctx_mask)
+            ctx_l1 = self.masked_l1_loss(
+                diffuse_pred_rgb, diffuse_gt_rgb, pixel_supervision_mask
+            )
             losses["ContextIdentity"] = ctx_l1
         else:
             losses["ContextIdentity"] = torch.tensor(0.0)
 
-        # === NEW: Seam (ring) gradient consistency + TV in hole ===
-        seam_loss = torch.tensor(0.0)
-        tv_loss   = torch.tensor(0.0)
+        # ====================================================================
+        # Seam loss and TV in hole
+        # ====================================================================
+        # Boundary consistency: match gradients and pixels along seam
         if "diffuse" in prediction:
             D_hat = prediction["diffuse"][:, :3]
-            # choose GT for gradient comparison (prefer clean diffuse GT; else input)
-            D_ref = ground_truth.get("diffuse", ground_truth["rgb_highlighted"])[:, :3]
+            # Prefer clean diffuse GT if present; otherwise fallback to input
+            D_ref = ground_truth.get("diffuse")[:, :3]
 
-            if self.weight_ring_grad > 0:
-                grad = _grad_mag(D_hat - D_ref).mean(dim=1, keepdim=True)  # (B,1,H,W)
-                seam_loss = (grad * ring).sum() / (ring.sum() + 1e-6)
+            # m_hole is the *inpainting* region; SeamLoss computes a ring = dilate(m_hole) - m_hole
+            # so pass m_hole here (NOT m_sup)
+            seam_loss = self.seam_loss_fn(D_hat, D_ref, mask=pixel_inpaint_mask)
 
+            # Optional: TV loss inside the hole for smoothness
             if self.weight_tv_in_hole > 0:
-                tv_loss = _total_variation(D_hat * m_hole)
-
-        losses["RingGrad"] = seam_loss
-        losses["TVinHole"] = tv_loss
-
-        # === Your existing saturation/texture ring loss (kept as-is) ===
-        if "diffuse" in prediction:
-            diffuse_pred_rgb = prediction["diffuse"][:, :3]
-            include_mask = m_hole if m_hole is not None else torch.ones_like(diffuse_pred_rgb[:, :1])
-            if self.weight_saturation_ring > 0.0:
-                sat_ring = saturation_ring_blob_consistency(
-                    diffuse_rgb=diffuse_pred_rgb,
-                    include_mask=include_mask,
-                    ring_kernel_size=self.ring_kernel_size,
-                )
-                losses["SaturationRing"] = sat_ring
+                tv_loss = _total_variation(D_hat * pixel_inpaint_mask)
             else:
-                losses["SaturationRing"] = torch.tensor(0.0, device=diffuse_pred_rgb.device, dtype=diffuse_pred_rgb.dtype)
+                tv_loss = torch.tensor(0.0, device=D_hat.device)
         else:
-            losses["SaturationRing"] = torch.tensor(0.0)
-            
+            seam_loss = torch.tensor(0.0)
+            tv_loss = torch.tensor(0.0)
+
+        losses["Seam"] = seam_loss if seam_loss is not None else torch.tensor(0.0)
+        losses["TVinHole"] = tv_loss if tv_loss is not None else torch.tensor(0.0)
+
+        # ====================================================================
+        # Token-space inpainting loss
+        # ====================================================================
+        
+        # Feature-space distillation on masked patches
         if self.weight_token_inpaint > 0:
             if "tokens_completed" not in prediction:
-                raise KeyError("prediction must include 'tokens_completed' when weight_token_inpaint > 0")
+                raise KeyError(
+                    "prediction must include 'tokens_completed' when weight_token_inpaint > 0"
+                )
             if "tokens_teacher" not in ground_truth:
-                raise KeyError("ground_truth must include 'tokens_teacher' when weight_token_inpaint > 0")
+                raise KeyError(
+                    "ground_truth must include 'tokens_teacher' when weight_token_inpaint > 0"
+                )
 
-            tokens_completed = prediction["tokens_completed"] # Tokens predicted by inpating model
-            tokens_teacher   = ground_truth["tokens_teacher"] # Desired tokens from ground truth diffuse
-
-            # Prefer directly provided patch_mask_sup; else try to derive from pixel supervised mask
-            if "patch_mask_sup" in ground_truth and ground_truth["patch_mask_sup"] is not None:
-                pm_sup = ground_truth["patch_mask_sup"].bool()  # (B,N)
-            else:
-                # Derive from pixel m_sup using patch_size (must be provided)
-                if m_sup is None:
-                    raise KeyError("Need pixel 'mask' (m_sup) or ground_truth['patch_mask_sup'] for token loss.")
-                patch_size = int(ground_truth.get("patch_size", 16))
-                pm_sup = pixel_mask_to_patch_mask(m_sup, patch_size=patch_size, threshold=0.1)  # (B,N) bool
-
-            l_token = self._token_inpaint_loss(tokens_completed, tokens_teacher, pm_sup)
+            tokens_completed = prediction[
+                "tokens_completed"
+            ]  # Tokens predicted by inpainting model
+            tokens_teacher = ground_truth[
+                "tokens_teacher"
+            ]  # Desired tokens from ground truth diffuse
+            # The token inpainting loss should be computed on the inpainted tokens that are also supervised
+            patch_inpaint_supervision_mask = patch_supervision_mask * patch_inpaint_mask
+            
+            l_token = self.token_inpaint_loss(tokens_completed, tokens_teacher, patch_inpaint_supervision_mask)
+            # l_token = self.token_inpaint_loss(tokens_completed, tokens_teacher, patch_inpaint_mask)
+            # l_token = self.token_inpaint_loss(tokens_completed, tokens_teacher, patch_inpaint_supervision_mask)
             losses["TokenInpaint"] = l_token
         else:
             losses["TokenInpaint"] = torch.zeros(())
 
-        # === TOTAL ===
+        # ====================================================================
+        # Diffuse highlight penalty loss
+        # ====================================================================
+        # Explicitly penalize highlights in diffuse decoder output
+        if self.weight_diffuse_highlight_penalty > 0:
+            if "diffuse" in prediction:
+                diffuse_rgb = prediction["diffuse"][:, :3]  # (B, 3, H, W)
+                # Optionally apply supervision mask to focus on supervised regions
+                hl_penalty = self.diffuse_highlight_penalty_loss(
+                    diffuse_rgb, mask=pixel_supervision_mask
+                )
+                losses["HPenalty"] = hl_penalty
+            else:
+                losses["HPenalty"] = torch.zeros(())
+        else:
+            losses["HPenalty"] = torch.zeros(())
+
+        # ====================================================================
+        # Compute total loss
+        # ====================================================================
         total = 0.0
+
+        # Component losses
         if "Specular" in losses:
             total = total + self.component_weights["specular"] * losses["Specular"]
         if "Diffuse" in losses:
             total = total + self.component_weights["diffuse"] * losses["Diffuse"]
         if "HighlightRegression" in losses:
-            total = total + self.component_weights["highlight"] * losses["HighlightRegression"]
+            total = (
+                total
+                + self.component_weights["highlight"] * losses["HighlightRegression"]
+            )
+
+        # Reconstruction loss
         if losses.get("Reconstruction") is not None:
             total = total + self.weight_image_reconstruction * losses["Reconstruction"]
 
-        # NEW weights
+        # Regularization and consistency losses
         total = total + self.weight_context_identity * losses["ContextIdentity"]
-        total = total + self.weight_ring_grad * losses["RingGrad"]
+        total = total + self.weight_seam * losses["Seam"]
         total = total + self.weight_tv_in_hole * losses["TVinHole"]
-
-        # existing texture/saturation ring term
-        total = total + self.weight_saturation_ring * losses["SaturationRing"]
-
-        # new token-space loss
+        # total = total + self.weight_saturation_ring * losses["SaturationRing"]
         total = total + self.weight_token_inpaint * losses["TokenInpaint"]
+        total = total + self.weight_diffuse_highlight_penalty * losses["HPenalty"]
 
         losses["total"] = total
         return losses
 
-
     def reconstruct_image(self, prediction, mask=None):
         """
+        Reconstruct RGB image from predicted components.
+
         Args:
-            prediction: dict with keys like 'diffuse', 'specular', 'highlight'
-                       - diffuse: [B,C,H,W] where C∈{3,4}
-                       - specular: [B,C,H,W] where C∈{3,4}
-                       - highlight: [B,1,H,W]
+            prediction: Dict with keys like 'diffuse', 'specular', 'highlight'
+                       - diffuse: (B, C, H, W) where C ∈ {3, 4}
+                       - specular: (B, C, H, W) where C ∈ {3, 4} (optional)
+                       - highlight: (B, 1, H, W) (optional)
+            mask: (B, 1, H, W) optional mask to apply before composition
+
+        Returns:
+            reconstructed_rgb: (B, 3, H, W) reconstructed RGB image
         """
         return reconstruct_image_from_components(
             prediction=prediction,

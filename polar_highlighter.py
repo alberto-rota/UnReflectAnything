@@ -906,6 +906,7 @@ class PolarHighlighter(nn.Module):
         return_dataset_highlights=True,
         dataset_highlight_dilation=None,
         dataset_highlight_threshold=None,
+        dataset_highlight_use_luminance=False,
     ):
         """
         Forward pass for polar highlight synthesis with geometric roughness.
@@ -934,6 +935,11 @@ class PolarHighlighter(nn.Module):
             octaves: number of octaves for micro-geometry
             roughness_strength: average angular deviation (radians)
             seed: random seed
+            return_dataset_highlights: Whether to compute dataset highlight masks
+            dataset_highlight_dilation: Dilation kernel size for dataset highlights (optional)
+            dataset_highlight_threshold: Brightness/luminance threshold for dataset highlights (optional)
+            dataset_highlight_use_luminance: If True, use perceptually-weighted luminance for dataset highlights;
+                                            if False, use simple mean brightness (default: False)
 
         Returns:
             dict with keys:
@@ -981,6 +987,7 @@ class PolarHighlighter(nn.Module):
                 "view_dir": zeros_1hw(3),
                 "stokes_highlighted": zeros_1hw(3) if pol is not None else None,
                 "supervision_mask": torch.ones_like(zeros_1hw(1)),
+                "pixel_supervision_mask": torch.ones_like(zeros_1hw(1)),
             }
             if (
                 return_dataset_highlights
@@ -990,7 +997,8 @@ class PolarHighlighter(nn.Module):
                 result["dataset_highlights_soft_mask"] = get_soft_highlight_map(
                     rgb,
                     threshold=dataset_highlight_threshold,
-            )
+                    use_luminance=dataset_highlight_use_luminance,
+                )
             return result
 
         depth, normals, moge_intrinsics = self.compute_geometry(
@@ -1068,23 +1076,23 @@ class PolarHighlighter(nn.Module):
             dataset_highlights_soft_mask = get_soft_highlight_map(
                 rgb,
                 threshold=dataset_highlight_threshold,
+                use_luminance=dataset_highlight_use_luminance,
             )
-            # Compute inverse binary mask to mask out real highlights from the loss computation
-            # dataset_highlights_inverse_binary_mask = torch.logical_not(
-            #     torch.nn.functional.max_pool2d(
-            #         dataset_highlights_soft_mask,
-            #         kernel_size=dataset_highlight_dilation,
-            #         stride=1,
-            #         padding=dataset_highlight_dilation // 2,
-            #     )
-            #     > 0
-            # ).int()
-            dataset_highlights_bool_mask = (dataset_highlights_soft_mask > 0).int()
-            result["supervision_mask"] = (
-                dataset_highlights_bool_mask
-            )
+            # dataset_highlights_bool_mask = (dataset_highlights_soft_mask > 0).int()
             result["dataset_highlights_soft_mask"] = dataset_highlights_soft_mask
+            highlight_region = dataset_highlights_soft_mask > dataset_highlight_threshold        # tune threshold
 
+            # 3. Dilate highlights (expand the forbidden area)
+            if dataset_highlight_dilation is not None and dataset_highlight_dilation > 0:
+                highlight_region = torch.nn.functional.max_pool2d(
+                    highlight_region.float(),
+                    kernel_size=dataset_highlight_dilation,
+                    stride=1,
+                    padding=dataset_highlight_dilation // 2,
+                ) > 0
+
+            # 4. SUPERVISION mask = everywhere except highlights
+            result["pixel_supervision_mask"] = (~highlight_region).int()
         # Only compute stokes_highlighted if pol was provided
         if pol is not None:
             S0_H, S1_H, S2_H = H_stokes[:, 0:1], H_stokes[:, 1:2], H_stokes[:, 2:3]
@@ -1097,27 +1105,38 @@ class PolarHighlighter(nn.Module):
 
 
 def get_soft_highlight_map(
-    rgb_image: torch.Tensor, threshold: float = 0.7
+    rgb_image: torch.Tensor, threshold: float = 0.7, use_luminance: bool = False
 ) -> torch.Tensor:
     """
     Create a soft map of highlights from an RGB image.
+    
+    Returns 0 for brightness/luminance <= threshold, 1 for brightness/luminance == 1,
+    with smooth linear interpolation in between.
 
     Args:
-        rgb_image: Input RGB image tensor of shape [B, 3, H, W]
+        rgb_image: Input RGB image tensor of shape [B, 3, H, W] with values in [0, 1]
         threshold: Threshold value for highlight detection (default: 0.7)
+        use_luminance: If True, use perceptually-weighted luminance (0.299*R + 0.587*G + 0.114*B);
+                      if False, use simple mean brightness (default: False)
 
     Returns:
-        Soft highlight map tensor of shape [B, 1, H, W]
+        Soft highlight map tensor of shape [B, 1, H, W] with values in [0, 1]
     """
-    # Create highlight mask by averaging across color channels (dim=1)
-    is_highlight = (
-        rgb_image.mean(dim=1, keepdim=True) >= threshold
-    )  # Shape: [B, 1, H, W]
-
-    # Create soft highlights by subtracting threshold and masking non-highlights
-    soft_highlights = rgb_image - threshold
-    soft_highlights[torch.logical_not(is_highlight).repeat(1, 3, 1, 1)] = 0.0
-
-    scaler = 1 / (1 - threshold)
-    # Return the mean across color channels to get single-channel highlight map
-    return soft_highlights.mean(dim=1, keepdim=True) * scaler  # Shape: [B, 1, H, W]
+    # Compute brightness/luminance
+    if use_luminance:
+        # Perceptually-weighted luminance: 0.299*R + 0.587*G + 0.114*B
+        luminance_weights = torch.tensor(
+            [0.299, 0.587, 0.114], dtype=rgb_image.dtype, device=rgb_image.device
+        ).view(1, 3, 1, 1)
+        brightness = (rgb_image * luminance_weights).sum(dim=1, keepdim=True)  # Shape: [B, 1, H, W]
+    else:
+        # Simple mean brightness across RGB channels
+        brightness = rgb_image.mean(dim=1, keepdim=True)  # Shape: [B, 1, H, W]
+    
+    # Linear interpolation from (threshold, 0) to (1, 1)
+    # For brightness > threshold: (brightness - threshold) / (1 - threshold)
+    # For brightness <= threshold: 0
+    soft_highlights = (brightness - threshold) / (1 - threshold)
+    soft_highlights = torch.clamp(soft_highlights, min=0.0)  # Clamp negative values to 0
+    
+    return soft_highlights  # Shape: [B, 1, H, W]

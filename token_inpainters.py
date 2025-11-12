@@ -75,10 +75,10 @@ class TokenInpainter_Naive(nn.Module):
         # Enable fixed 2D sinusoidal positional encodings
         self.use_positional_encoding = use_positional_encoding
 
-    def forward(self, T: torch.Tensor, pm_bool: torch.Tensor):
-        # T: [B, N, C], pm_bool: [B, N] (True = hole)
+    def forward(self, T: torch.Tensor, patch_inpaint_mask: torch.Tensor):
+        # T: [B, N, C], patch_inpaint_mask: [B, N] (True = hole)
         B, N, C = T.shape
-        mask = pm_bool.unsqueeze(-1)  # [B, N, 1]
+        mask = patch_inpaint_mask.unsqueeze(-1)  # [B, N, 1]
         mask_tok = self.mask_token  # [1, 1, C]
         # Seed masked positions with learned token, keep context as-is
         T_seed = torch.where(mask, mask_tok.expand(B, N, C), T)
@@ -226,14 +226,14 @@ def _build_2d_sincos_pos_embed(
     return torch.cat([eh, ew], dim=-1).reshape(1, h * w, dim)
 
 
-def _local_mean_prior(T, pm_bool, H, W, k=3):
+def _local_mean_prior(T, patch_inpaint_mask, H, W, k=3):
     """
     Depthwise box-filter local mean of *visible* neighbors for masked seeds.
-    T: [B,N,C], pm_bool: [B,N] (True=masked). Returns [B,N,C].
+    T: [B,N,C], patch_inpaint_mask: [B,N] (True=masked). Returns [B,N,C].
     """
     B, N, C = T.shape
     x = T.transpose(1, 2).reshape(B, C, H, W)  # B,C,H,W
-    vis = (~pm_bool).float().reshape(B, 1, H, W)  # B,1,H,W  (1 = visible)
+    vis = torch.logical_not(patch_inpaint_mask).float().reshape(B, 1, H, W)  # B,1,H,W  (1 = visible)
     pad = k // 2
     kernel = torch.ones(1, 1, k, k, device=T.device, dtype=T.dtype)
 
@@ -265,6 +265,7 @@ class TokenInpainter_Prior(nn.Module):
         use_local_prior=True,
         local_prior_weight=0.5,
         seed_noise_std=0.01,
+        prior_kernel=1,
     ):
         super().__init__()
         self.blocks = nn.ModuleList(
@@ -282,9 +283,9 @@ class TokenInpainter_Prior(nn.Module):
         self._use_local_prior = use_local_prior  # only affects masked seeds
         self._seed_noise_std = seed_noise_std  # small train-time noise on masked seeds
         self._local_prior_weight = local_prior_weight
-
-    def forward(self, T: torch.Tensor, pm_bool: torch.Tensor):
-        # T: [B,N,C], pm_bool: [B,N] (True = hole)
+        self._prior_kernel = prior_kernel
+    def forward(self, T: torch.Tensor, patch_inpaint_mask: torch.Tensor):
+        # T: [B,N,C], patch_inpaint_mask: [B,N] (True = hole)
         B, N, C = T.shape
         device = T.device
 
@@ -295,14 +296,14 @@ class TokenInpainter_Prior(nn.Module):
         )
         H = W = hw
 
-        mask = pm_bool.unsqueeze(-1)  # [B,N,1]
+        mask = patch_inpaint_mask.unsqueeze(-1)  # [B,N,1]
 
-        # (1) seed masked positions with learned token (same as your logic)
+        # Seed masked positions with learned token on the positions indicated by the mask
         T_seed = torch.where(mask, self.mask_token.expand(B, N, C), T)
 
-        # optional: blend a local mean *only for masked positions* (does not alter visible tokens)
+        # Blend the local mean prior on the masked positions (does not alter visible tokens)
         if self._use_local_prior:
-            mean_prior = _local_mean_prior(T, pm_bool, H, W, k=5)
+            mean_prior = _local_mean_prior(T, patch_inpaint_mask, H, W, k=self._prior_kernel)
             T_seed = torch.where(
                 mask,
                 self._local_prior_weight * T_seed
@@ -315,18 +316,19 @@ class TokenInpainter_Prior(nn.Module):
             noise = torch.randn_like(T_seed) * self._seed_noise_std
             T_seed = torch.where(mask, T_seed + noise, T_seed)
 
-        # (2) add positionals to all tokens (unchanged) + mask indicator only at masked sites
+        # Add positionals to all tokens 
         if self.use_positional_encoding:
             pos = _build_2d_sincos_pos_embed(H, W, C, device).expand(B, N, C)
             X = T_seed + pos
         else:
             X = T_seed
-
+            
+        # Addmask indicator only at masked sites
         X = X + torch.where(
             mask, self.mask_indicator.expand(B, N, C), torch.zeros_like(X)
         )
 
-        # (3) full self-attention across all tokens (NO key padding/masking) — same as your behavior
+        # full self-attention across all tokens (NO key padding/masking) — same as your behavior
         for blk in self.blocks:
             X = blk(X)
 
@@ -334,7 +336,7 @@ class TokenInpainter_Prior(nn.Module):
         if self._final_norm is not None:
             X = self._final_norm(X)
 
-        # (4) project ALL tokens (your original returns out_proj(X) for all positions)
+        # project ALL tokens
         return self.out_proj(X)
 
 
@@ -383,11 +385,11 @@ class TokenInpainter_Blended(nn.Module):
         self.blend_border_width = blend_border_width
         self.blend_kernel_size = blend_kernel_size
 
-    def forward(self, T: torch.Tensor, pm_bool: torch.Tensor):
+    def forward(self, T: torch.Tensor, patch_inpaint_mask: torch.Tensor):
         """
         Args:
             T: [B, N, C] - input tokens
-            pm_bool: [B, N] - boolean mask (True = masked/hole)
+            patch_inpaint_mask: [B, N] - boolean mask (True = masked/hole)
 
         Returns:
             [B, N, C] - refined tokens at all positions
@@ -399,13 +401,13 @@ class TokenInpainter_Blended(nn.Module):
         assert hw * hw == N, "Token count N must be a perfect square"
         H = W = hw
 
-        mask = pm_bool.unsqueeze(-1)  # [B, N, 1]
+        mask = patch_inpaint_mask.unsqueeze(-1)  # [B, N, 1]
 
         # === STEP 1: Seed masked positions ===
         T_seed = torch.where(mask, self.mask_token.expand(B, N, C), T)
 
         if self._use_local_prior:
-            mean_prior = _local_mean_prior(T, pm_bool, H, W, k=5)  # [B, N, C]
+            mean_prior = _local_mean_prior(T, patch_inpaint_mask, H, W, k=5)  # [B, N, C]
             T_seed = torch.where(
                 mask,
                 self._local_prior_weight * T_seed
@@ -441,7 +443,7 @@ class TokenInpainter_Blended(nn.Module):
 
         # === STEP 4: Soft boundary blending ===
         # Compute blend weights for masked tokens based on distance from boundary
-        blend_weights = self._compute_blend_weights(pm_bool, H, W)  # [B, N, 1]
+        blend_weights = self._compute_blend_weights(patch_inpaint_mask, H, W)  # [B, N, 1]
 
         # Apply blending only at masked positions
         # blend_weights: 0.0 = use original T, 1.0 = use inpainted X
@@ -454,7 +456,7 @@ class TokenInpainter_Blended(nn.Module):
         return X_final
 
     def _compute_blend_weights(
-        self, pm_bool: torch.Tensor, H: int, W: int
+        self, patch_inpaint_mask: torch.Tensor, H: int, W: int
     ) -> torch.Tensor:
         """
         Compute soft blending weights for masked tokens based on distance from boundary.
@@ -464,17 +466,17 @@ class TokenInpainter_Blended(nn.Module):
         Visible tokens → weight irrelevant (will use X_inpainted regardless)
 
         Args:
-            pm_bool: [B, N] - boolean mask (True = masked)
+            patch_inpaint_mask: [B, N] - boolean mask (True = masked)
             H, W: spatial dimensions
 
         Returns:
             [B, N, 1] - blend weights in [0, 1]
         """
-        B, N = pm_bool.shape
-        device = pm_bool.device
+        B, N = patch_inpaint_mask.shape
+        device = patch_inpaint_mask.device
 
         # Reshape to spatial: [B, 1, H, W]
-        mask_spatial = pm_bool.float().reshape(B, 1, H, W)
+        mask_spatial = patch_inpaint_mask.float().reshape(B, 1, H, W)
 
         # Compute distance from each masked pixel to nearest boundary
         distance = self._distance_from_boundary(mask_spatial, H, W)  # [B, 1, H, W]
@@ -697,7 +699,7 @@ class TokenInpainter_Soft(nn.Module):
         use_final_norm=True,
         use_local_prior=True,
         seed_noise_std=0.01,
-        prior_kernel=5,
+        prior_kernel=1,
         seed_mix_alpha=0.5,  # mix between mask_token and local prior for seeds
         use_smoothstep_blend=True,
     ):
@@ -726,15 +728,15 @@ class TokenInpainter_Soft(nn.Module):
         # x in [0,1]
         return x * x * (3.0 - 2.0 * x)
 
-    def forward(self, T: torch.Tensor, pm_soft: torch.Tensor):
+    def forward(self, T: torch.Tensor, patch_inpaint_mask_soft: torch.Tensor):
         """
         T:        [B, N, C]
-        pm_soft:  [B, N]  (float, 0..1). If boolean is passed, it will be cast to float.
+        patch_inpaint_mask_soft:  [B, N]  (float, 0..1). If boolean is passed, it will be cast to float.
         """
         B, N, C = T.shape
         device = T.device
 
-        m = pm_soft.to(dtype=T.dtype).clamp(0.0, 1.0)  # [B,N]
+        m = patch_inpaint_mask_soft.to(dtype=T.dtype).clamp(0.0, 1.0)  # [B,N]
         gate = m.unsqueeze(-1)  # [B,N,1]
         w_vis = (1.0 - m).unsqueeze(-1)  # [B,N,1]
 

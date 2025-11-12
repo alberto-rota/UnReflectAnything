@@ -227,7 +227,7 @@
         "WEIGHT_DECAY": 0.0,
         "EPOCHS": 100,
         "GRADIENT_ACCUMULATION_STEPS": 1,
-        "WARMUP_STEPS": -1,
+        "WARMUP": -1,
         "GRADIENT_CLIPPING_MAX_NORM": 8,
         "LR_SCHEDULER": {
             "ONPLATEAU": {

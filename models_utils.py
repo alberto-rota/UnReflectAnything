@@ -335,7 +335,10 @@ def pixel_mask_to_patch_mask(
             - If soft=False: boolean tensor (patch is masked if ANY pixel is above threshold)
             - If soft=True: float tensor in [0,1] (proportion of pixels above threshold in each patch)
     """
-    m = (mask_hw > threshold).float()
+    if mask_hw.dtype == torch.bool:
+        m = mask_hw.float()
+    else:
+        m = (mask_hw > threshold).float()
     if soft:
         # Use average pooling to get proportion of pixels above threshold in each patch
         m_small = F.avg_pool2d(m, kernel_size=patch_size, stride=patch_size)
@@ -350,6 +353,35 @@ def pixel_mask_to_patch_mask(
         else:
             pm = torch.logical_not(pm)
     return pm
+
+def feather_token_mask(pm_soft: torch.Tensor, radius_tokens: int = 1, smoothstep=True):
+    """
+    pm_soft: (B, N) in [0,1], 1 = needs inpainting
+    returns: (B, N) in [0,1], softly feathered over the token grid
+    """
+    B, N = pm_soft.shape
+    H = int(round(N ** 0.5))
+    assert H * H == N, "N must be a perfect square (flattened token grid)."
+    m = pm_soft.view(B, 1, H, H)
+
+    k = 2 * radius_tokens + 1
+    pad = radius_tokens
+
+    # Simple, differentiable feather: box blur on both the hole and its complement,
+    # then recombine to keep values near edges smooth but not overly washed.
+    kernel = torch.ones(1, 1, k, k, device=m.device, dtype=m.dtype) / (k * k)
+
+    m_blur  = F.conv2d(m, kernel, padding=pad)
+    inv_blur = F.conv2d(1.0 - m, kernel, padding=pad)
+    # Re-normalize: high where hole dominates, low where visible dominates
+    out = m_blur / (m_blur + inv_blur + 1e-6)
+
+    if smoothstep:
+        # gentle edge emphasis without harsh slopes
+        out = out * out * (3.0 - 2.0 * out)
+
+    return out.clamp_(0, 1).view(B, N)
+
 
 def patch_mask_to_pixel_mask(
     patch_mask: torch.Tensor, patch_size: int, soft: bool = False

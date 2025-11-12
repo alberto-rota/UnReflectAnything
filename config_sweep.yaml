@@ -9,12 +9,13 @@ program: sweep_agent.py
 project: UnReflectAnything  
 entity: unreflect-anything
 
+### BASELINE: CONVERGES AFTER LONG
+
 parameters:
 
   ### MODEL ARCHITECTURE                                                       
   MODEL:
-    values:
-    -
+    value:
       MODEL_CLASS: "UnReflect_Model_TokenInpainter"  # Main model class name (must match class in models.py)
       MODEL_MODULE: "models"  # Module name to import model classes from (default: "models")
       RGB_ENCODER:
@@ -34,7 +35,9 @@ parameters:
           DROPOUT: 0.1  # Dropout rate in decoder layers
           OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
           OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
-          DECODER_LR: 0.0  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
+          DECODER_LR: 1.0e-8 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
+          NUM_FUSION_BLOCKS_TRAINABLE: 1  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
+          TRAIN_RGB_HEAD: True  # Whether to train RGB head (true/false, null = train if DECODER_LR != 0)
         highlight:
           USE_FILM: False  # Enable FiLM conditioning in highlight decoder
           FEATURE_DIM: 1024  # Feature dimension for highlight decoder
@@ -46,6 +49,7 @@ parameters:
           OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
           OUTPUT_CHANNELS: 1  # Number of output channels (1 for highlight mask)
           DECODER_LR: 5.0e-4  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
+          NUM_FUSION_BLOCKS_TRAINABLE: null  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
       TOKEN_INPAINTER:
         TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"  # Token inpainter class name
         TOKEN_INPAINTER_MODULE: "token_inpainters"  # Module name to import token inpainter from
@@ -56,96 +60,9 @@ parameters:
         USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
         USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
         USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
-        LOCAL_PRIOR_WEIGHT: 0.25  # Weight for local prior blending (0.0 = only mask_token, 1.0 = only local mean)
+        LOCAL_PRIOR_WEIGHT: 0.5  # Weight for local prior blending (0.0 = only mask_token, 1.0 = only local mean)
         SEED_NOISE_STD: 0.001  # Standard deviation of noise added to masked seeds during training  
-    -
-      MODEL_CLASS: "UnReflect_Model_TokenInpainter"  # Main model class name (must match class in models.py)
-      MODEL_MODULE: "models"  # Module name to import model classes from (default: "models")
-      RGB_ENCODER:
-        # "facebook/dinov3-convnext-large-pretrain-lvd1689m" "facebook/dinov3-vitl16-pretrain-lvd1689m"
-        ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"  # DINOv3 encoder model name (HuggingFace format)
-        IMAGE_SIZE: 448  # Input image size (height and width in pixels)
-        RETURN_SELECTED_LAYERS: [3, 6, 9, 12]  # Transformer layer indices to extract features from (0-indexed)
-      DECODERS:
-        diffuse:
-          USE_FILM: False  # Enable FiLM (Feature-wise Linear Modulation) conditioning in decoder
-          FEATURE_DIM: 1024  # Feature dimension for decoder (should match encoder output)
-          REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]  # Output channels for each decoder stage (DPT-style reassembly)
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]  # Spatial upsampling factors for each stage
-          READOUT_TYPE: "ignore"  # Readout type for DPT decoder ("ignore", "project", etc.)
-          FROM_PRETRAINED: "weights/rgb_decoder.pth"  # Path to pretrained decoder weights (optional)
-          USE_BN: False  # Use batch normalization in decoder
-          DROPOUT: 0.1  # Dropout rate in decoder layers
-          OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
-          OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
-          DECODER_LR: 0.0  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
-        highlight:
-          USE_FILM: False  # Enable FiLM conditioning in highlight decoder
-          FEATURE_DIM: 1024  # Feature dimension for highlight decoder
-          REASSEMBLE_OUT_CHANNELS: [96,192,384,768]  # Output channels for each decoder stage
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]  # Spatial upsampling factors for each stage
-          READOUT_TYPE: "ignore"  # Readout type for DPT decoder
-          USE_BN: False  # Use batch normalization in decoder
-          DROPOUT: 0.1  # Dropout rate in decoder layers
-          OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
-          OUTPUT_CHANNELS: 1  # Number of output channels (1 for highlight mask)
-          DECODER_LR: 5.0e-4  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
-      TOKEN_INPAINTER:
-        TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"  # Token inpainter class name
-        TOKEN_INPAINTER_MODULE: "token_inpainters"  # Module name to import token inpainter from
-        TOKEN_INPAINTER_LR: 1.0e-4  # Learning rate for token inpainter (can differ from base LR)
-        DEPTH: 6  # Number of transformer blocks
-        HEADS: 16  # Number of attention heads
-        DROP: 0 # Dropout rate 
-        USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
-        USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
-        USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
-        LOCAL_PRIOR_WEIGHT: 0.50  # Weight for local prior blending (0.0 = only mask_token, 1.0 = only local mean)
-        SEED_NOISE_STD: 0.001  # Standard deviation of noise added to masked seeds during training  
-    -
-      MODEL_CLASS: "UnReflect_Model_TokenInpainter"  # Main model class name (must match class in models.py)
-      MODEL_MODULE: "models"  # Module name to import model classes from (default: "models")
-      RGB_ENCODER:
-        # "facebook/dinov3-convnext-large-pretrain-lvd1689m" "facebook/dinov3-vitl16-pretrain-lvd1689m"
-        ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"  # DINOv3 encoder model name (HuggingFace format)
-        IMAGE_SIZE: 448  # Input image size (height and width in pixels)
-        RETURN_SELECTED_LAYERS: [3, 6, 9, 12]  # Transformer layer indices to extract features from (0-indexed)
-      DECODERS:
-        diffuse:
-          USE_FILM: False  # Enable FiLM (Feature-wise Linear Modulation) conditioning in decoder
-          FEATURE_DIM: 1024  # Feature dimension for decoder (should match encoder output)
-          REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]  # Output channels for each decoder stage (DPT-style reassembly)
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]  # Spatial upsampling factors for each stage
-          READOUT_TYPE: "ignore"  # Readout type for DPT decoder ("ignore", "project", etc.)
-          FROM_PRETRAINED: "weights/rgb_decoder.pth"  # Path to pretrained decoder weights (optional)
-          USE_BN: False  # Use batch normalization in decoder
-          DROPOUT: 0.1  # Dropout rate in decoder layers
-          OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
-          OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
-          DECODER_LR: 0.0  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
-        highlight:
-          USE_FILM: False  # Enable FiLM conditioning in highlight decoder
-          FEATURE_DIM: 1024  # Feature dimension for highlight decoder
-          REASSEMBLE_OUT_CHANNELS: [96,192,384,768]  # Output channels for each decoder stage
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]  # Spatial upsampling factors for each stage
-          READOUT_TYPE: "ignore"  # Readout type for DPT decoder
-          USE_BN: False  # Use batch normalization in decoder
-          DROPOUT: 0.1  # Dropout rate in decoder layers
-          OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
-          OUTPUT_CHANNELS: 1  # Number of output channels (1 for highlight mask)
-          DECODER_LR: 5.0e-4  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
-      TOKEN_INPAINTER:
-        TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"  # Token inpainter class name
-        TOKEN_INPAINTER_MODULE: "token_inpainters"  # Module name to import token inpainter from
-        TOKEN_INPAINTER_LR: 1.0e-4  # Learning rate for token inpainter (can differ from base LR)
-        DEPTH: 6  # Number of transformer blocks
-        HEADS: 16  # Number of attention heads
-        DROP: 0 # Dropout rate 
-        USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
-        USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
-        USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
-        LOCAL_PRIOR_WEIGHT: 0.75  # Weight for local prior blending (0.0 = only mask_token, 1.0 = only local mean)
-        SEED_NOISE_STD: 0.001  # Standard deviation of noise added to masked seeds during training  
+
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
 
@@ -263,7 +180,7 @@ parameters:
   DATASET_HIGHLIGHT_DILATION:
     value: 25  # Dilation kernel size (pixels) for dataset highlight masks
   DATASET_HIGHLIGHT_THRESHOLD:
-    value: 0.93  # Brightness threshold (0-1) for detecting highlights in dataset images
+    value: 0.9  # Brightness threshold (0-1) for detecting highlights in dataset images
   HIGHLIGHT_COLOR:
     value: [1.0, 1.0, 1.0]  # RGB color for synthetic highlights (normalized 0-1)
   CLAMP_RECONSTRUCTION:
@@ -278,8 +195,8 @@ parameters:
     value: 25  # Maximum number of training epochs
   GRADIENT_ACCUMULATION_STEPS:
     value: 1  # Number of steps to accumulate gradients before optimizer step (1 = no accumulation)
-  WARMUP_STEPS:
-    value: 50  # Number of warmup steps for learning rate schedule (linear warmup from 0 to LR)
+  WARMUP:
+    value: 2  # Number of warmup steps for learning rate schedule (linear warmup from 0 to LR)
   GRADIENT_CLIPPING_MAX_NORM:
     value: 8  # Maximum gradient norm for clipping (set to -1 to disable clipping)
   LR_SCHEDULER: 
@@ -306,11 +223,15 @@ parameters:
   SAVE_INTERVAL:
     value: 1000  # Number of training steps between model checkpoints
   
+  DATASET_HIGHLIGHT_SUPERVISION_THRESHOLD:
+    value: 0.1  # Dataset highlight are exckluded from supervision if above this threshold
+
+
   ### LOSS WEIGHTS (relative to the total loss, NOT NORMALIZED LATER)                                                                              
   SPECULAR_LOSS_WEIGHT:
     value: 0.0  # Weight for specular component reconstruction loss
   DIFFUSE_LOSS_WEIGHT:
-    value: 0.0  # Weight for diffuse component reconstruction loss
+    value: 0.1  # Weight for diffuse component reconstruction loss
   HIGHLIGHT_LOSS_WEIGHT:
     value: 1.0  # Weight for highlight mask regression loss
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
@@ -344,20 +265,20 @@ parameters:
   
   WEIGHT_TOKEN_INPAINT:
     value: 1.0  # Weight for token-space inpainting loss (L1 + cosine similarity in feature space)
-  #####################################################################################
-  # LEAVE ALL THESE AT 0.0 
-  #####################################################################################
-  WEIGHT_CONTEXT_IDENTITY:
-    value: 0.0  # Weight for L1 loss on context (non-masked) regions (identity preservation)
-  WEIGHT_RING_GRAD:
-    value: 0.0  # Weight for gradient matching loss on saturation ring
+  WEIGHT_CONTEXT_IDENTITY: 
+    value: 0.0  # LEAVE TO 0.0: Weight for L1 loss on context (non-masked) regions (identity preservation) 
   WEIGHT_TV_IN_HOLE:
-    value: 0.0  # Weight for total variation loss inside masked/hole regions
-  #####################################################################################
+    value: 0.0  # LEAVE TO 0.0: Weight for total variation loss inside masked/hole regions
   RING_DILATE_KERNEL:
     value: 17  # Dilation kernel size (odd number) for creating ring mask around highlights
+  WEIGHT_SEAM:
+    value: 0.1  # Weight for gradient matching loss on saturation ring
+  SEAM_USE_CHARB:
+    value: True  # Use Charbonnier loss instead of L1 in seam loss (smooth L1 for boundary consistency)
+  SEAM_WEIGHT_GRAD:
+    value: 0.0  # Weight for gradient matching term inside seam loss (0.0 = disable gradient term)
   TOKEN_FEAT_ALPHA:
-    value: 0.5  # Mixing factor for token feature loss: alpha * L1 + (1-alpha) * (1-cosine_sim)
+    value: 0.75  # Mixing factor for token feature loss: alpha * L1 + (1-alpha) * (1-cosine_sim)
 
   ### LOGGING, RESULTS AND WANDB                                                                 
   LOG_INTERVAL:
@@ -375,5 +296,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"  # WandB project name
   NOTES:
-    value: "Local Prior Weight Sweep"  # Notes/description for this training run
+    value: "Detached DPT head conv unfrozen. seam weight 0.0, diffuse weight 0.1"  # Notes/description for this training run
   

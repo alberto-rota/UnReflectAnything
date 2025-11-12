@@ -1108,9 +1108,9 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
         outputs["highlight"] = hl_soft
 
         ### SECOND: Construct patch-level mask - From the prediction or override from GT if provided
-        if "patch_mask_override" in model_input_dict:
+        if "inpaint_mask_override" in model_input_dict:
             patchmask_bool = pixel_mask_to_patch_mask(
-                model_input_dict["patch_mask_override"],
+                model_input_dict["inpaint_mask_override"],
                 patch_size=self.patch_size,
                 threshold=0.1,
                 invert=False,
