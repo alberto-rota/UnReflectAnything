@@ -1,17 +1,17 @@
-run: "morning-energy-747"
+run: "easy-surf-759"
 runs_dir: "/home/atuin/v120bb/v120bb18/UnReflectAnything/runs"
-weights_path: "/anvme/workspace/v120bb18-unreflectanything/results/morning-energy-747/models/weights_best.pt"
+weights_path: "/anvme/workspace/v120bb18-unreflectanything/results/easy-surf-759/models/weights_best.pt"
 
 model_config_path: "/home/atuin/v120bb/v120bb18/UnReflectAnything/config_train.yaml"
 model_module: "models"
-input_dir: "/anvme/workspace/v120bb18-unreflectanything/benchmark/data/input/CHOLEC80_v70"
-output_dir: "/anvme/workspace/v120bb18-unreflectanything/benchmark/data/OURS/CHOLEC80_v70"
-batch_size: 16
+input_dir: "/anvme/workspace/v120bb18-unreflectanything/benchmark/data/input"
+output_dir: "/anvme/workspace/v120bb18-unreflectanything/benchmark/data/OURS"
+batch_size: 32
 num_workers: 4
-chunk_size: 4
+chunk_size: 8
 device: "cuda"
 image_extensions: [".png", ".jpg", ".jpeg"]
 resize_output: True
 brightness_threshold: 0.8
 inpaint_mask_dilation: 11
-monitor_usage: True
+monitor_usage: True 

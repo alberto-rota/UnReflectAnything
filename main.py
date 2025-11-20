@@ -25,7 +25,7 @@ import utilities.engine_initializers as initialize
 logger = get_logger(__name__).set_context("IMPORT")
 
 
-def create_model_from_config(config: DotMap, device: torch.device):
+def create_model_from_config(config: DotMap, device: torch.device, verbose: bool = True):
     """
     Create the RGBPOLDecomposer model from configuration.
     
@@ -38,6 +38,7 @@ def create_model_from_config(config: DotMap, device: torch.device):
             - MODEL: Model architecture configuration
             - DATASETS: Dataset configurations for extracting target image size
         device (torch.device): PyTorch device to place the model on (e.g., 'cuda' or 'cpu')
+        verbose: If True, print/log progress information. Defaults to True.
 
     Returns:
         RGBPOLDecomposer: The initialized model ready for training or inference
@@ -212,7 +213,8 @@ def create_model_from_config(config: DotMap, device: torch.device):
             dynamic=config.get("COMPILE_DYNAMIC", None)
         )
         end_time = time.time()
-        logger.info(f"Torch Compile time: {end_time - start_time:.2f} seconds",context="MODEL")
+        if verbose:
+            logger.info(f"Torch Compile time: {end_time - start_time:.2f} seconds",context="MODEL")
     torch.cuda.empty_cache()
     # from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
     # from models import DINOv3
@@ -246,10 +248,11 @@ def create_model_from_config(config: DotMap, device: torch.device):
     # ).to(device)
 
     
-    logger.info(
-        f"Model with class {model.__class__.__name__} created with {sum(p.numel() for p in model.parameters()):,} parameters",
-        context="MODEL",
-    )
+    if verbose:
+        logger.info(
+            f"Model with class {model.__class__.__name__} created with {sum(p.numel() for p in model.parameters()):,} parameters",
+            context="MODEL",
+        )
 
     return model
 

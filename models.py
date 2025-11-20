@@ -2156,7 +2156,7 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
             
             if unexpected_keys:
                 logger.warning(
-                    f"Unexpected keys when loading pretrained token inpainter from {pretrained_path}: {unexpected_keys[:5]}"
+                    f"Unexpected keys when loading pretrained token inpainter from {pretrained_path}: {unexpected_keys[:5]}"    
                     + (f" (and {len(unexpected_keys) - 5} more)" if len(unexpected_keys) > 5 else "")
                 )
             

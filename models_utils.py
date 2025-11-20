@@ -199,6 +199,7 @@ def load_best_model_by_run(
     run_identifier: str,
     device: Optional[torch.device] = None,
     runs_dir: Optional[str] = None,
+    verbose: bool = True,
 ) -> nn.Module:
     """
     Load and return a model instantiated from a run's best checkpoint.
@@ -208,6 +209,7 @@ def load_best_model_by_run(
         device: Optional torch.device. Defaults to CUDA if available else CPU.
         runs_dir: Optional absolute path to the root runs directory. If None, uses the
                   same resolution logic as the training engine (RESUlTS_DIR env or default).
+        verbose: If True, print/log progress information. Defaults to True.
 
     Returns:
         nn.Module: The model put on the requested device, loaded with best weights, set to eval().
@@ -218,6 +220,8 @@ def load_best_model_by_run(
     """
     # Resolve device
     load_device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if verbose:
+        print(f"Loading model on device: {load_device}")
 
     # Resolve runs directory using same logic as engine initializers if not provided
     if runs_dir is None:
@@ -251,6 +255,8 @@ def load_best_model_by_run(
 
     models_dir = resume_info.get("models_dir")
     run_dir = resume_info.get("run_dir")
+    if verbose:
+        print(f"Found run directory: {run_dir}")
     if models_dir is None or not os.path.isdir(models_dir):
         raise FileNotFoundError(f"Models directory not found for run: {run_identifier}")
 
@@ -264,6 +270,8 @@ def load_best_model_by_run(
         raise FileNotFoundError(
             f"Best checkpoint not found. Looked for: {', '.join(candidate_paths)}"
         )
+    if verbose:
+        print(f"Loading checkpoint from: {best_ckpt}")
 
     # Load checkpoint and reconstruct model from saved config
     checkpoint = torch.load(best_ckpt, map_location=load_device, weights_only=False)
@@ -297,9 +305,11 @@ def load_best_model_by_run(
             create_model_from_config,
         )  # local import to avoid top-level cycle
 
-        model = create_model_from_config(saved_config, load_device)
+        model = create_model_from_config(saved_config, load_device, verbose=verbose)
     except Exception as e:
         raise RuntimeError(f"Failed to instantiate model from saved config: {e}")
+    if verbose:
+        print(f"Model created: {model.__class__.__name__}")
 
     # Load weights (handle both full checkpoint and raw state_dict formats)
     state_dict = checkpoint.get("model_state_dict", None)
@@ -308,12 +318,19 @@ def load_best_model_by_run(
         state_dict = checkpoint
 
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if verbose:
+        if len(missing) > 0:
+            print(f"Warning: Missing keys when loading checkpoint: {len(missing)} keys")
+        if len(unexpected) > 0:
+            print(f"Warning: Unexpected keys when loading checkpoint: {len(unexpected)} keys")
     if len(unexpected) > 0:
         # Not fatal; but surface to caller as warning via exception message for clarity
         # Users can inspect and decide to ignore
         pass
 
     model = model.to(load_device).eval()
+    if verbose:
+        print("Model loaded successfully and set to eval mode")
     return model
 
 

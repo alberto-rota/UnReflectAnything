@@ -769,7 +769,7 @@ def compute_highlight_mask(rgb_batch: Tensor, threshold: float = 0.7) -> Tensor:
     """
 
     # Compute brightness as the mean across the channel dimension (R,G,B)
-    brightness = rgb_batch.mean(dim=1, keepdim=True)  # [B,1,H,W]
+    brightness = rgb_batch.mean(dim=1, keepdim=True)/rgb_batch.mean(dim=1, keepdim=True).max()  # [B,1,H,W]
     mask = (brightness > threshold).to(rgb_batch.dtype)
     return mask
 
@@ -901,7 +901,7 @@ def run_inference(options: InferenceOptions) -> None:
                 outputs = model(
                     {
                         "rgb": rgb_batch,
-                        "inpaint_mask_override": inpaint_mask_override,
+                        # "inpaint_mask_override": inpaint_mask_override,
                         "inpaint_mask_dilation": inpaint_mask_dilation,
                     }
                 )

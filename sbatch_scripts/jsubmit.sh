@@ -5,7 +5,6 @@ set -euo pipefail
 REPO_DIR="${REPO_DIR:-$WORK/UnReflectAnything}"
 WS_DIR="${WORK:-/anvme/workspace/v120bb18-unreflectanything}"
 SNAP_ROOT="${SNAP_ROOT:-$WORK/snapshots}"     # snapshots live here
-SBATCH_FILE="${1:-train_a100_40_asap.sbatch}"   # pass sbatch filename or defaults
 EXCLUDES=(
   ".git"
   ".venv"
@@ -21,6 +20,27 @@ EXCLUDES=(
   "demos"
   "sandboxes"
 )
+
+# Parse command-line arguments
+SBATCH_FILE=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -n|--name)
+      SBATCH_FILE="$2"
+      shift 2
+      ;;
+    *)
+      # Backward compatibility: treat as positional argument
+      if [ -z "$SBATCH_FILE" ]; then
+        SBATCH_FILE="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+# Default if not provided
+SBATCH_FILE="${SBATCH_FILE:-train_a100_40_asap.sbatch}"
 
 mkdir -p "$SNAP_ROOT"
 

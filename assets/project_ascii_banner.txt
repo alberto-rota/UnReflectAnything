@@ -9,6 +9,6 @@
  ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝╚═╝     ╚══════╝╚══════╝ ╚═════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝      ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝ 
 
 > Project Members: Alberto Rota, Mert Kiray, Mert Asim Karaoglu, Patrick Ruhkamp, Benjamin Busam
-> Copyright (c): The Authors
+> Copyright (c): Alberto Rota
 
 ================================================================================================================================================

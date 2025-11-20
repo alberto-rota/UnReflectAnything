@@ -3,7 +3,7 @@
 #SBATCH --partition=a100
 #SBATCH --constraint=a100_80
 #SBATCH --time=1-00:00:00
-#SBATCH --job-name=train_A180
+#SBATCH --job-name=resume
 #SBATCH --mail-user=alberto1.rota@polimi.it
 #SBATCH --mail-type=ALL
 #SBATCH --nodes=1
@@ -19,6 +19,7 @@ export https_proxy=http://proxy.nhr.fau.de:80
 export WS_DIR=/anvme/workspace/v120bb18-unreflectanything
 export DATASET_DIR="$WS_DIR/datasets"
 export RESULTS_DIR="/anvme/workspace/v120bb18-unreflectanything/results"
+
 
 # Python modules
 module load python
