@@ -19,7 +19,7 @@ parameters:
           REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]  # Output channels for each decoder stage (DPT-style reassembly)
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]  # Spatial upsampling factors for each stage
           READOUT_TYPE: "ignore"  # Readout type for DPT decoder ("ignore", "project", etc.)
-          # FROM_PRETRAINED: "weights/rgb_decoder.pth"  # Path to pretrained decoder weights (optional)
+          FROM_PRETRAINED: "weights/decoder_896.pth"  # Path to pretrained decoder weights (optional)
           USE_BN: False  # Use batch normalization in decoder
           DROPOUT: 0.1  # Dropout rate in decoder layers
           OUTPUT_IMAGE_SIZE: [896,896]  # Output image resolution [height, width]
@@ -97,7 +97,7 @@ parameters:
         LOAD_RGB_ONLY: True  # Ignore polarization data if True
 
       SCARED:
-        VAL_SCENES: ["v4"] #["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]  # Validation scene names
+        VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]  # Validation scene names
         TARGET_SIZE: [896,896]  # Target image size [height, width]
         RESIZE_MODE: "resize" #"resize+crop"  # Image resizing mode
         SAMPLE_EVERY_N: 1  # Load every Nth frame

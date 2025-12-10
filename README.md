@@ -1,18 +1,17 @@
 <div align="center">
 
-<h1>UnReflectAnything</h1>
-
-<h3>RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision</h3>
+<h1>UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision</h1>
 
 <p>
-<b>Alberto Rota<sup>1*</sup>, Mert Kiray<sup>2</sup>, Mert Asim Karaoglu<sup>2</sup>, Patrick Ruhkamp<sup>2</sup>,<br>
-Elena De Momi<sup>1</sup>, Nassir Navab<sup>2</sup>, Benjamin Busam<sup>2</sup></b><br>
-<sup>1</sup>Politecnico di Milano &nbsp;&nbsp; <sup>2</sup>Technical University of Munich
+<b>Alberto Rota<sup>1*</sup>, Mert Kiray<sup>2,3</sup>, Mert Asim Karaoglu<sup>4,2</sup>, Patrick Ruhkamp<sup>2</sup>,<br>
+Elena De Momi<sup>1</sup>, Nassir Navab<sup>2,3</sup>, Benjamin Busam<sup>2,3</sup></b><br>
+
+<sup>1</sup>Politecnico di Milano &nbsp;&nbsp; <sup>2</sup>Technical University of Munich &nbsp;&nbsp; <sup>3</sup>Munich Center for Machine Learning (MCML) &nbsp;&nbsp; <sup>4</sup>ImFusion
 </p>
 
 <p>
-<a href="#" style="padding:6px 14px;border:1px solid #555;border-radius:6px;text-decoration:none;margin:4px;display:inline-block">📄 Paper</a>
-<a href="#" style="padding:6px 14px;border:1px solid #555;border-radius:6px;text-decoration:none;margin:4px;display:inline-block">💻 Code</a>
+<a href="#" style="padding:10px 20px;background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);color:#fff;border-radius:8px;text-decoration:none;margin:6px;display:inline-block;font-weight:600;box-shadow:0 4px 6px rgba(0,0,0,0.1);transition:transform 0.2s,box-shadow 0.2s" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 12px rgba(0,0,0,0.15)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 6px rgba(0,0,0,0.1)'">📄 Paper</a>
+<a href="https://github.com/alberto-rota/UnReflectAnything" style="padding:10px 20px;background:linear-gradient(135deg, #11998e 0%, #38ef7d 100%);color:#fff;border-radius:8px;text-decoration:none;margin:6px;display:inline-block;font-weight:600;box-shadow:0 4px 6px rgba(0,0,0,0.1);transition:transform 0.2s,box-shadow 0.2s" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 12px rgba(0,0,0,0.15)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 6px rgba(0,0,0,0.1)'">💻 Code</a>
 
 </p>
 
@@ -24,29 +23,20 @@ Elena De Momi<sup>1</sup>, Nassir Navab<sup>2</sup>, Benjamin Busam<sup>2</sup><
 
 ## Abstract
 
-<div style="max-width:900px;margin:auto">
-
-Specular highlights distort appearance, obscure texture, and hinder geometric reasoning in both natural and surgical imagery.  
-We present **UnReflectAnything**, an RGB-only framework that removes highlights from a single image by predicting a highlight map together with a reflection-free diffuse reconstruction.  
-
-The model leverages a frozen vision transformer encoder to extract multi-scale features, a lightweight head to localize specular regions, and a **token-level inpainting module** that restores corrupted feature patches prior to image decoding.  
-
-To address the lack of paired supervision, we introduce a **Virtual Highlight Synthesis** pipeline that renders physically plausible specularities using monocular geometry, Fresnel-aware shading, and randomized lighting. This enables training on arbitrary RGB images while preserving geometric consistency.  
-
-UnReflectAnything generalizes across natural and surgical domains—where non-Lambertian surfaces and non-uniform lighting produce severe highlights—and achieves competitive performance with state-of-the-art methods on multiple benchmarks.
-
+<div style="max-width:900px;margin:auto; text-align:justify">
+Specular highlights distort appearance, obscure texture, and hinder geometric reasoning in both natural and surgical imagery. We present UnReflectAnything, an RGB-only framework that removes highlights from a single image by predicting a highlight map together with a reflection-free diffuse reconstruction. The model uses a frozen vision transformer encoder to extract multi-scale features, a lightweight head to localize specular regions, and a token-level inpainting module that restores corrupted feature patches before producing the final diffuse image. To overcome the lack of paired supervision, we introduce a Virtual Highlight Synthesis pipeline that renders physically plausible specularities using monocular geometry, Fresnel-aware shading, and randomized lighting which enables training on arbitrary RGB images with correct geometric structure. UnReflectAnything generalizes across natural and surgical domains where non-Lambertian surfaces and non-uniform lighting create severe highlights and it achieves competitive performance with state-of-the-art results on several benchmarks
 </div>
 
----
+<!-- --- -->
 
-## Key Contributions
+<!-- ## Key Contributions
 - **Virtual Highlight Synthesis** from monocular geometry enabling paired supervision from any RGB image  
 - **Token-space diffuse inpainting** of DINOv3 features prior to image reconstruction  
 - **RGB-only inference** without polarization sensors or paired ground truth  
 - Strong generalization to both **natural and endoscopic imagery**  
-- Improved robustness in downstream **correspondence and pose estimation** tasks  
+- Improved robustness in downstream **correspondence and pose estimation** tasks   -->
 
----
+<!-- --- -->
 
 <!-- ## Method Overview
 
