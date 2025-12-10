@@ -1,18 +1,25 @@
-# UnReflectAnything  
-**RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision**
+<div align="center">
 
-![Header](assets/header.png)
+# UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision
 
-**Alberto Rota¹*, Mert Kiray², Mert Asim Karaoglu², Patrick Ruhkamp²,  
-Elena De Momi¹, Nassir Navab², Benjamin Busam²**  
+<img src="assets/header.png" alt="Header" width="100%"/>
+
+**Alberto Rota¹*, Mert Kiray², Mert Asim Karaoglu², Patrick Ruhkamp²,  Elena De Momi¹, Nassir Navab², Benjamin Busam²**  
 ¹ Politecnico di Milano ² Technical University of Munich
 
+</div>
+
+<div align="center">
+
 ## Abstract
-UnReflectAnything is an RGB-only framework for single-image specular highlight removal. It predicts a soft highlight map and reconstructs a reflection-free diffuse image by inpainting corrupted feature tokens extracted with a frozen DINOv3 Vision Transformer. To enable training without paired data, the method introduces Virtual Highlight Synthesis, which renders physically plausible specularities using monocular geometry, Fresnel-aware shading, and randomized lighting. The approach generalizes across natural and surgical domains and improves downstream geometric consistency. :contentReference[oaicite:0]{index=0}
+
+Specular highlights distort appearance, obscure texture, and hinder geometric reasoning in both natural and surgical imagery. We present **UnReflectAnything**, an RGB-only framework that removes highlights from a single image by predicting a highlight map together with a reflection-free diffuse reconstruction. The model uses a frozen vision transformer encoder to extract multi-scale features, a lightweight head to localize specular regions, and a token-level inpainting module that restores corrupted feature patches before producing the final diffuse image. To overcome the lack of paired supervision, we introduce a **Virtual Highlight Synthesis** pipeline that renders physically plausible specularities using monocular geometry, Fresnel-aware shading, and randomized lighting. This enables training on arbitrary RGB images while preserving correct geometric structure. UnReflectAnything generalizes across natural and surgical domains—where non-Lambertian surfaces and non-uniform lighting create severe highlights—and achieves competitive performance with state-of-the-art methods on several benchmarks.
+
+</div>
 
 ## Key Contributions
 - Virtual Highlight Synthesis from monocular geometry for paired supervision from any RGB image  
 - Token-space diffuse inpainting of DINOv3 features before image decoding  
 - RGB-only inference without polarization sensors or paired ground truth  
 - Strong generalization to natural and endoscopic imagery  
-- Improved robustness in downstream correspondence and pose estimation tasks :contentReference[oaicite:1]{index=1}
+- Improved robustness in downstream correspondence and pose estimation tasks  
