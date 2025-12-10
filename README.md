@@ -1,17 +1,17 @@
 <div align="center">
 
-<p>
+<!-- <p>
 <b>Alberto Rota<sup>1*</sup>, Mert Kiray<sup>2,3</sup>, Mert Asim Karaoglu<sup>4,2</sup>, Patrick Ruhkamp<sup>2</sup>,<br>
 Elena De Momi<sup>1</sup>, Nassir Navab<sup>2,3</sup>, Benjamin Busam<sup>2,3</sup></b><br>
 
 <sup>1</sup>Politecnico di Milano &nbsp;&nbsp; <sup>2</sup>Technical University of Munich &nbsp;&nbsp; <sup>3</sup>Munich Center for Machine Learning (MCML) &nbsp;&nbsp; <sup>4</sup>ImFusion
-</p>
+</p> -->
 
-<p>
+<!-- <p>
 <a href="#" style="padding:10px 20px;background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);color:#fff;border-radius:8px;text-decoration:none;margin:6px;display:inline-block;font-weight:600;box-shadow:0 4px 6px rgba(0,0,0,0.1);transition:transform 0.2s,box-shadow 0.2s" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 12px rgba(0,0,0,0.15)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 6px rgba(0,0,0,0.1)'">📄 Paper</a>
 <a href="https://github.com/alberto-rota/UnReflectAnything" style="padding:10px 20px;background:linear-gradient(135deg, #11998e 0%, #38ef7d 100%);color:#fff;border-radius:8px;text-decoration:none;margin:6px;display:inline-block;font-weight:600;box-shadow:0 4px 6px rgba(0,0,0,0.1);transition:transform 0.2s,box-shadow 0.2s" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 12px rgba(0,0,0,0.15)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 6px rgba(0,0,0,0.1)'">💻 Code</a>
 
-</p>
+</p> -->
 
 <img src="assets/header.png" alt="method overview" width="90%"/>
 
