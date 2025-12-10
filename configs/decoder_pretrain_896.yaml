@@ -24,7 +24,7 @@ parameters:
           DROPOUT: 0.1  # Dropout rate in decoder layers
           OUTPUT_IMAGE_SIZE: [896,896]  # Output image resolution [height, width]
           OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
-          DECODER_LR: 1.0e-3 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
+          DECODER_LR: 5.0e-5 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
           NUM_FUSION_BLOCKS_TRAINABLE: null  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
           TRAIN_RGB_HEAD: True  # Whether to train RGB head (true/false, null = train if DECODER_LR != 0)
       TOKEN_INPAINTER:
@@ -172,7 +172,7 @@ parameters:
   EPOCHS:
     value: 20  # Maximum number of training epochs<
   LEARNING_RATE:
-    value: 1.0e-3  # Base learning rate for optimizer
+    value: 1.0e-4  # Base learning rate for optimizer
   WEIGHT_DECAY:   
     value: 0.0  # L2 regularization weight (0.0 = no weight decay)
   GRADIENT_ACCUMULATION_STEPS:
@@ -186,11 +186,11 @@ parameters:
       ONPLATEAU:  # ReduceLROnPlateau scheduler (reduces LR when validation metric plateaus)
         PATIENCE: 5  # Number of epochs to wait before reducing LR
         FACTOR: 0.1  # Factor by which LR is reduced (new_lr = old_lr * factor)
-      # COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
-      #   N_PERIODS: 5  # Number of cosine periods over training
-      STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
-        N_STEPS: 5  # Number of times to reduce LR during training
-        GAMMA: 0.25  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
+      COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
+        N_PERIODS: 1  # Number of cosine periods over training
+      # STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
+      #   N_STEPS: 5  # Number of times to reduce LR during training
+      #   GAMMA: 0.25  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
       # EXPONENTIAL:  # ExponentialLR scheduler (exponential decay)
       #   GAMMA: 0.5  # Multiplicative factor for exponential decay
 

@@ -5,12 +5,12 @@ parameters:
   ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:
-      MODEL_CLASS: "UnReflect_Model "  # Main model class name (must match class in models.py)
+      MODEL_CLASS: "UnReflect_Model_TokenInpainter"  # Main model class name (must match class in models.py)
       MODEL_MODULE: "models"  # Module name to import model classes from (default: "models")
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"  # DINOv3 encoder model name (HuggingFace format)
-        IMAGE_SIZE: 448  # Input image size (height and width in pixels)
-        RETURN_SELECTED_LAYERS: [3, 6, 9  , 12]  # Transformer layer indices to extract features from (0-indexed)
+        IMAGE_SIZE: 896  # Input image size (height and width in pixels)
+        RETURN_SELECTED_LAYERS: [3, 6, 9, 12]  # Transformer layer indices to extract features from (0-indexed)
         RGB_ENCODER_LR: 0.0  # Learning rate for RGB encoder (0.0 = frozen, must be explicitly set)
       DECODERS:
         diffuse:
@@ -22,9 +22,9 @@ parameters:
           # FROM_PRETRAINED: "weights/rgb_decoder.pth"  # Path to pretrained decoder weights (optional)
           USE_BN: False  # Use batch normalization in decoder
           DROPOUT: 0.1  # Dropout rate in decoder layers
-          OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
+          OUTPUT_IMAGE_SIZE: [896,896]  # Output image resolution [height, width]
           OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
-          DECODER_LR: 1.0e-4 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
+          DECODER_LR: 1.0e-5 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
           NUM_FUSION_BLOCKS_TRAINABLE: 1  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
           TRAIN_RGB_HEAD: True  # Whether to train RGB head (true/false, null = train if DECODER_LR != 0)
         highlight:
@@ -35,14 +35,15 @@ parameters:
           READOUT_TYPE: "ignore"  # Readout type for DPT decoder
           USE_BN: False  # Use batch normalization in decoder
           DROPOUT: 0.1  # Dropout rate in decoder layers
-          OUTPUT_IMAGE_SIZE: [448,448]  # Output image resolution [height, width]
+          OUTPUT_IMAGE_SIZE: [896,896]  # Output image resolution [height, width]
           OUTPUT_CHANNELS: 1  # Number of output channels (1 for highlight mask)
           DECODER_LR: 5.0e-4  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
           NUM_FUSION_BLOCKS_TRAINABLE: null  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
       TOKEN_INPAINTER:
-        TOKEN_INPAINTER_CLASS: "TokenInpainter_Naive"  # Token inpainter class name
-        # TOKEN_INPAINTER_MODULE: "token_inpainters"  # Module name to import token inpainter from
-        # FROM_PRETRAINED: "weights/token_inpainter.pth"  # Path to pretrained token inpainter weights (optional)
+        TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"  # Token inpainter class name
+        TOKEN_INPAINTER_MODULE: "token_inpainters"  # Module name to import token inpainter from
+        FROM_PRETRAINED: "weights/token_inpainter.pth"  # Path to pretrained token inpainter weights (optional)
+        
         TOKEN_INPAINTER_LR: 0.0  # Learning rate for token inpainter (can differ from base LR)
         DEPTH: 6  # Number of transformer blocks
         HEADS: 16  # Number of attention heads
@@ -63,7 +64,7 @@ parameters:
     value:
       SCRREAM:
         VAL_SCENES: ["scene10_full_00","scene11_full_00","scene044_full_00","scene04_reduced_00","scene04_reduced_01","scene04_reduced_02"]  # List of validation scene names
-        TARGET_SIZE: [448,448]  # Target image size [height, width] in pixels
+        TARGET_SIZE: [896,896]  # Target image size [height, width] in pixels
         RESIZE_MODE: "resize+crop"  # Image resizing mode: "resize", "crop", "resize+crop", or "pad"
         FEW_IMAGES: False  # If True, load only first 10 images per scene (for quick debugging)
         SAMPLE_EVERY_N: 2  # Load every Nth frame from each scene (1 = all frames, 4 = every 4th frame)
@@ -71,7 +72,7 @@ parameters:
         
       HOUSECAT6D:
         VAL_SCENES: ["val_scene1","val_scene2"]  # Validation scene names
-        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        TARGET_SIZE: [896,896]  # Target image size [height, width]
         RESIZE_MODE: "resize+crop"  # Image resizing mode
         FEW_IMAGES: False  # Load only first 10 images if True
         SAMPLE_EVERY_N: 2  # Load every Nth frame
@@ -80,7 +81,7 @@ parameters:
       CROMO:
         TRAIN_SCENES: ["kitchen"]  # Training scene names (list or string)
         # VAL_SCENES: "station"  # Validation scene names (optional)
-        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        TARGET_SIZE: [896,896]  # Target image size [height, width]
         RESIZE_MODE: "resize"  # Image resizing mode
         FEW_IMAGES: False  # Load only first 10 images if True
         SAMPLE_EVERY_N: 2  # Load every Nth frame
@@ -89,17 +90,17 @@ parameters:
       PSD:
         TRAIN_SCENES: "PSD_Train"  # Training scene name (string or list)
         VAL_SCENES: "PSD_Val"  # Validation scene name (string or list)
-        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        TARGET_SIZE: [896,896]  # Target image size [height, width]
         RESIZE_MODE: "resize+crop"  # Image resizing mode
         FEW_IMAGES: False  # Load only first 10 images if True
         SAMPLE_EVERY_N: 1  # Load every Nth frame (1 = all frames)
         LOAD_RGB_ONLY: True  # Ignore polarization data if True
 
       SCARED:
-        VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]  # Validation scene names
-        TARGET_SIZE: [448,448]  # Target image size [height, width]
-        RESIZE_MODE: "resize+crop"  # Image resizing mode
-        SAMPLE_EVERY_N: 8  # Load every Nth frame
+        VAL_SCENES: ["v4"] #["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]  # Validation scene names
+        TARGET_SIZE: [896,896]  # Target image size [height, width]
+        RESIZE_MODE: "resize" #"resize+crop"  # Image resizing mode
+        SAMPLE_EVERY_N: 1  # Load every Nth frame
         LOAD_RGB_ONLY: True  # Ignore polarization data if True
         FEW_IMAGES: False  # Load only first 10 images if True
         HIGHLIGHT_ENABLE: False  # Enable highlight detection/processing in dataset
@@ -111,7 +112,7 @@ parameters:
       
       STEREOMIS_TRACKING:
         VAL_SCENES: ["P2_2"]  # Validation scene names
-        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        TARGET_SIZE: [896,896]  # Target image size [height, width]
         RESIZE_MODE: "resize+crop"  # Image resizing mode
         SAMPLE_EVERY_N: 4  # Load every Nth frame
         LOAD_RGB_ONLY: True  # Ignore polarization data if True
@@ -125,7 +126,7 @@ parameters:
 
       CHOLEC80:
         VAL_SCENES: ["val"]  # Validation scene names
-        TARGET_SIZE: [448,448]  # Target image size [height, width]
+        TARGET_SIZE: [896,896]  # Target image size [height, width]
         RESIZE_MODE: "resize+crop"  # Image resizing mode
         SAMPLE_EVERY_N: 10  # Load every Nth frame
         LOAD_RGB_ONLY: True  # Ignore polarization data if True
@@ -140,12 +141,12 @@ parameters:
       # POLARGB:
       #   TRAIN_SCENES: "train"
       #   VAL_SCENES: "test"
-      #   TARGET_SIZE: [448,448]
+      #   TARGET_SIZE: [896,896]
       #   RESIZE_MODE: "resize+crop"
       #   SAMPLE_EVERY_N: 1
       #   LOAD_RGB_ONLY: True
 
-  BATCH_SIZE: # Max batch size with img size 448 is 32
+  BATCH_SIZE: # Max batch size with img size 896 is 32
     value: 32 # Number of samples per batch (adjust based on GPU memory)
   NUM_WORKERS:
     value: 8  # Number of data loading worker processes (0 = main process only)

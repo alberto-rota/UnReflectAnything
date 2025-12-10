@@ -14,4 +14,4 @@ image_extensions: [".png", ".jpg", ".jpeg"]
 resize_output: True
 brightness_threshold: 0.8
 inpaint_mask_dilation: 11
-monitor_usage: True 
+monitor_usage: True

@@ -83,7 +83,7 @@ class RGBP_Dataset(Dataset):
         # RGB-only mode
         load_rgb_only: bool = False,  # Force loading only RGB data, ignore polarization
         # Return file paths in output
-        return_filepaths: bool = False,  # If True, include file paths in returned dictionary
+        return_filepaths: bool = True,  # If True, include file paths in returned dictionary
         # Deprecated parameters (for backward compatibility)
         # Highlight detection (optional)
         highlight_enable: bool = False,
@@ -1064,9 +1064,8 @@ class RGBP_Dataset(Dataset):
         if self.return_filepaths:
             filepaths = {
                 "raw_path": raw_path,
-                "pol_path": pol_path,
-                "diffuse_path": diffuse_path,
-                "intrinsics_path": intrinsics_path,
+                # "pol_path": pol_path,
+                # "intrinsics_path": intrinsics_path,
             }
             sample["filepaths"] = filepaths
 
