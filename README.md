@@ -1,7 +1,5 @@
 <div align="center">
 
-<h1>UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision</h1>
-
 <p>
 <b>Alberto Rota<sup>1*</sup>, Mert Kiray<sup>2,3</sup>, Mert Asim Karaoglu<sup>4,2</sup>, Patrick Ruhkamp<sup>2</sup>,<br>
 Elena De Momi<sup>1</sup>, Nassir Navab<sup>2,3</sup>, Benjamin Busam<sup>2,3</sup></b><br>

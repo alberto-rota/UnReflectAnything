@@ -3,3 +3,5 @@ remote_theme: pages-themes/cayman@v0.2.0
 plugins:
   - jekyll-remote-theme
 
+title: "UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision"
+description: "<b>Alberto Rota<sup>1*</sup>, Mert Kiray<sup>2,3</sup>, Mert Asim Karaoglu<sup>4,2</sup>, Patrick Ruhkamp<sup>2</sup>,<br>Elena De Momi<sup>1</sup>, Nassir Navab<sup>2,3</sup>, Benjamin Busam<sup>2,3</sup></b><br>"
