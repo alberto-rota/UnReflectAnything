@@ -4,5 +4,6 @@ plugins:
   - jekyll-remote-theme
 
 title: "UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision"
+description: ""
 github:
   is_project_page: false
