@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # --- User knobs ---
-REPO_DIR="${REPO_DIR:-$WORK/UnReflectAnything}"
+REPO_DIR="${REPO_DIR:-$WORK/Match}"
 WS_DIR="${WORK:-/anvme/workspace/v120bb18-unreflectanything}"
 SNAP_ROOT="${SNAP_ROOT:-$WORK/snapshots}"     # snapshots live here
 EXCLUDES=(
@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default if not provided
-SBATCH_FILE="${SBATCH_FILE:-train_a100_40_asap.sbatch}"
+SBATCH_FILE="sbatch_scripts/${SBATCH_FILE:-train_a100_40_asap.sbatch}"
 
 mkdir -p "$SNAP_ROOT"
 
