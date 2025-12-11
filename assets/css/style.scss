@@ -1,8 +1,13 @@
 ---
 ---
 
-@import "{{ site.theme }}";
 /* Custom styles for UnReflectAnything GitHub Pages */
+
+/* Montserrat font for entire page */
+body,
+body * {
+  font-family: 'Montserrat', sans-serif !important;
+}
 
 /* 
  * PAGE HEADER BACKGROUND COLOR
@@ -18,9 +23,10 @@
    */
 }
 
-/* Content wrapper */
+/* Content wrapper - enlarged width */
 .content-wrapper {
-  max-width: 1200px;
+  max-width: 95%;
+  width: 100%;
   margin: 0 auto;
   padding: 20px;
   text-align: center;
@@ -67,7 +73,7 @@
   text-decoration: none;
   font-weight: 600;
   font-size: 1em;
-  color: #fff;
+  color: #000;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
@@ -209,6 +215,7 @@
 .slider-before {
   clip-path: inset(0 50% 0 0);
   transition: clip-path 0.1s ease-out;
+  z-index: 2;
 }
 
 .slider-after {
@@ -260,18 +267,17 @@
 }
 
 /* Divider line on slider */
-.slider-wrapper::before {
-  content: '';
+.slider-divider {
   position: absolute;
   top: 0;
-  left: 50%;
+  left: calc(50% - 1.5px);
   width: 3px;
   height: 100%;
   background: rgba(255, 255, 255, 0.9);
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
-  z-index: 4;
-  transform: translateX(-50%);
+  z-index: 3;
   pointer-events: none;
+  transition: left 0.1s ease-out;
 }
 
 /* Responsive design */
