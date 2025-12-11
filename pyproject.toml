@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unreflectanything"
+version = "0.1.0"
+description = "Deep learning method for removing specular reflections from RGB images."
+readme = "../README.md"
+requires-python = ">=3.10"
+authors = [{ name = "UnReflectAnything maintainers" }]
+license = { text = "See repository for licensing details." }
+keywords = ["computer vision", "specular removal", "reflection removal", "deep learning"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: Other/Proprietary License",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "torch>=2.2",
+  "torchvision>=0.17",
+  "transformers>=4.44",
+  "einops>=0.7",
+  "kornia>=0.7",
+  "numpy>=1.24",
+  "opencv-python>=4.8",
+  "scipy>=1.10",
+  "scikit-image>=0.22",
+  "pillow>=9.0",
+  "pyyaml>=6.0",
+  "dotmap>=1.3",
+  "tqdm>=4.64",
+  "python-dotenv>=1.0",
+  "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = ["build>=1.2", "twine>=5.1"]
+
+[project.urls]
+Homepage = "https://github.com/alberto-rota/UnReflectAnything"
+Repository = "https://github.com/alberto-rota/UnReflectAnything"
+Issues = "https://github.com/alberto-rota/UnReflectAnything/issues"
+
+[tool.setuptools]
+include-package-data = true
+package-dir = { "" = ".." }
+zip-safe = false
+py-modules = [
+  "ablate",
+  "ablate_agent",
+  "engine",
+  "geometry",
+  "inference",
+  "logger",
+  "loss_utils",
+  "losses",
+  "main",
+  "metrics",
+  "models",
+  "models_deprecated",
+  "models_old",
+  "models_utils",
+  "optimization",
+  "polar_highlighter",
+  "projections",
+  "sweep_agent",
+  "test",
+  "token_inpainters",
+  "train",
+]
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["dataset*", "pipelines*", "utilities*", "networks*", "comparisons*"]
+exclude = ["tests*", "sandboxes*", "wandb*", "results*", "weights*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"*" = [
+  "config_*.yaml",
+  "configs/**/*.yaml",
+  "assets/**/*",
+  "demos/**/*",
+  "requirements.txt",
+]
+
+
