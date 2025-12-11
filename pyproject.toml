@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unreflectanything"
-version = "0.1.0"
+version = "0.1.2"
 description = "Deep learning method for removing specular reflections from RGB images."
 readme = "../README.md"
 requires-python = ">=3.10"
