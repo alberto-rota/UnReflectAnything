@@ -1,6 +1,7 @@
 ---
 ---
 
+@import "{{ site.theme }}";
 /* Custom styles for UnReflectAnything GitHub Pages */
 
 /* Montserrat font for entire page */
@@ -16,11 +17,8 @@ body * {
  * The default Cayman theme uses #159957, but you can set any color you want.
  */
 .page-header {
-  background-color: #159957; /* Change this color to customize the header background */
-  /* You can also use gradients, images, etc.:
-   * background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-   * background-image: url('path/to/image.jpg');
-   */
+  background: linear-gradient(135deg, #159957 0%, #027f9e 100%);
+  
 }
 
 /* Content wrapper - enlarged width */
@@ -91,71 +89,56 @@ body * {
 
 /* Paper button - Purple */
 .btn-paper {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 25%, rgba(255, 255, 255, 0.85) 50%, #764ba2 75%, #667eea 100%);
-  background-size: 300% 300%;
-  background-position: 0% 50%;
+  background: #667eea;
 }
 
 .btn-paper:hover {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  background-position: 100% 50%;
-  transform: translateY(-4px) scale(1.05);
+  transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
 }
 
 /* Source Code button - Green */
 .btn-source {
-  background: linear-gradient(135deg, #11998e 0%, #38ef7d 25%, rgba(255, 255, 255, 0.85) 50%, #38ef7d 75%, #11998e 100%);
-  background-size: 300% 300%;
-  background-position: 0% 50%;
+  background: #11998e;
 }
 
 .btn-source:hover {
   background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-  background-position: 100% 50%;
-  transform: translateY(-4px) scale(1.05);
+  transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(17, 153, 142, 0.6);
 }
 
 /* Installation button - Blue */
 .btn-installation {
-  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 25%, rgba(255, 255, 255, 0.85) 50%, #00f2fe 75%, #4facfe 100%);
-  background-size: 300% 300%;
-  background-position: 0% 50%;
+  background: #4facfe;
 }
 
 .btn-installation:hover {
   background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-  background-position: 100% 50%;
-  transform: translateY(-4px) scale(1.05);
+  transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(79, 172, 254, 0.6);
 }
 
 /* Huggingface button - Yellow */
 .btn-huggingface {
-  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 25%, rgba(255, 255, 255, 0.85) 50%, #f59e0b 75%, #fbbf24 100%);
-  background-size: 300% 300%;
-  background-position: 0% 50%;
+  background: #fbbf24;
 }
 
 .btn-huggingface:hover {
   background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-  background-position: 100% 50%;
-  transform: translateY(-4px) scale(1.05);
+  transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(251, 191, 36, 0.6);
 }
 
 /* Contact button - Orange */
 .btn-contact {
-  background: linear-gradient(135deg, #f97316 0%, #ea580c 25%, rgba(255, 255, 255, 0.85) 50%, #ea580c 75%, #f97316 100%);
-  background-size: 300% 300%;
-  background-position: 0% 50%;
+  background: #f97316;
 }
 
 .btn-contact:hover {
   background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-  background-position: 100% 50%;
-  transform: translateY(-4px) scale(1.05);
+  transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(249, 115, 22, 0.6);
 }
 
@@ -177,7 +160,7 @@ body * {
 /* Image sliders section */
 .image-sliders-section {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 30px;
   margin: 60px 0;
   padding: 0 20px;
@@ -190,7 +173,7 @@ body * {
 .slider-wrapper {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 1 / 1;
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
@@ -283,8 +266,15 @@ body * {
 /* Responsive design */
 @media (max-width: 968px) {
   .image-sliders-section {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+}
+
+@media (max-width: 640px) {
+  .image-sliders-section {
     grid-template-columns: 1fr;
-    gap: 40px;
+    gap: 30px;
   }
   
   .authors {
