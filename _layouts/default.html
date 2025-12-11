@@ -28,7 +28,147 @@
     </header>
 
     <main id="content" class="main-content" role="main">
-      {{ content }}
+      <div class="content-wrapper">
+        <div class="authors-section">
+          <p class="authors">
+            <b>Alberto Rota<sup>1</sup>, Mert Kiray<sup>2,3</sup>, Mert Asim Karaoglu<sup>4,2</sup>, Patrick Ruhkamp<sup>2</sup>,<br>
+            Elena De Momi<sup>1</sup>, Nassir Navab<sup>2,3</sup>, Benjamin Busam<sup>2,3</sup></b><br>
+            <span class="affiliations">
+              <sup>1</sup>Politecnico di Milano &nbsp;&nbsp; <sup>2</sup>Technical University of Munich &nbsp;&nbsp; <sup>3</sup>Munich Center for Machine Learning (MCML) &nbsp;&nbsp; <sup>4</sup>ImFusion
+            </span>
+          </p>
+        </div>
+
+        <div class="buttons-section">
+          <a href="#" class="btn-custom btn-paper">
+            <img src="assets/icons/paper.svg" alt="Paper" class="btn-icon" />
+            <span>Paper</span>
+          </a>
+          <a href="https://github.com/alberto-rota/UnReflectAnything" class="btn-custom btn-source">
+            <img src="assets/icons/source.svg" alt="Source Code" class="btn-icon" />
+            <span>Source Code</span>
+          </a>
+          <a href="#" class="btn-custom btn-installation">
+            <img src="assets/icons/installation.svg" alt="Installation" class="btn-icon" />
+            <span>Installation</span>
+          </a>
+          <a href="#" class="btn-custom btn-huggingface">
+            <img src="assets/icons/huggingface.svg" alt="Huggingface" class="btn-icon" />
+            <span>Huggingface</span>
+          </a>
+          <a href="#" class="btn-custom btn-contact">
+            <img src="assets/icons/contact.svg" alt="Contact" class="btn-icon" />
+            <span>Contact</span>
+          </a>
+        </div>
+
+        <div class="header-image-section">
+          <img src="assets/header.png" alt="method overview" class="header-image"/>
+        </div>
+
+        <div class="image-sliders-section">
+          <div class="slider-container">
+            <div class="slider-wrapper">
+              <img src="assets/slider1_before.jpg" alt="Before" class="slider-image slider-before" />
+              <img src="assets/slider1_after.jpg" alt="After" class="slider-image slider-after" />
+              <input type="range" min="0" max="100" value="50" class="slider-input" />
+              <div class="slider-handle">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2"/>
+                  <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="slider-container">
+            <div class="slider-wrapper">
+              <img src="assets/slider2_before.jpg" alt="Before" class="slider-image slider-before" />
+              <img src="assets/slider2_after.jpg" alt="After" class="slider-image slider-after" />
+              <input type="range" min="0" max="100" value="50" class="slider-input" />
+              <div class="slider-handle">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2"/>
+                  <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="slider-container">
+            <div class="slider-wrapper">
+              <img src="assets/slider3_before.jpg" alt="Before" class="slider-image slider-before" />
+              <img src="assets/slider3_after.jpg" alt="After" class="slider-image slider-after" />
+              <input type="range" min="0" max="100" value="50" class="slider-input" />
+              <div class="slider-handle">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2"/>
+                  <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script>
+        // Image slider functionality
+        document.querySelectorAll('.slider-input').forEach(slider => {
+          const wrapper = slider.closest('.slider-wrapper');
+          const beforeImg = wrapper.querySelector('.slider-before');
+          const handle = wrapper.querySelector('.slider-handle');
+          
+          function updateSlider(value) {
+            beforeImg.style.clipPath = `inset(0 ${100 - value}% 0 0)`;
+            handle.style.left = `calc(${value}% - 12px)`;
+          }
+          
+          slider.addEventListener('input', (e) => {
+            updateSlider(e.target.value);
+          });
+          
+          // Initialize
+          updateSlider(slider.value);
+          
+          // Mouse drag on handle
+          let isDragging = false;
+          handle.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            e.preventDefault();
+          });
+          
+          document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const rect = wrapper.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+            slider.value = percent;
+            updateSlider(percent);
+          });
+          
+          document.addEventListener('mouseup', () => {
+            isDragging = false;
+          });
+          
+          // Touch support
+          handle.addEventListener('touchstart', (e) => {
+            isDragging = true;
+            e.preventDefault();
+          });
+          
+          document.addEventListener('touchmove', (e) => {
+            if (!isDragging) return;
+            const rect = wrapper.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+            slider.value = percent;
+            updateSlider(percent);
+          });
+          
+          document.addEventListener('touchend', () => {
+            isDragging = false;
+          });
+        });
+      </script>
 
       <footer class="site-footer">
         {% if site.github.is_project_page %}
