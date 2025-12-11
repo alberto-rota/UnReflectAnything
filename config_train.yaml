@@ -226,7 +226,7 @@ parameters:
   DIFFUSE_LOSS_WEIGHT:
     value: 1.0  # Weight for diffuse component reconstruction loss
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 0.0  # Weight for highlight mask regression loss
+    value: 1.0  # Weight for highlight mask regression loss
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
     value: 0.0  # Weight for full image reconstruction loss
   SATURATION_RING_LOSS_WEIGHT:

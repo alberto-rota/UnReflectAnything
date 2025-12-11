@@ -1,5 +1,5 @@
 # Interactive allocation for A100 40GB GPU
 # This file contains the salloc command for interactive sessions
 
-salloc --gres=gpu:a100:1 --partition=a100 --constraint=a100_40 --time=4:00:00 --job-name=inter_A140 --mail-user=alberto1.rota@polimi.it --mail-type=ALL
+salloc --gres=gpu:a100:1 --partition=a100 --constraint=a100_40 --time=4:00:00 --job-name=U_it_A140 --mail-user=alberto1.rota@polimi.it --mail-type=ALL
 

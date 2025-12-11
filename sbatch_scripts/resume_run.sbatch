@@ -3,7 +3,7 @@
 #SBATCH --partition=a100
 #SBATCH --constraint=a100_80
 #SBATCH --time=1-00:00:00
-#SBATCH --job-name=resume
+#SBATCH --job-name=U_resume
 #SBATCH --mail-user=alberto1.rota@polimi.it
 #SBATCH --mail-type=ALL
 #SBATCH --nodes=1
