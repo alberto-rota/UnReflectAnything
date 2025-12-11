@@ -89,55 +89,55 @@ body * {
 
 /* Paper button - Purple */
 .btn-paper {
-  background: #667eea;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
 .btn-paper:hover {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea;
   transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
 }
 
 /* Source Code button - Green */
 .btn-source {
-  background: #11998e;
+  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
 }
 
 .btn-source:hover {
-  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+  background: #11998e;
   transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(17, 153, 142, 0.6);
 }
 
 /* Installation button - Blue */
 .btn-installation {
-  background: #4facfe;
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
 }
 
 .btn-installation:hover {
-  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  background: #4facfe;
   transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(79, 172, 254, 0.6);
 }
 
 /* Huggingface button - Yellow */
 .btn-huggingface {
-  background: #fbbf24;
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
 }
 
 .btn-huggingface:hover {
-  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  background: #fbbf24;
   transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(251, 191, 36, 0.6);
 }
 
 /* Contact button - Orange */
 .btn-contact {
-  background: #f97316;
+  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
 }
 
 .btn-contact:hover {
-  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+  background: #f97316;
   transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(249, 115, 22, 0.6);
 }
