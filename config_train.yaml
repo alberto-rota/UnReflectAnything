@@ -42,9 +42,8 @@ parameters:
       TOKEN_INPAINTER:
         TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"  # Token inpainter class name
         TOKEN_INPAINTER_MODULE: "token_inpainters"  # Module name to import token inpainter from
-        FROM_PRETRAINED: "weights/token_inpainter.pth"  # Path to pretrained token inpainter weights (optional)
-        
-        TOKEN_INPAINTER_LR: 0.0  # Learning rate for token inpainter (can differ from base LR)
+        # FROM_PRETRAINED: "weights/token_inpainter.pth"  # Path to pretrained token inpainter weights 
+        TOKEN_INPAINTER_LR: 1.0e-5  # Learning rate for token inpainter (can differ from base LR)
         DEPTH: 6  # Number of transformer blocks
         HEADS: 16  # Number of attention heads
         DROP: 0 # Dropout rate 
@@ -147,7 +146,7 @@ parameters:
       #   LOAD_RGB_ONLY: True
 
   BATCH_SIZE: # Max batch size with img size 896 is 32
-    value: 32 # Number of samples per batch (adjust based on GPU memory)
+    value: 4 # Number of samples per batch (adjust based on GPU memory)
   NUM_WORKERS:
     value: 8  # Number of data loading worker processes (0 = main process only)
   SHUFFLE:
@@ -163,7 +162,7 @@ parameters:
   SURFACE_ROUGHNESS:
     value: 8.0  # Blinn-Phong surface roughness exponent (higher = sharper highlights)
   INTENSITY:
-    value: 0.0  # Specular highlight intensity multiplier
+    value: 2.0  # Specular highlight intensity multiplier
   LIGHT_DISTANCE_RANGE:
     value: [0.0, 1]  # Range for light source distance sampling [min, max] (normalized)
   LIGHT_LEFT_RIGHT_ANGLE:
@@ -199,11 +198,11 @@ parameters:
       ONPLATEAU:  # ReduceLROnPlateau scheduler (reduces LR when validation metric plateaus)
         PATIENCE: 5  # Number of epochs to wait before reducing LR
         FACTOR: 0.1  # Factor by which LR is reduced (new_lr = old_lr * factor)
-      # COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
-      #   N_PERIODS: 5  # Number of cosine periods over training
-      STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
-        N_STEPS: 4  # Number of times to reduce LR during training
-        GAMMA: 0.5  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
+      COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
+        N_PERIODS: 1  # Number of cosine periods over training
+      # STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
+      #   N_STEPS: 4  # Number of times to reduce LR during training
+      #   GAMMA: 0.5  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
       # EXPONENTIAL:  # ExponentialLR scheduler (exponential decay)
       #   GAMMA: 0.5  # Multiplicative factor for exponential decay
 
@@ -258,7 +257,7 @@ parameters:
     value: 2.0      # Focal loss gamma parameter (0.0 = standard BCE, 1.0-2.0 helps with gradient vanishing)
   
   WEIGHT_TOKEN_INPAINT:
-    value: 0.0  # Weight for token-space inpainting loss (L1 + cosine similarity in feature space)
+    value: 1.0  # Weight for token-space inpainting loss (L1 + cosine similarity in feature space)
   WEIGHT_CONTEXT_IDENTITY: 
     value: 0.0  # LEAVE TO 0.0: Weight for L1 loss on context (non-masked) regions (identity preservation) 
   WEIGHT_TV_IN_HOLE:
@@ -276,7 +275,7 @@ parameters:
 
   ### DIFFUSE HIGHLIGHT PENALTY
   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
-    value: 0.0  # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
+    value: 0.1  # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
   DIFFUSE_HL_THRESHOLD:
     value: 0.8  # Brightness/luminance threshold for detecting highlights in diffuse (0.0-1.0)
   DIFFUSE_HL_USE_CHARB:
@@ -294,7 +293,7 @@ parameters:
   WANDB_LOG_INTERVAL:
     value: 1  # Number of training steps between WandB metric logs
   IMAGE_LOG_INTERVAL:
-    value: 5  # Number of training steps between image logging to WandB
+    value: 10  # Number of training steps between image logging to WandB
   NO_WANDB:
     value: False  # Disable WandB logging if True (useful for local debugging)
   MODEL_WATCHER_FREQ_WANDB:
@@ -304,4 +303,4 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"  # WandB project name
   NOTES:
-    value: "Final - TKI Learns, Decoder Learns faster"  # Notes/description for this training run
+    value: "896 Test"  # Notes/description for this training run
