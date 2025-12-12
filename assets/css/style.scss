@@ -21,12 +21,19 @@ body * {
   
 }
 
+/* Main content - enlarged width */
+.main-content {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 0 40px;
+}
+
 /* Content wrapper - enlarged width */
 .content-wrapper {
-  max-width: 95%;
-  width: 150%;
+  max-width: 1400px;
+  width: 100%;
   margin: 0 auto;
-  padding: 20px;
+  padding: 20px 40px;
   text-align: center;
 }
 
@@ -73,7 +80,7 @@ body * {
   font-size: 1em;
   color: #000;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-  transition: background 0.3s ease;
+  transition: background-image 0.3s ease;
   position: relative;
   overflow: hidden;
   border: none;
@@ -89,47 +96,47 @@ body * {
 
 /* Paper button - Purple */
 .btn-paper {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background-image: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
 .btn-paper:hover {
-  background: #667eea;
+  background-image: linear-gradient(135deg, #667eea 0%, #667eea 100%);
 }
 
 /* Source Code button - Green */
 .btn-source {
-  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+  background-image: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
 }
 
 .btn-source:hover {
-  background: #11998e;
+  background-image: linear-gradient(135deg, #11998e 0%, #11998e 100%);
 }
 
 /* Installation button - Blue */
 .btn-installation {
-  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  background-image: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
 }
 
 .btn-installation:hover {
-  background: #4facfe;
+  background-image: linear-gradient(135deg, #4facfe 0%, #4facfe 100%);
 }
 
 /* Huggingface button - Yellow */
 .btn-huggingface {
-  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  background-image: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
 }
 
 .btn-huggingface:hover {
-  background: #fbbf24;
+  background-image: linear-gradient(135deg, #fbbf24 0%, #fbbf24 100%);
 }
 
 /* Contact button - Orange */
 .btn-contact {
-  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+  background-image: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
 }
 
 .btn-contact:hover {
-  background: #f97316;
+  background-image: linear-gradient(135deg, #f97316 0%, #f97316 100%);
 }
 
 /* Header image - full width */
