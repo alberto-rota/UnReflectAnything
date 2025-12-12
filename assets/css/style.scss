@@ -84,7 +84,7 @@ body * {
   font-size: 1em;
   color: #000;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-  transition: background-image 0.3s ease;
+  transition: background-image 0.5s ease-in-out;
   position: relative;
   overflow: hidden;
   border: none;
@@ -141,6 +141,29 @@ body * {
 
 .btn-contact:hover {
   background-image: linear-gradient(135deg, #ea580c 0%, #ea580c 100%);
+}
+
+/* Abstract section */
+.abstract-section {
+  max-width: 1200px;
+  margin: 60px auto;
+  padding: 0 40px;
+  text-align: center;
+}
+
+.abstract-title {
+  font-size: 2em;
+  font-weight: 600;
+  margin-bottom: 30px;
+  color: #333;
+}
+
+.abstract-text {
+  font-size: 1.1em;
+  line-height: 1.8;
+  color: #555;
+  text-align: center;
+  margin: 0;
 }
 
 /* Header image - full width */
