@@ -24,7 +24,7 @@ body * {
 /* Content wrapper - enlarged width */
 .content-wrapper {
   max-width: 95%;
-  width: 100%;
+  width: 150%;
   margin: 0 auto;
   padding: 20px;
   text-align: center;
@@ -73,7 +73,7 @@ body * {
   font-size: 1em;
   color: #000;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background 0.3s ease;
   position: relative;
   overflow: hidden;
   border: none;
@@ -94,8 +94,6 @@ body * {
 
 .btn-paper:hover {
   background: #667eea;
-  transform: translateY(-1px);
-  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
 }
 
 /* Source Code button - Green */
@@ -105,8 +103,6 @@ body * {
 
 .btn-source:hover {
   background: #11998e;
-  transform: translateY(-1px);
-  box-shadow: 0 8px 25px rgba(17, 153, 142, 0.6);
 }
 
 /* Installation button - Blue */
@@ -116,8 +112,6 @@ body * {
 
 .btn-installation:hover {
   background: #4facfe;
-  transform: translateY(-1px);
-  box-shadow: 0 8px 25px rgba(79, 172, 254, 0.6);
 }
 
 /* Huggingface button - Yellow */
@@ -127,8 +121,6 @@ body * {
 
 .btn-huggingface:hover {
   background: #fbbf24;
-  transform: translateY(-1px);
-  box-shadow: 0 8px 25px rgba(251, 191, 36, 0.6);
 }
 
 /* Contact button - Orange */
@@ -138,8 +130,6 @@ body * {
 
 .btn-contact:hover {
   background: #f97316;
-  transform: translateY(-1px);
-  box-shadow: 0 8px 25px rgba(249, 115, 22, 0.6);
 }
 
 /* Header image - full width */
