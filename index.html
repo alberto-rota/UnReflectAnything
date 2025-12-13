@@ -37,18 +37,39 @@
             <img src="assets/webpage/assets/icons/paper.svg" alt="Paper" class="btn-icon" />
             <span>Paper</span>
           </a>
-          <a href="https://github.com/alberto-rota/UnReflectAnything" class="btn-custom btn-source">
-            <img src="assets/webpage/assets/icons/source.png" alt="Source Code" class="btn-icon" />
-            <span>Source Code</span>
-          </a>
-          <a href="https://pypi.org/project/unreflectanything/" class="btn-custom btn-installation">
-            <img src="assets/webpage/assets/icons/installation.png" alt="Installation" class="btn-icon" />
-            <span>Installation</span>
-          </a>
-          <a href="#" class="btn-custom btn-huggingface">
-            <img src="assets/webpage/assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
-            <span>Huggingface</span>
-          </a>
+          <div style="position: relative; display: inline-block;" class="banner-wrapper">
+            <a href="javascript:void(0)" class="btn-custom btn-source" id="source-btn">
+              <img src="assets/webpage/assets/icons/source.png" alt="Source Code" class="btn-icon" />
+              <span>Source Code</span>
+            </a>
+            <div id="source-banner" class="info-banner banner-source">
+              <div class="banner-content">
+                <span class="banner-text">Source code is currently unavailable</span>
+              </div>
+            </div>
+          </div>
+          <div style="position: relative; display: inline-block;" class="banner-wrapper">
+            <a href="javascript:void(0)" class="btn-custom btn-installation" id="installation-btn">
+              <img src="assets/webpage/assets/icons/installation.png" alt="Installation" class="btn-icon" />
+              <span>Installation</span>
+            </a>
+            <div id="installation-banner" class="info-banner banner-installation">
+              <div class="banner-content">
+                <span class="banner-text">Installation guide is currently being developed</span>
+              </div>
+            </div>
+          </div>
+          <div style="position: relative; display: inline-block;" class="banner-wrapper">
+            <a href="javascript:void(0)" class="btn-custom btn-huggingface" id="huggingface-btn">
+              <img src="assets/webpage/assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
+              <span>Huggingface</span>
+            </a>
+            <div id="huggingface-banner" class="info-banner banner-huggingface">
+              <div class="banner-content">
+                <span class="banner-text">Hugging Face space is currently being developed</span>
+              </div>
+            </div>
+          </div>
           <a href="mailto:alberto.rota@polimi.it" class="btn-custom btn-contact">
             <img src="assets/webpage/assets/icons/contact.png" alt="Contact" class="btn-icon" />
             <span>Contact</span>
@@ -131,6 +152,31 @@
       <script>
         // Image slider functionality
         document.addEventListener('DOMContentLoaded', function() {
+          // Banner functionality helper
+          function initBanner(btnId, bannerId) {
+            const btn = document.getElementById(btnId);
+            const banner = document.getElementById(bannerId);
+            const wrapper = btn ? btn.closest('.banner-wrapper') : null;
+            
+            if (!btn || !banner || !wrapper) return;
+
+            btn.addEventListener('click', function(e) {
+              e.preventDefault();
+              e.stopPropagation();
+              banner.classList.add('show');
+            });
+
+            // Hide banner when mouse leaves the wrapper area (button + banner)
+            wrapper.addEventListener('mouseleave', function(e) {
+              banner.classList.remove('show');
+            });
+          }
+
+          // Initialize all banners
+          initBanner('huggingface-btn', 'huggingface-banner');
+          initBanner('source-btn', 'source-banner');
+          initBanner('installation-btn', 'installation-banner');
+
           document.querySelectorAll('.slider-input').forEach(slider => {
             const wrapper = slider.closest('.slider-wrapper');
             const beforeImg = wrapper.querySelector('.slider-before');

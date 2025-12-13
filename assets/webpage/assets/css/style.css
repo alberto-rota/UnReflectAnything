@@ -856,7 +856,7 @@ body * {
  * The default Cayman theme uses #159957, but you can set any color you want.
  */
 .page-header {
-  background: linear-gradient(135deg, #159957 0%, #027f9e 100%);
+  background: linear-gradient(-90deg, #01113c 30%, #ca6702 100%);
   padding: 2rem 1rem !important;
 }
 
@@ -939,8 +939,9 @@ body * {
   bottom: 0;
   border-radius: 50px;
   opacity: 0;
-  transition: opacity 0.4s ease-in-out;
+  transition: opacity 0.2s ease-in-out;
   z-index: -1;
+  pointer-events: none;
 }
 
 .btn-custom span,
@@ -1000,8 +1001,12 @@ body * {
   background-image: linear-gradient(135deg, #fef0c8 0%, #f59e0b 100%);
 }
 
-.btn-huggingface:hover {
+.btn-huggingface::before {
   background-image: linear-gradient(135deg, #f59e0b 0%, #f59e0b 100%);
+}
+
+.btn-huggingface:hover::before {
+  opacity: 1;
 }
 
 /* Contact button - Orange */
@@ -1009,8 +1014,12 @@ body * {
   background-image: linear-gradient(135deg, #fdd4b8 0%, #ea580c 100%);
 }
 
-.btn-contact:hover {
+.btn-contact::before {
   background-image: linear-gradient(135deg, #ea580c 0%, #ea580c 100%);
+}
+
+.btn-contact:hover::before {
+  opacity: 1;
 }
 
 /* Abstract section */
@@ -1191,6 +1200,116 @@ body * {
   }
   .content-wrapper {
     padding: 10px;
+  }
+}
+
+/* Info banner base styles */
+.info-banner {
+  position: absolute;
+  bottom: calc(100% + 15px);
+  left: 50%;
+  transform: translateX(-50%) translateY(10px) scale(0.9);
+  color: #000;
+  z-index: 10000;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease-out, transform 0.3s ease-out, visibility 0.3s;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  border-radius: 50px;
+  min-width: 300px;
+  max-width: 500px;
+  white-space: nowrap;
+}
+
+/* Source Code banner - Green */
+.banner-source {
+  background: linear-gradient(135deg, #a8f5d0 0%, #11998e 100%);
+}
+
+/* Installation banner - Blue */
+.banner-installation {
+  background: linear-gradient(135deg, #b3f0ff 0%, #4facfe 100%);
+}
+
+/* Hugging Face banner - Yellow */
+.banner-huggingface {
+  background: linear-gradient(135deg, #fef0c8 0%, #f59e0b 100%);
+}
+
+.info-banner.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+
+.banner-content {
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.banner-text {
+  font-weight: 600;
+  font-size: 0.95em;
+  text-align: center;
+}
+
+/* Arrow pointing down from banner to button */
+.banner-source::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid #11998e;
+}
+
+.banner-installation::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid #4facfe;
+}
+
+.banner-huggingface::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid #f59e0b;
+}
+
+/* Responsive banner */
+@media (max-width: 640px) {
+  .info-banner {
+    min-width: 250px;
+    max-width: 90vw;
+    white-space: normal;
+  }
+  
+  .banner-content {
+    padding: 10px 20px;
+  }
+  
+  .banner-text {
+    font-size: 0.85em;
   }
 }
     

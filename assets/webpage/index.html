@@ -15,6 +15,12 @@
     <link rel="stylesheet" href="assets/css/style.css">
   </head>
   <body>
+    <div id="huggingface-banner" class="info-banner">
+      <div class="banner-content">
+        <span class="banner-text">Hugging Face space is currently being developed</span>
+        <button class="banner-close" aria-label="Close banner">&times;</button>
+      </div>
+    </div>
     <a id="skip-to-content" href="#content">Skip to the content.</a>
 
     <header class="page-header" role="banner">
@@ -45,7 +51,7 @@
             <img src="assets/icons/installation.png" alt="Installation" class="btn-icon" />
             <span>Installation</span>
           </a>
-          <a href="#" class="btn-custom btn-huggingface">
+          <a href="javascript:void(0)" class="btn-custom btn-huggingface" id="huggingface-btn">
             <img src="assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
             <span>Huggingface</span>
           </a>
@@ -131,6 +137,41 @@
       <script>
         // Image slider functionality
         document.addEventListener('DOMContentLoaded', function() {
+          // Hugging Face banner functionality
+          const huggingfaceBtn = document.getElementById('huggingface-btn');
+          const banner = document.getElementById('huggingface-banner');
+          
+          if (huggingfaceBtn && banner) {
+            const closeBtn = banner.querySelector('.banner-close');
+            let autoHideTimeout = null;
+
+            huggingfaceBtn.addEventListener('click', function(e) {
+              e.preventDefault();
+              e.stopPropagation();
+              banner.classList.add('show');
+              
+              // Clear any existing timeout
+              if (autoHideTimeout) {
+                clearTimeout(autoHideTimeout);
+              }
+              
+              // Auto-hide after 5 seconds
+              autoHideTimeout = setTimeout(function() {
+                banner.classList.remove('show');
+              }, 5000);
+            });
+
+            if (closeBtn) {
+              closeBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                banner.classList.remove('show');
+                if (autoHideTimeout) {
+                  clearTimeout(autoHideTimeout);
+                }
+              });
+            }
+          }
           document.querySelectorAll('.slider-input').forEach(slider => {
             const wrapper = slider.closest('.slider-wrapper');
             const beforeImg = wrapper.querySelector('.slider-before');
@@ -215,6 +256,7 @@
             });
           });
         });
+
       </script>
 
       <footer class="site-footer">
