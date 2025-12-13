@@ -580,30 +580,67 @@ a:hover {
 
 .page-header {
   color: #fff;
-  text-align: center;
   background-color: #159957;
   background-image: linear-gradient(120deg, #155799, #159957);
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+.header-logo {
+  width: 20%;
+  max-width: 200px;
+  min-width: 120px;
+  height: auto;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.project-name {
+  text-align: left;
+  flex: 1;
 }
 @media screen and (min-width: 64em) {
   .page-header {
     padding: 5rem 6rem;
+  }
+  .header-content {
+    padding: 0;
   }
 }
 @media screen and (min-width: 42em) and (max-width: 64em) {
   .page-header {
     padding: 3rem 4rem;
   }
+  .header-content {
+    padding: 0;
+  }
 }
 @media screen and (max-width: 42em) {
   .page-header {
     padding: 2rem 1rem;
   }
+  .header-content {
+    padding: 0;
+    flex-direction: column;
+    gap: 1rem;
+    text-align: center;
+  }
+  .header-logo {
+    width: 30%;
+    max-width: 150px;
+  }
+  .project-name {
+    text-align: center;
+  }
 }
 
-.project-name {
-  margin-top: 0;
-  margin-bottom: 0.1rem;
-}
 @media screen and (min-width: 64em) {
   .project-name {
     font-size: 3.25rem;
@@ -856,8 +893,18 @@ body * {
  * The default Cayman theme uses #159957, but you can set any color you want.
  */
 .page-header {
-  background: linear-gradient(-90deg, #01113c 30%, #ca6702 100%);
+  background: linear-gradient(-90deg, #01113c 0%, #ca6702 100%);
   padding: 2rem 1rem !important;
+}
+
+.header-content {
+  padding: 0;
+}
+
+@media screen and (min-width: 768px) {
+  .header-content {
+    padding: 0 2rem;
+  }
 }
 
 /* Main content - enlarged width */
@@ -1187,11 +1234,22 @@ body * {
   .buttons-section {
     flex-direction: column;
     align-items: center;
+    gap: 12px;
   }
+  .buttons-section .banner-wrapper {
+    width: 100%;
+    max-width: 300px;
+    min-width: 280px;
+    display: flex;
+    justify-content: center;
+  }
+  
   .btn-custom {
     width: 100%;
     max-width: 300px;
+    min-width: 280px;
     justify-content: center;
+    box-sizing: border-box;
   }
 }
 @media (max-width: 640px) {
