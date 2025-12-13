@@ -1,40 +1,31 @@
 <!DOCTYPE html>
-<html lang="{{ site.lang | default: 'en-US' }}">
+<html lang="en-US">
   <head>
     <meta charset="UTF-8">
-
-{% seo %}
-    <link rel="icon" type="image/x-icon" href="{{ '/assets/logo.ico' | relative_url }}">
+    <meta name="description" content="UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision">
+    <meta name="keywords" content="highlight removal, specular reflection, computer vision, deep learning">
+    <title>UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision</title>
+    <link rel="icon" type="image/x-icon" href="assets/webpage/assets/logo.ico">
     <link rel="preconnect" href="https://fonts.gstatic.com">
     <link rel="preload" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" as="style" type="text/css" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#157878">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"> 
-    <link rel="stylesheet" href="{{ 'style.css?v=' | append: site.github.build_revision | relative_url }}">
-    <link rel="stylesheet" href="{{ '/assets/css/style.css?v=' | append: site.github.build_revision | relative_url }}">
-    <link rel="stylesheet" href="{{ '/assets/css/style.scss?v=' | append: site.github.build_revision | relative_url }}">
-    {% include head-custom.html %}
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="assets/webpage/assets/css/style.css">
   </head>
   <body>
     <a id="skip-to-content" href="#content">Skip to the content.</a>
 
     <header class="page-header" role="banner">
-      <h1 class="project-name">{{ page.title | default: site.title | default: site.github.repository_name }}</h1>
-      {% if site.github.is_project_page %}
-        <a href="{{ site.github.repository_url }}" class="btn">View on GitHub</a>
-      {% endif %}
-      {% if site.show_downloads %}
-        <a href="{{ site.github.zip_url }}" class="btn">Download .zip</a>
-        <a href="{{ site.github.tar_url }}" class="btn">Download .tar.gz</a>
-      {% endif %}
+      <h1 class="project-name">UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision</h1>
     </header>
 
     <main id="content" class="main-content" role="main">
       <div class="content-wrapper">
         <div class="authors-section">
           <p class="authors">
-            <b>Alberto Rota<sup>1</sup>, Mert Kiray<sup>2,3</sup>, Mert Asim Karaoglu<sup>4,2</sup>, Patrick Ruhkamp<sup>2</sup>, Elena De Momi<sup>1</sup>, Nassir Navab<sup>2,3</sup>, Benjamin Busam<sup>2,3</sup></b><br>
+            <b>Alberto Rota<sup>1</sup> ⋅ Mert Kiray<sup>2,3</sup> ⋅ Mert Asim Karaoglu<sup>4,2</sup> ⋅ Patrick Ruhkamp<sup>2</sup> ⋅ Elena De Momi<sup>1</sup> ⋅ Nassir Navab<sup>2,3</sup> ⋅ Benjamin Busam<sup>2,3</sup></b><br>
             <span class="affiliations">
               <sup>1</sup>Politecnico di Milano &nbsp;&nbsp; <sup>2</sup>Technical University of Munich &nbsp;&nbsp; <sup>3</sup>Munich Center for Machine Learning (MCML) &nbsp;&nbsp; <sup>4</sup>ImFusion
             </span>
@@ -43,23 +34,23 @@
 
         <div class="buttons-section">
           <a href="https://doi.org/10.48550/arXiv.2512.09583" class="btn-custom btn-paper">
-            <img src="assets/icons/paper.svg" alt="Paper" class="btn-icon" />
+            <img src="assets/webpage/assets/icons/paper.svg" alt="Paper" class="btn-icon" />
             <span>Paper</span>
           </a>
           <a href="https://github.com/alberto-rota/UnReflectAnything" class="btn-custom btn-source">
-            <img src="assets/icons/source.png" alt="Source Code" class="btn-icon" />
+            <img src="assets/webpage/assets/icons/source.png" alt="Source Code" class="btn-icon" />
             <span>Source Code</span>
           </a>
           <a href="https://pypi.org/project/unreflectanything/" class="btn-custom btn-installation">
-            <img src="assets/icons/installation.png" alt="Installation" class="btn-icon" />
+            <img src="assets/webpage/assets/icons/installation.png" alt="Installation" class="btn-icon" />
             <span>Installation</span>
           </a>
           <a href="#" class="btn-custom btn-huggingface">
-            <img src="assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
+            <img src="assets/webpage/assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
             <span>Huggingface</span>
           </a>
           <a href="mailto:alberto.rota@polimi.it" class="btn-custom btn-contact">
-            <img src="assets/icons/contact.png" alt="Contact" class="btn-icon" />
+            <img src="assets/webpage/assets/icons/contact.png" alt="Contact" class="btn-icon" />
             <span>Contact</span>
           </a>
         </div>
@@ -69,8 +60,8 @@
         <div class="image-sliders-section">
           <div class="slider-container">
             <div class="slider-wrapper">
-              <img src="assets/slider1_before.jpg" alt="Before" class="slider-image slider-before" />
-              <img src="assets/slider1_after.jpg" alt="After" class="slider-image slider-after" />
+              <img src="assets/webpage/assets/slider1_before.jpg" alt="Before" class="slider-image slider-before" />
+              <img src="assets/webpage/assets/slider1_after.jpg" alt="After" class="slider-image slider-after" />
               <div class="slider-divider"></div>
               <input type="range" min="0" max="100" value="50" class="slider-input" />
               <div class="slider-handle">
@@ -83,8 +74,8 @@
           </div>
           <div class="slider-container">
             <div class="slider-wrapper">
-              <img src="assets/slider2_before.jpg" alt="Before" class="slider-image slider-before" />
-              <img src="assets/slider2_after.jpg" alt="After" class="slider-image slider-after" />
+              <img src="assets/webpage/assets/slider2_before.jpg" alt="Before" class="slider-image slider-before" />
+              <img src="assets/webpage/assets/slider2_after.jpg" alt="After" class="slider-image slider-after" />
               <div class="slider-divider"></div>
               <input type="range" min="0" max="100" value="50" class="slider-input" />
               <div class="slider-handle">
@@ -97,8 +88,8 @@
           </div>
           <div class="slider-container">
             <div class="slider-wrapper">
-              <img src="assets/slider3_before.jpg" alt="Before" class="slider-image slider-before" />
-              <img src="assets/slider3_after.jpg" alt="After" class="slider-image slider-after" />
+              <img src="assets/webpage/assets/slider3_before.jpg" alt="Before" class="slider-image slider-before" />
+              <img src="assets/webpage/assets/slider3_after.jpg" alt="After" class="slider-image slider-after" />
               <div class="slider-divider"></div>
               <input type="range" min="0" max="100" value="50" class="slider-input" />
               <div class="slider-handle">
@@ -111,8 +102,8 @@
           </div>
           <div class="slider-container">
             <div class="slider-wrapper">
-              <img src="assets/slider4_before.jpg" alt="Before" class="slider-image slider-before" />
-              <img src="assets/slider4_after.jpg" alt="After" class="slider-image slider-after" />
+              <img src="assets/webpage/assets/slider4_before.jpg" alt="Before" class="slider-image slider-before" />
+              <img src="assets/webpage/assets/slider4_after.jpg" alt="After" class="slider-image slider-after" />
               <div class="slider-divider"></div>
               <input type="range" min="0" max="100" value="50" class="slider-input" />
               <div class="slider-handle">
@@ -134,7 +125,7 @@
       </div>   
 
       <div class="header-image-section">
-        <img src="assets/header.png" alt="method overview" class="header-image"/>
+        <img src="assets/webpage/assets/header.png" alt="method overview" class="header-image"/>
       </div>
 
       <script>
@@ -227,9 +218,6 @@
       </script>
 
       <footer class="site-footer">
-        {% if site.github.is_project_page %}
-          <span class="site-footer-owner"><a href="{{ site.github.repository_url }}">{{ site.github.repository_name }}</a> is maintained by <a href="{{ site.github.owner_url }}">{{ site.github.owner_name }}</a>.</span>
-        {% endif %}
       </footer>
     </main>
   </body>

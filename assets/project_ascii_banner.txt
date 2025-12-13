@@ -8,7 +8,7 @@
 ╚██████╔╝██║ ╚████║██║  ██║███████╗██║     ███████╗███████╗╚██████╗   ██║   ██║  ██║██║ ╚████║   ██║      ██║   ██║  ██║██║██║ ╚████║╚██████╔╝
  ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝╚═╝     ╚══════╝╚══════╝ ╚═════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝      ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝ 
 
-> Project Members: Alberto Rota, Mert Kiray, Mert Asim Karaoglu, Patrick Ruhkamp, Benjamin Busam
-> Copyright (c): Alberto Rota
+> Project Members: Alberto Rota, Mert Kiray, Mert Asim Karaoglu, Patrick Ruhkamp, Elena De Momi, Nassir Navab and Benjamin Busam
+> Copyright (c): Alberto Rota - 2026
 
 ================================================================================================================================================
