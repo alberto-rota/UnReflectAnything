@@ -1,273 +1,491 @@
 <!DOCTYPE html>
 <html lang="en-US">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="description" content="UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision">
-    <meta name="keywords" content="highlight removal, specular reflection, computer vision, deep learning">
-    <title>UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision</title>
-    <link rel="icon" type="image/x-icon" href="assets/webpage/assets/logo.ico">
-    <link rel="preconnect" href="https://fonts.gstatic.com">
-    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" as="style" type="text/css" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#157878">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="assets/webpage/assets/css/style.css">
-  </head>
-  <body>
-    <a id="skip-to-content" href="#content">Skip to the content.</a>
 
-    <header class="page-header" role="banner">
-      <div class="header-content">
-        <img src="assets/logo.png" alt="UnReflectAnything Logo" class="header-logo" />
-        <h1 class="project-name">UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision</h1>
+<head>
+  <meta charset="UTF-8">
+  <meta name="description"
+    content="UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision">
+  <meta name="keywords" content="highlight removal, specular reflection, computer vision, deep learning">
+  <title>UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision</title>
+  <link rel="icon" type="image/x-icon" href="assets/webpage/assets/logo.ico">
+  <link rel="preconnect" href="https://fonts.gstatic.com">
+  <link rel="preload" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap"
+    as="style" type="text/css" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#157878">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="assets/webpage/assets/css/style.css">
+</head>
+
+<body>
+  <div id="huggingface-banner" class="info-banner">
+    <div class="banner-content">
+      <span class="banner-text">Hugging Face space is currently being developed</span>
+      <button class="banner-close" aria-label="Close banner">&times;</button>
+    </div>
+  </div>
+  <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+  <header class="page-header" role="banner">
+    <div style="display: flex; align-items: center; width: 100%;">
+      <div style="flex: 0 0 20%; display: flex; justify-content: center;">
+        <img src="assets/webpage/assets/logo.ico" alt="Logo">
       </div>
-    </header>
-
-    <main id="content" class="main-content" role="main">
-      <div class="content-wrapper">
-        <div class="authors-section">
-          <p class="authors">
-            <b>Alberto Rota<sup>1</sup> ⋅ Mert Kiray<sup>2,3</sup> ⋅ Mert Asim Karaoglu<sup>4,2</sup> ⋅ Patrick Ruhkamp<sup>2</sup> ⋅ Elena De Momi<sup>1</sup> ⋅ Nassir Navab<sup>2,3</sup> ⋅ Benjamin Busam<sup>2,3</sup></b><br>
-            <span class="affiliations">
-              <sup>1</sup>Politecnico di Milano &nbsp;&nbsp; <sup>2</sup>Technical University of Munich &nbsp;&nbsp; <sup>3</sup>Munich Center for Machine Learning (MCML) &nbsp;&nbsp; <sup>4</sup>ImFusion
-            </span>
-          </p>
-        </div>
-
-        <div class="buttons-section">
-          <a href="https://doi.org/10.48550/arXiv.2512.09583" class="btn-custom btn-paper">
-            <img src="assets/webpage/assets/icons/paper.svg" alt="Paper" class="btn-icon" />
-            <span>Paper</span>
-          </a>
-          <div style="position: relative; display: inline-block;" class="banner-wrapper">
-            <a href="javascript:void(0)" class="btn-custom btn-source" id="source-btn">
-              <img src="assets/webpage/assets/icons/source.png" alt="Source Code" class="btn-icon" />
-              <span>Source Code</span>
-            </a>
-            <div id="source-banner" class="info-banner banner-source">
-              <div class="banner-content">
-                <span class="banner-text">Source code available upon acceptance</span>
-              </div>
-            </div>
-          </div>
-          <div style="position: relative; display: inline-block;" class="banner-wrapper">
-            <a href="javascript:void(0)" class="btn-custom btn-installation" id="installation-btn">
-              <img src="assets/webpage/assets/icons/installation.png" alt="Installation" class="btn-icon" />
-              <span>Installation</span>
-            </a>
-            <div id="installation-banner" class="info-banner banner-installation">
-              <div class="banner-content">
-                <span class="banner-text">PyPI Package is under development</span>
-              </div>
-            </div>
-          </div>
-          <div style="position: relative; display: inline-block;" class="banner-wrapper">
-            <a href="javascript:void(0)" class="btn-custom btn-huggingface" id="huggingface-btn">
-              <img src="assets/webpage/assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
-              <span>Huggingface</span>
-            </a>
-            <div id="huggingface-banner" class="info-banner banner-huggingface">
-              <div class="banner-content">
-                <span class="banner-text">Huggingface Demo is under development</span>
-              </div>
-            </div>
-          </div>
-          <a href="mailto:alberto.rota@polimi.it" class="btn-custom btn-contact">
-            <img src="assets/webpage/assets/icons/contact.png" alt="Contact" class="btn-icon" />
-            <span>Contact</span>
-          </a>
-        </div>
-
-
-
-        <div class="image-sliders-section">
-          <div class="slider-container">
-            <div class="slider-wrapper">
-              <img src="assets/webpage/assets/slider1_before.jpg" alt="Before" class="slider-image slider-before" />
-              <img src="assets/webpage/assets/slider1_after.jpg" alt="After" class="slider-image slider-after" />
-              <div class="slider-divider"></div>
-              <input type="range" min="0" max="100" value="50" class="slider-input" />
-              <div class="slider-handle">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2"/>
-                  <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round"/>
-                </svg>
-              </div>
-            </div>
-          </div>
-          <div class="slider-container">
-            <div class="slider-wrapper">
-              <img src="assets/webpage/assets/slider2_before.jpg" alt="Before" class="slider-image slider-before" />
-              <img src="assets/webpage/assets/slider2_after.jpg" alt="After" class="slider-image slider-after" />
-              <div class="slider-divider"></div>
-              <input type="range" min="0" max="100" value="50" class="slider-input" />
-              <div class="slider-handle">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2"/>
-                  <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round"/>
-                </svg>
-              </div>
-            </div>
-          </div>
-          <div class="slider-container">
-            <div class="slider-wrapper">
-              <img src="assets/webpage/assets/slider3_before.jpg" alt="Before" class="slider-image slider-before" />
-              <img src="assets/webpage/assets/slider3_after.jpg" alt="After" class="slider-image slider-after" />
-              <div class="slider-divider"></div>
-              <input type="range" min="0" max="100" value="50" class="slider-input" />
-              <div class="slider-handle">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2"/>
-                  <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round"/>
-                </svg>
-              </div>
-            </div>
-          </div>
-          <div class="slider-container">
-            <div class="slider-wrapper">
-              <img src="assets/webpage/assets/slider4_before.jpg" alt="Before" class="slider-image slider-before" />
-              <img src="assets/webpage/assets/slider4_after.jpg" alt="After" class="slider-image slider-after" />
-              <div class="slider-divider"></div>
-              <input type="range" min="0" max="100" value="50" class="slider-input" />
-              <div class="slider-handle">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2"/>
-                  <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round"/>
-                </svg>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div style="flex: 0 0 80%;">
+        <h1 class="project-name">UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular
+          Supervision</h1>
       </div>
+    </div>
+  </header>
 
-      <div class="abstract-section">
-        <h2 class="abstract-title">Abstract</h2>
-        <p class="abstract-text">
-          Specular highlights distort appearance, obscure texture, and hinder geometric reasoning in both natural and surgical imagery. We present UnReflectAnything, an RGB-only framework that removes highlights from a single image by predicting a highlight map together with a reflection-free diffuse reconstruction. The model uses a frozen vision transformer encoder to extract multi-scale features, a lightweight head to localize specular regions, and a token-level inpainting module that restores corrupted feature patches before producing the final diffuse image. To overcome the lack of paired supervision, we introduce a Virtual Highlight Synthesis pipeline that renders physically plausible specularities using monocular geometry, Fresnel-aware shading, and randomized lighting which enables training on arbitrary RGB images with correct geometric structure. UnReflectAnything generalizes across natural and surgical domains where non-Lambertian surfaces and non-uniform lighting create severe highlights and it achieves competitive performance with state-of-the-art results on several benchmarks
+  <main id="content" class="main-content" role="main">
+    <div class="content-wrapper">
+      <div class="authors-section">
+        <p class="authors">
+          <b>
+            <a href="" class="author-link">Alberto Rota</a><sup>1</sup>,
+            <a href="" class="author-link">Mert Kiray</a><sup>2,3</sup>,
+            <a href="" class="author-link">Mert Asim Karaoglu</a><sup>4,2</sup>,
+            <a href="" class="author-link">Patrick
+              Ruhkamp</a><sup>2</sup>,
+            <a href="" class="author-link">Elena De
+              Momi</a><sup>1</sup>,
+            <a href="" class="author-link">Nassir
+              Navab</a><sup>2,3</sup>,
+            <a href="" class="author-link">Benjamin
+              Busam</a><sup>2,3</sup>
+          </b><br>
+          <span class="affiliations">
+            <sup>1</sup><a href="https://www.polimi.it" class="affiliation-link">Politecnico di Milano</a> &nbsp;&nbsp;
+            <sup>2</sup><a href="https://www.tum.de" class="affiliation-link">Technical University of Munich</a>
+            &nbsp;&nbsp;
+            <sup>3</sup><a href="https://mcml.ai" class="affiliation-link">Munich Center for Machine Learning (MCML)</a>
+            &nbsp;&nbsp;
+            <sup>4</sup><a href="https://www.imfusion.com" class="affiliation-link">ImFusion</a>
+          </span>
         </p>
-      </div>   
-
-      <div class="header-image-section">
-        <img src="assets/webpage/assets/header.png" alt="method overview" class="header-image"/>
       </div>
 
-      <script>
-        // Image slider functionality
-        document.addEventListener('DOMContentLoaded', function() {
-          // Banner functionality helper
-          function initBanner(btnId, bannerId) {
-            const btn = document.getElementById(btnId);
-            const banner = document.getElementById(bannerId);
-            const wrapper = btn ? btn.closest('.banner-wrapper') : null;
-            
-            if (!btn || !banner || !wrapper) return;
+      <div class="buttons-section">
+        <div class="pip-command-container">
+          <span class="command-prefix">$</span>
+          <code id="pip-command">pip install unreflectanything</code>
+          <button class="copy-button" id="copy-btn" title="Copy to clipboard">
+            <svg id="copy-icon" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2"
+              fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <svg id="check-icon" style="display:none" viewBox="0 0 24 24" width="20" height="20" stroke="#10b981"
+              stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </button>
+        </div>
+        <a href="https://doi.org/10.48550/arXiv.2512.09583" class="btn-custom btn-wiki">
+          <img src="assets/webpage/assets/icons/source.png" alt="Paper" class="btn-icon" />
+          <span>API Wiki</span>
+        </a>
+      </div>
+      <div class="buttons-section"></div>
+      <a href="https://doi.org/10.48550/arXiv.2512.09583" class="btn-custom btn-installation">
+        <img src="assets/webpage/assets/icons/paper.svg" alt="Paper" class="btn-icon" />
+        <span>Paper</span>
+      </a>
+      <a href="https://github.com/alberto-rota/UnReflectAnything" class="btn-custom btn-source">
+        <img src="assets/webpage/assets/icons/source.png" alt="Source Code" class="btn-icon" />
+        <span>Source Code</span>
+      </a>
+      <!-- <a href="https://pypi.org/project/unreflectanything/" class="btn-custom btn-installation">
+          <img src="assets/webpage/assets/icons/installation.png" alt="Installation" class="btn-icon" />
+          <span>Installation</span>
+        </a> -->
+      <a href="https://huggingface.co/AlbeRota/UnReflectAnything" class="btn-custom btn-huggingface"
+        id="huggingface-btn">
+        <img src="assets/webpage/assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
+        <span>HuggingFace</span>
+      </a>
+      <a href="mailto:alberto.rota@polimi.it" class="btn-custom btn-contact">
+        <img src="assets/webpage/assets/icons/contact.png" alt="Contact" class="btn-icon" />
+        <span>Contact</span>
+      </a>
+    </div>
+    <div class="installation-section">
 
-            btn.addEventListener('click', function(e) {
+    </div>
+
+
+
+    <div class="image-sliders-section">
+      <div class="slider-container">
+        <div class="slider-wrapper">
+          <img src="assets/webpage/assets/slider1_before.jpg" alt="Before" class="slider-image slider-before" />
+          <img src="assets/webpage/assets/slider1_after.jpg" alt="After" class="slider-image slider-after" />
+          <div class="slider-divider"></div>
+          <input type="range" min="0" max="100" value="50" class="slider-input" />
+          <div class="slider-handle">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2" />
+              <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </div>
+        </div>
+      </div>
+      <div class="slider-container">
+        <div class="slider-wrapper">
+          <img src="assets/webpage/assets/slider2_before.jpg" alt="Before" class="slider-image slider-before" />
+          <img src="assets/webpage/assets/slider2_after.jpg" alt="After" class="slider-image slider-after" />
+          <div class="slider-divider"></div>
+          <input type="range" min="0" max="100" value="50" class="slider-input" />
+          <div class="slider-handle">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2" />
+              <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </div>
+        </div>
+      </div>
+      <div class="slider-container">
+        <div class="slider-wrapper">
+          <img src="assets/webpage/assets/slider3_before.jpg" alt="Before" class="slider-image slider-before" />
+          <img src="assets/webpage/assets/slider3_after.jpg" alt="After" class="slider-image slider-after" />
+          <div class="slider-divider"></div>
+          <input type="range" min="0" max="100" value="50" class="slider-input" />
+          <div class="slider-handle">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2" />
+              <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </div>
+        </div>
+      </div>
+      <div class="slider-container">
+        <div class="slider-wrapper">
+          <img src="assets/webpage/assets/slider4_before.jpg" alt="Before" class="slider-image slider-before" />
+          <img src="assets/webpage/assets/slider4_after.jpg" alt="After" class="slider-image slider-after" />
+          <div class="slider-divider"></div>
+          <input type="range" min="0" max="100" value="50" class="slider-input" />
+          <div class="slider-handle">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2" />
+              <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <div class="abstract-container">
+      <div class="abstract-card">
+        <h2 class="abstract-title">Paper Abstract</h2>
+        <p class="abstract-text">
+          Specular highlights distort appearance, obscure texture, and hinder geometric reasoning in both natural and
+          surgical imagery. We present <strong>UnReflectAnything</strong>, an RGB-only framework that removes highlights
+          from a single
+          image by predicting a highlight map together with a reflection-free diffuse reconstruction. The model uses a
+          frozen vision transformer encoder to extract multi-scale features, a lightweight head to localize specular
+          regions, and a token-level inpainting module that restores corrupted feature patches before producing the
+          final
+          diffuse image. To overcome the lack of paired supervision, we introduce a <strong>Virtual Highlight
+            Synthesis</strong> pipeline
+          that renders physically plausible specularities using monocular geometry, Fresnel-aware shading, and
+          randomized
+          lighting which enables training on arbitrary RGB images with correct geometric structure.
+        </p>
+      </div>
+
+      <div class="bento-grid">
+        <!-- Card 1: VHS (Large) -->
+        <div class="bento-item large">
+          <img src="assets/webpage/assets/highlights.png" alt="VHS Process" class="bento-image" />
+          <h3>Physically-Grounded Specular Synthesis</h3>
+          <p>A monocular geometry-aware pipeline that renders Fresnel-modulated specularities from stochastic
+            point-light
+            sources. This enables robust supervision on unaligned RGB imagery by synthesizing physically plausible
+            training
+            pairs without requiring diffuse ground truth.</p>
+        </div>
+
+        <!-- Card 2: Inpainting -->
+        <div class="bento-item">
+          <img src="assets/webpage/assets/tokeninpainter.png" alt="Token Inpainter" class="bento-image" />
+          <h3>Latent Token-Space Inpainting</h3>
+          <p>A transformer-based architecture designed to reconstruct specularly-corrupted patch tokens directly within
+            the
+            latent space. By leveraging long-range dependencies, the model recovers original diffuse features while
+            maintaining global semantic consistency.</p>
+        </div>
+
+        <!-- Card 3: Foundation Model -->
+        <div class="bento-item">
+          <img src="assets/webpage/assets/model.png" alt="Model Architecture" class="bento-image" />
+          <h3>Foundation Model Integration</h3>
+          <p>Harnessing frozen DINOv3 Vision Transformer backbones to extract high-level semantic priors. This
+            integration
+            provides invariant features that ensure zero-shot generalization across diverse lighting conditions and
+            non-Lambertian material properties.</p>
+        </div>
+
+        <!-- Card 4: Generalization -->
+        <div class="bento-item">
+          <img src="assets/webpage/assets/qualitativeresults.png" alt="Qualitative Results" class="bento-image" />
+          <h3>Cross-Domain Robustness</h3>
+          <p>Proven efficacy across disparate visual domains, from unstructured natural scenes to endoscopic surgical
+            environments. The framework effectively suppressed highlights in complex light-matter interactions where
+            conventional methods degrade.</p>
+        </div>
+
+        <!-- Card 5: Highlights -->
+        <div class="bento-item">
+          <img src="assets/webpage/assets/supervisionmasks.png" alt="Highlight Map" class="bento-image" />
+          <h3>Unified Supervision Framework</h3>
+          <p>A training strategy combining synthetic highlight rendering with multi-scale loss functions. By integrating
+            token-level and image-level supervision, the model ensures precise highlight localization and seamless
+            diffuse
+            reconstruction.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="header-image-section">
+      <img src="assets/webpage/assets/header.png" alt="method overview" class="header-image" />
+    </div>
+
+    <script>
+      // Image slider functionality
+      document.addEventListener('DOMContentLoaded', function () {
+        // Hugging Face banner functionality
+        const huggingfaceBtn = document.getElementById('huggingface-btn');
+        const banner = document.getElementById('huggingface-banner');
+
+        if (huggingfaceBtn && banner) {
+          const closeBtn = banner.querySelector('.banner-close');
+          let autoHideTimeout = null;
+
+          huggingfaceBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            banner.classList.add('show');
+
+            // Clear any existing timeout
+            if (autoHideTimeout) {
+              clearTimeout(autoHideTimeout);
+            }
+
+            // Auto-hide after 5 seconds
+            autoHideTimeout = setTimeout(function () {
+              banner.classList.remove('show');
+            }, 5000);
+          });
+
+          if (closeBtn) {
+            closeBtn.addEventListener('click', function (e) {
               e.preventDefault();
               e.stopPropagation();
-              banner.classList.add('show');
-            });
-
-            // Hide banner when mouse leaves the wrapper area (button + banner)
-            wrapper.addEventListener('mouseleave', function(e) {
               banner.classList.remove('show');
+              if (autoHideTimeout) {
+                clearTimeout(autoHideTimeout);
+              }
             });
           }
+        }
 
-          // Initialize all banners
-          initBanner('huggingface-btn', 'huggingface-banner');
-          initBanner('source-btn', 'source-banner');
-          initBanner('installation-btn', 'installation-banner');
+        // Copy button functionality
+        const copyBtn = document.getElementById('copy-btn');
+        const copyIcon = document.getElementById('copy-icon');
+        const checkIcon = document.getElementById('check-icon');
+        const pipCommand = document.getElementById('pip-command');
 
-          document.querySelectorAll('.slider-input').forEach(slider => {
-            const wrapper = slider.closest('.slider-wrapper');
-            const beforeImg = wrapper.querySelector('.slider-before');
-            const handle = wrapper.querySelector('.slider-handle');
-            const divider = wrapper.querySelector('.slider-divider');
-            
-            if (!beforeImg || !handle) return;
-            
-            function updateSlider(value) {
-              const percent = parseFloat(value);
-              // Clip the before image from the right, revealing the after image
-              beforeImg.style.clipPath = `inset(0 ${100 - percent}% 0 0)`;
-              handle.style.left = `calc(${percent}% - 24px)`;
-              if (divider) {
-                divider.style.left = `calc(${percent}% - 1.5px)`;
-              }
-            }
-            
-            slider.addEventListener('input', (e) => {
-              updateSlider(e.target.value);
-            });
-            
-            // Initialize
-            updateSlider(slider.value);
-            
-            // Mouse drag on slider area
-            let isDragging = false;
-            
-            slider.addEventListener('mousedown', (e) => {
-              isDragging = true;
-              const rect = wrapper.getBoundingClientRect();
-              const x = e.clientX - rect.left;
-              const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-              slider.value = percent;
-              updateSlider(percent);
-              e.preventDefault();
-            });
-            
-            document.addEventListener('mousemove', (e) => {
-              if (!isDragging) return;
-              const rect = wrapper.getBoundingClientRect();
-              const x = e.clientX - rect.left;
-              const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-              slider.value = percent;
-              updateSlider(percent);
-            });
-            
-            document.addEventListener('mouseup', () => {
-              isDragging = false;
-            });
-            
-            // Mouse drag on handle
-            handle.addEventListener('mousedown', (e) => {
-              isDragging = true;
-              e.preventDefault();
-            });
-            
-            // Touch support
-            slider.addEventListener('touchstart', (e) => {
-              isDragging = true;
-              const rect = wrapper.getBoundingClientRect();
-              const touch = e.touches[0];
-              const x = touch.clientX - rect.left;
-              const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-              slider.value = percent;
-              updateSlider(percent);
-              e.preventDefault();
-            });
-            
-            document.addEventListener('touchmove', (e) => {
-              if (!isDragging) return;
-              const rect = wrapper.getBoundingClientRect();
-              const touch = e.touches[0];
-              const x = touch.clientX - rect.left;
-              const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-              slider.value = percent;
-              updateSlider(percent);
-            });
-            
-            document.addEventListener('touchend', () => {
-              isDragging = false;
+        if (copyBtn && pipCommand) {
+          copyBtn.addEventListener('click', function () {
+            const command = pipCommand.textContent;
+            navigator.clipboard.writeText(command).then(() => {
+              // Show check icon
+              copyIcon.style.display = 'none';
+              checkIcon.style.display = 'block';
+              copyBtn.style.color = '#10b981';
+
+              // Reset after 2 seconds
+              setTimeout(() => {
+                copyIcon.style.display = 'block';
+                checkIcon.style.display = 'none';
+                copyBtn.style.color = '#94a3b8';
+              }, 2000);
             });
           });
-        });
-      </script>
 
-      <footer class="site-footer">
-      </footer>
-    </main>
-  </body>
+          // Typing animation logic
+          const fullText = pipCommand.textContent;
+          // Capture the width before clearing to keep container stable
+          const initialWidth = pipCommand.getBoundingClientRect().width;
+          pipCommand.style.display = 'inline-block';
+          pipCommand.style.minWidth = initialWidth + 'px';
+          pipCommand.textContent = '';
+          let charIndex = 0;
+
+          function typeCharacter() {
+            if (charIndex < fullText.length) {
+              pipCommand.textContent += fullText.charAt(charIndex);
+              charIndex++;
+              setTimeout(typeCharacter, Math.random() * 50 + 50);
+            }
+          }
+
+          const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+              if (entry.isIntersecting) {
+                setTimeout(typeCharacter, 800);
+                observer.unobserve(entry.target);
+              }
+            });
+          }, { threshold: 0.5 });
+          observer.observe(pipCommand);
+        }
+
+        // Citation copy button functionality
+        const citationCopyBtn = document.getElementById('citation-copy-btn');
+        if (citationCopyBtn) {
+          const bibtexCode = document.getElementById('bibtex-code');
+          const bibtexCopyIcon = citationCopyBtn.querySelector('.copy-icon');
+          const bibtexCheckIcon = citationCopyBtn.querySelector('.check-icon');
+          const bibtexCopyText = citationCopyBtn.querySelector('span');
+
+          citationCopyBtn.addEventListener('click', function () {
+            const code = bibtexCode.textContent;
+            navigator.clipboard.writeText(code).then(() => {
+              // Show check icon
+              bibtexCopyIcon.style.display = 'none';
+              bibtexCheckIcon.style.display = 'block';
+              if (bibtexCopyText) bibtexCopyText.textContent = 'Copied!';
+
+              // Reset after 2 seconds
+              setTimeout(() => {
+                bibtexCopyIcon.style.display = 'block';
+                bibtexCheckIcon.style.display = 'none';
+                if (bibtexCopyText) bibtexCopyText.textContent = 'Copy BibTeX';
+              }, 2000);
+            });
+          });
+        }
+        document.querySelectorAll('.slider-input').forEach(slider => {
+          const wrapper = slider.closest('.slider-wrapper');
+          const beforeImg = wrapper.querySelector('.slider-before');
+          const handle = wrapper.querySelector('.slider-handle');
+          const divider = wrapper.querySelector('.slider-divider');
+
+          if (!beforeImg || !handle) return;
+
+          function updateSlider(value) {
+            const percent = parseFloat(value);
+            // Clip the before image from the right, revealing the after image
+            beforeImg.style.clipPath = `inset(0 ${100 - percent}% 0 0)`;
+            handle.style.left = `calc(${percent}% - 24px)`;
+            if (divider) {
+              divider.style.left = `calc(${percent}% - 1.5px)`;
+            }
+          }
+
+          slider.addEventListener('input', (e) => {
+            updateSlider(e.target.value);
+          });
+
+          // Initialize
+          updateSlider(slider.value);
+
+          // Mouse drag on slider area
+          let isDragging = false;
+
+          slider.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            const rect = wrapper.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+            slider.value = percent;
+            updateSlider(percent);
+            e.preventDefault();
+          });
+
+          document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const rect = wrapper.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+            slider.value = percent;
+            updateSlider(percent);
+          });
+
+          document.addEventListener('mouseup', () => {
+            isDragging = false;
+          });
+
+          // Mouse drag on handle
+          handle.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            e.preventDefault();
+          });
+
+          // Touch support
+          slider.addEventListener('touchstart', (e) => {
+            isDragging = true;
+            const rect = wrapper.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+            slider.value = percent;
+            updateSlider(percent);
+            e.preventDefault();
+          });
+
+          document.addEventListener('touchmove', (e) => {
+            if (!isDragging) return;
+            const rect = wrapper.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+            slider.value = percent;
+            updateSlider(percent);
+          });
+
+          document.addEventListener('touchend', () => {
+            isDragging = false;
+          });
+        });
+      });
+
+    </script>
+
+    <div class="citation-section">
+      <h2 class="citation-title">Citation</h2>
+      <div class="bibtex-container">
+        <pre id="bibtex-code">@misc{rota2025unreflectanythingrgbonlyhighlightremoval,
+  title={UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision}, 
+  author={Alberto Rota and Mert Kiray and Mert Asim Karaoglu and Patrick Ruhkamp and Elena De Momi and Nassir Navab and Benjamin Busam},
+  year={2025},
+  eprint={2512.09583},
+  archivePrefix={arXiv},
+  primaryClass={cs.CV},
+  url={https://arxiv.org/abs/2512.09583}, 
+}</pre>
+        <button class="bibtex-copy-btn" id="citation-copy-btn" title="Copy Citation">
+          <svg class="copy-icon" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2"
+            fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          <svg class="check-icon" style="display:none" viewBox="0 0 24 24" width="20" height="20" stroke="#10b981"
+            stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <span>Copy BibTeX</span>
+        </button>
+      </div>
+    </div>
+
+    <footer class="site-footer">
+    </footer>
+  </main>
+</body>
+
 </html>
