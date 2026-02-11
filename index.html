@@ -19,12 +19,6 @@
 </head>
 
 <body>
-  <div id="huggingface-banner" class="info-banner">
-    <div class="banner-content">
-      <span class="banner-text">Hugging Face space is currently being developed</span>
-      <button class="banner-close" aria-label="Close banner">&times;</button>
-    </div>
-  </div>
   <a id="skip-to-content" href="#content">Skip to the content.</a>
 
   <header class="page-header" role="banner">
@@ -83,7 +77,7 @@
             </svg>
           </button>
         </div>
-        <a href="https://doi.org/10.48550/arXiv.2512.09583" class="btn-custom btn-wiki">
+        <a href="https://github.com/alberto-rota/UnReflectAnything/wiki" class="btn-custom btn-wiki">
           <img src="assets/webpage/assets/icons/source.png" alt="Paper" class="btn-icon" />
           <span>API Wiki</span>
         </a>
@@ -109,7 +103,7 @@
       <a href="mailto:alberto.rota@polimi.it" class="btn-custom btn-contact">
         <img src="assets/webpage/assets/icons/contact.png" alt="Contact" class="btn-icon" />
         <span>Contact</span>
-      </a>
+      </a>  
     </div>
     <div class="installation-section">
 
@@ -277,42 +271,6 @@
     <script>
       // Image slider functionality
       document.addEventListener('DOMContentLoaded', function () {
-        // Hugging Face banner functionality
-        const huggingfaceBtn = document.getElementById('huggingface-btn');
-        const banner = document.getElementById('huggingface-banner');
-
-        if (huggingfaceBtn && banner) {
-          const closeBtn = banner.querySelector('.banner-close');
-          let autoHideTimeout = null;
-
-          huggingfaceBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            banner.classList.add('show');
-
-            // Clear any existing timeout
-            if (autoHideTimeout) {
-              clearTimeout(autoHideTimeout);
-            }
-
-            // Auto-hide after 5 seconds
-            autoHideTimeout = setTimeout(function () {
-              banner.classList.remove('show');
-            }, 5000);
-          });
-
-          if (closeBtn) {
-            closeBtn.addEventListener('click', function (e) {
-              e.preventDefault();
-              e.stopPropagation();
-              banner.classList.remove('show');
-              if (autoHideTimeout) {
-                clearTimeout(autoHideTimeout);
-              }
-            });
-          }
-        }
-
         // Copy button functionality
         const copyBtn = document.getElementById('copy-btn');
         const copyIcon = document.getElementById('copy-icon');
