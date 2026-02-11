@@ -216,7 +216,7 @@ def create_model_from_config(config: DotMap, device: torch.device, verbose: bool
         if verbose:
             logger.info(f"Torch Compile time: {end_time - start_time:.2f} seconds",context="MODEL")
     torch.cuda.empty_cache()
-    # from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
+    # from diffusers import AutoencoderKL, UNet2DConditionModel, DFnoMScheduler
     # from models import DINOv3
     # from sd_decomposer import StableDiffusionDecomposer
 
@@ -397,7 +397,7 @@ def load_and_process_config(
                     config_dict[key] = new_value
                 except Exception as e:
                     print(f"Could not convert value for {key}: {value}, error: {e}")
-            else:
+            elif key not in ["DP", "DDP", "SINGLE"]:
                 print(f"Warning: Unknown parameter {key}")
 
     # Convert the configuration dictionary to a DotMap for easy access
