@@ -1169,18 +1169,42 @@ body * {
 
 /* Paper button - Purple */
 .btn-wiki {
-  border: 1px solid rgba(0, 0, 0);
-  /* background-image: linear-gradient(135deg, #ffffff 0%, #d4daf8 20%, #764ba2 100%); */
+  position: relative;
+  background-color: #ffffff;
+  color: #0d1117;
+  border: 2px solid #0d1117;
+  transition: 
+    color 0.2s cubic-bezier(.4,0,.2,1),
+    background-color 0.15s cubic-bezier(.4,0,.2,1);
+  /* Remove border-width and border-color transitions to avoid shifting layout */
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .btn-wiki::before {
-  background-image: linear-gradient(135deg, #a682ca 0%, #a682ca 20%, #a682ca 100%);
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: none;
+  /* Start with invisible overlay border */
+  box-shadow: 0 0 0 0 #0d1117 inset;
+  opacity: 1;
+  transition:
+    box-shadow 0.15s cubic-bezier(.4,0,.2,1);
+  z-index: 1;
+}
+
+.btn-wiki:hover {
+  /* Border will NOT grow, overlay will instead */
+  border-color: #0d1117;
 }
 
 .btn-wiki:hover::before {
-  opacity: 1;
+  /* Animate thicker border *inside* using inset box-shadow, not affecting layout */
+  box-shadow: 0 0 0 2px #0d1117 inset, 0 0 0 2px #0d1117 inset;
 }
-
 
 /* Paper button - Purple */
 .btn-paper {
@@ -1197,11 +1221,11 @@ body * {
 
 /* Source Code button - Green */
 .btn-source {
-  background-image: linear-gradient(225deg, #ffffff 0%, #a8f5d0 20%, #11998e 100%);
+  background-image: linear-gradient(225deg, #ffffff 0%, #a8f5d0 40%, #11998e 100%);
 }
 
 .btn-source::before {
-  background-image: linear-gradient(225deg, #11998e 0%, #11998e 20%, #11998e 100%);
+  background-image: linear-gradient(225deg, #11998e 0%, #11998e 40%, #11998e 100%);
 }
 
 .btn-source:hover::before {
@@ -1210,11 +1234,11 @@ body * {
 
 /* Installation button - Blue */
 .btn-installation {
-  background-image: linear-gradient(135deg, #ffffff 0%, #b3f0ff 40%, #4facfe 100%);
+  background-image: linear-gradient(110deg, #ffffff 0%, #b3f0ff 40%, #4facfe 100%);
 }
 
 .btn-installation::before {
-  background-image: linear-gradient(135deg, #4facfe 0%, #4facfe 40%, #4facfe 100%);
+  background-image: linear-gradient(110deg, #4facfe 0%, #4facfe 40%, #4facfe 100%);
 }
 
 .btn-installation:hover::before {
@@ -1223,24 +1247,36 @@ body * {
 
 /* Huggingface button - Yellow */
 .btn-huggingface {
-  background-image: linear-gradient(190deg, #ffffff 0%, #fef0c8 30%, #f59e0b 100%);
+  background-image: linear-gradient(20deg, #ffffff 0%, #fef0c8 30%, #f59e0b 100%);
 }
 
 .btn-huggingface::before {
-  background-image: linear-gradient(190deg, #f59e0b 0%, #f59e0b 30%, #f59e0b 100%);
+  background-image: linear-gradient(20deg, #f59e0b 0%, #f59e0b 30%, #f59e0b 100%);
 }
 
 .btn-huggingface:hover::before {
   opacity: 1;
 }
 
+.btn-huggingface2 {
+  background-image: linear-gradient(190deg, #ffffff 0%, #e8d4ff 30%, #7d4eb2 100%);
+}
+
+.btn-huggingface2::before {
+  background-image: linear-gradient(190deg, #7d4eb2 0%, #7d4eb2 30%, #7d4eb2 100%);
+}
+
+.btn-huggingface2:hover::before {
+  opacity: 1;
+}
+
 /* Contact button - Orange */
 .btn-contact {
-  background-image: linear-gradient(135deg, #ffffff 0%, #fdd4b8 20%, #ea580c 100%);
+  background-image: linear-gradient(135deg, #ffffff 0%, #fdd4b8 30%, #ea580c 100%);
 }
 
 .btn-contact::before {
-  background-image: linear-gradient(135deg, #ea580c 0%, #ea580c 20%, #ea580c 100%);
+  background-image: linear-gradient(135deg, #ea580c 0%, #ea580c 30%, #ea580c 100%);
 }
 
 .btn-contact:hover::before {
@@ -1260,7 +1296,7 @@ body * {
   padding: 50px;
   box-shadow: 0 15px 50px -15px rgba(0, 0, 0, 0.1);
   margin-bottom: 30px;
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.1);
   position: relative;
   overflow: hidden;
 }
