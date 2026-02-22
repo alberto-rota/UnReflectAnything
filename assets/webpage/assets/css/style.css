@@ -1693,7 +1693,7 @@ body * {
   width: 24px;
   height: 24px;
   opacity: 0.8;
-  margin:
+  margin: 0 auto;
   transition: opacity 0.2s ease;
 }
 
