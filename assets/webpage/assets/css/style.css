@@ -1296,6 +1296,21 @@ body * {
   opacity: 1;
 }
 
+/* Demo button (Coming soon) – keep style when disabled */
+#demo-btn {
+  transition: width 0.28s ease;
+}
+
+#demo-btn:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+#demo-btn span {
+  transition: opacity 0.28s ease;
+  white-space: nowrap;
+}
+
 /* Abstract & Bento Section */
 .abstract-container {
   max-width: 1400px;
@@ -1717,7 +1732,7 @@ body * {
   height: 100%;
   background: rgba(255, 255, 255, 0.8);
   box-shadow: 0 0 15px rgba(0, 0, 0, 0.2), 0 0 2px rgba(255, 255, 255, 0.5);
-  z-index: 5;
+  z-index: 5; 
   pointer-events: none;
   transition: left 0.1s ease-out;
 }

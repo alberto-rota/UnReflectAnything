@@ -92,11 +92,10 @@
         <span>Source Code</span>
       </a>
 
-      <a href="https://huggingface.co/spaces/AlbeRota/UnReflectAnything" class="btn-custom btn-huggingface"
-        id="huggingface-btn">
+      <button type="button" class="btn-custom btn-huggingface" id="demo-btn" aria-label="Demo">
         <img src="assets/webpage/assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
         <span>Demo</span>
-      </a>
+      </button>
       <a href="https://huggingface.co/AlbeRota/UnReflectAnything" class="btn-custom btn-huggingface2"
         id="huggingface-btn">
         <img src="assets/webpage/assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
@@ -367,6 +366,28 @@
             });
           }, { threshold: 0.5 });
           observer.observe(pipCommand);
+        }
+
+        // Demo button: smooth crossfade and width transition to "Coming soon" on click
+        const demoBtn = document.getElementById('demo-btn');
+        if (demoBtn) {
+          const demoBtnLabel = demoBtn.querySelector('span');
+          const transitionMs = 280;
+          demoBtn.addEventListener('click', function () {
+            if (!demoBtnLabel) return;
+            demoBtnLabel.style.opacity = '0';
+            setTimeout(function () {
+              var w = demoBtn.offsetWidth;
+              demoBtn.style.overflow = 'hidden';
+              demoBtn.style.width = w + 'px';
+              demoBtnLabel.textContent = 'Coming soon';
+              demoBtn.setAttribute('aria-label', 'Coming soon');
+              demoBtn.disabled = true;
+              w = Math.ceil(demoBtn.scrollWidth);
+              demoBtn.style.width = w + 'px';
+              demoBtnLabel.style.opacity = '1';
+            }, transitionMs);
+          });
         }
 
         // Citation copy button functionality
