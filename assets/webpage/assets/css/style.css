@@ -1529,13 +1529,14 @@ body * {
   min-height: 400px;
 }
 
-/* Carousel section */
+/* Carousel section – constrained width so sliders match Live Server on GitHub Pages */
 .carousel-container {
   position: relative;
-  max-width: 100%;
-  margin: 0px 60px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 60px;
   overflow: hidden;
-  padding: 0 0;
+  box-sizing: border-box;
 }
 
 .carousel-track {
@@ -1543,22 +1544,27 @@ body * {
   transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
   gap: 30px;
   width: 100%;
+  min-width: 0;
 }
 
 .carousel-item {
   flex: 0 0 100%;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 @media (min-width: 768px) {
   .carousel-item {
     flex: 0 0 calc(50% - 15px);
+    max-width: calc(50% - 15px);
   }
 }
 
 @media (min-width: 1200px) {
   .carousel-item {
     flex: 0 0 calc(33.333% - 20px);
+    max-width: calc(33.333% - 20px);
   }
 }
 
@@ -1569,6 +1575,7 @@ body * {
 .slider-wrapper {
   position: relative;
   width: 100%;
+  max-width: 100%;
   aspect-ratio: 1/1;
   border-radius: 20px;
   overflow: hidden;
@@ -1577,6 +1584,7 @@ body * {
   background: #f1f5f9;
   transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
   border: 1px solid rgba(0, 0, 0, 0.05);
+  box-sizing: border-box;
 }
 
 /* .slider-wrapper:hover {
