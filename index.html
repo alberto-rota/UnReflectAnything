@@ -102,6 +102,11 @@
         <img src="assets/webpage/assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
         <span>Model Card</span>
       </a>
+      <a href="https://colab.research.google.com/#fileId=https%3A//huggingface.co/AlbeRota/UnReflectAnything/blob/main/notebooks/UnReflectAnything.ipynb" class="btn-custom btn-colab"
+        id="huggingface-btn">
+        <img src="assets/webpage/assets/icons/colab.webp" alt="Colab" class="btn-icon" />
+        <span>Colab</span>
+      </a>
       <a href="mailto:alberto.rota@polimi.it" class="btn-custom btn-contact">
         <img src="assets/webpage/assets/icons/contact.png" alt="Contact" class="btn-icon" />
         <span>Contact</span>
@@ -111,64 +116,103 @@
 
     </div>
 
+    <div class="carousel-container">
+      <div class="carousel-track">
+        <!-- Slider 1 -->
+        <div class="carousel-item">
+          <div class="slider-wrapper">
+            <img src="assets/webpage/assets/slider1_before.png" alt="Before" class="slider-image slider-before" />
+            <img src="assets/webpage/assets/slider1_after.png" alt="After" class="slider-image slider-after" />
 
+            <div class="slider-divider"></div>
+            <input type="range" min="0" max="100" value="50" class="slider-input" />
+            <div class="slider-handle">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        <!-- Slider 2 -->
+        <div class="carousel-item">
+          <div class="slider-wrapper">
+            <img src="assets/webpage/assets/slider2_before.png" alt="Before" class="slider-image slider-before" />
+            <img src="assets/webpage/assets/slider2_after.png" alt="After" class="slider-image slider-after" />
 
-    <div class="image-sliders-section">
-      <div class="slider-container">
-        <div class="slider-wrapper">
-          <img src="assets/webpage/assets/slider1_before.jpg" alt="Before" class="slider-image slider-before" />
-          <img src="assets/webpage/assets/slider1_after.jpg" alt="After" class="slider-image slider-after" />
-          <div class="slider-divider"></div>
-          <input type="range" min="0" max="100" value="50" class="slider-input" />
-          <div class="slider-handle">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2" />
-              <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round" />
-            </svg>
+            <div class="slider-divider"></div>
+            <input type="range" min="0" max="100" value="50" class="slider-input" />
+            <div class="slider-handle">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </div>
           </div>
         </div>
+        <!-- Slider 3 -->
+        <div class="carousel-item">
+          <div class="slider-wrapper">
+            <img src="assets/webpage/assets/slider3_before.png" alt="Before" class="slider-image slider-before" />
+            <img src="assets/webpage/assets/slider3_after.png" alt="After" class="slider-image slider-after" />
+
+            <div class="slider-divider"></div>
+            <input type="range" min="0" max="100" value="50" class="slider-input" />
+            <div class="slider-handle">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        <!-- Slider 4 -->
+        <div class="carousel-item">
+          <div class="slider-wrapper">
+            <img src="assets/webpage/assets/slider4_before.png" alt="Before" class="slider-image slider-before" />
+            <img src="assets/webpage/assets/slider4_after.png" alt="After" class="slider-image slider-after" />
+
+            <div class="slider-divider"></div>
+            <input type="range" min="0" max="100" value="50" class="slider-input" />
+            <div class="slider-handle">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        <!-- Repeating Sliders to reach 20 as requested -->
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider5_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider5_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider6_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider6_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider7_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider7_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider8_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider8_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider9_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider9_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider10_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider10_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider11_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider11_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider12_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider12_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider13_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider13_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider14_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider14_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider15_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider15_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider16_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider16_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider17_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider17_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider18_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider18_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider19_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider19_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
+        <div class="carousel-item"><div class="slider-wrapper"><img src="assets/webpage/assets/slider20_before.png" class="slider-image slider-before" /><img src="assets/webpage/assets/slider20_after.png" class="slider-image slider-after" /><div class="slider-labels"></div><div class="slider-divider"></div><input type="range" min="0" max="100" value="50" class="slider-input" /><div class="slider-handle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10 8L6 12L10 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M14 8L18 12L14 16" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div></div></div>
       </div>
-      <div class="slider-container">
-        <div class="slider-wrapper">
-          <img src="assets/webpage/assets/slider2_before.jpg" alt="Before" class="slider-image slider-before" />
-          <img src="assets/webpage/assets/slider2_after.jpg" alt="After" class="slider-image slider-after" />
-          <div class="slider-divider"></div>
-          <input type="range" min="0" max="100" value="50" class="slider-input" />
-          <div class="slider-handle">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2" />
-              <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round" />
-            </svg>
-          </div>
-        </div>
-      </div>
-      <div class="slider-container">
-        <div class="slider-wrapper">
-          <img src="assets/webpage/assets/slider3_before.jpg" alt="Before" class="slider-image slider-before" />
-          <img src="assets/webpage/assets/slider3_after.jpg" alt="After" class="slider-image slider-after" />
-          <div class="slider-divider"></div>
-          <input type="range" min="0" max="100" value="50" class="slider-input" />
-          <div class="slider-handle">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2" />
-              <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round" />
-            </svg>
-          </div>
-        </div>
-      </div>
-      <div class="slider-container">
-        <div class="slider-wrapper">
-          <img src="assets/webpage/assets/slider4_before.jpg" alt="Before" class="slider-image slider-before" />
-          <img src="assets/webpage/assets/slider4_after.jpg" alt="After" class="slider-image slider-after" />
-          <div class="slider-divider"></div>
-          <input type="range" min="0" max="100" value="50" class="slider-input" />
-          <div class="slider-handle">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" fill="white" stroke="#333" stroke-width="2" />
-              <path d="M8 12 L12 8 L16 12 M8 12 L12 16 L16 12" stroke="#333" stroke-width="2" stroke-linecap="round" />
-            </svg>
-          </div>
-        </div>
+
+      <div class="carousel-nav">
+        <button class="carousel-prev" aria-label="Previous">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+            <path d="M15 18L9 12L15 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <div class="carousel-dots"></div>
+        <button class="carousel-next" aria-label="Next">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+            <path d="M9 18L15 12L9 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
       </div>
     </div>
     </div>
@@ -350,97 +394,179 @@
             });
           });
         }
-        document.querySelectorAll('.slider-input').forEach(slider => {
-          const wrapper = slider.closest('.slider-wrapper');
-          const beforeImg = wrapper.querySelector('.slider-before');
-          const handle = wrapper.querySelector('.slider-handle');
-          const divider = wrapper.querySelector('.slider-divider');
+        // Slider functionality (re-applied to all sliders including carousel items)
+        function initSliders() {
+          document.querySelectorAll('.slider-input').forEach(slider => {
+            const wrapper = slider.closest('.slider-wrapper');
+            const beforeImg = wrapper.querySelector('.slider-before');
+            const handle = wrapper.querySelector('.slider-handle');
+            const divider = wrapper.querySelector('.slider-divider');
 
-          if (!beforeImg || !handle) return;
+            if (!beforeImg || !handle) return;
 
-          function updateSlider(value) {
-            const percent = parseFloat(value);
-            // Clip the before image from the right, revealing the after image
-            beforeImg.style.clipPath = `inset(0 ${100 - percent}% 0 0)`;
-            handle.style.left = `calc(${percent}% - 24px)`;
-            if (divider) {
-              divider.style.left = `calc(${percent}% - 1.5px)`;
+            function updateSlider(value) {
+              const percent = parseFloat(value);
+              beforeImg.style.clipPath = `inset(0 ${100 - percent}% 0 0)`;
+              handle.style.left = `calc(${percent}% - 20px)`;
+              if (divider) {
+                divider.style.left = `calc(${percent}% - 1px)`;
+              }
+            }
+
+            slider.addEventListener('input', (e) => {
+              updateSlider(e.target.value);
+            });
+
+            // Initialize
+            updateSlider(slider.value);
+
+            // Dragging logic
+            let isDragging = false;
+            const startDrag = (e) => {
+              isDragging = true;
+              const rect = wrapper.getBoundingClientRect();
+              const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+              const x = clientX - rect.left;
+              const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+              slider.value = percent;
+              updateSlider(percent);
+            };
+
+            const doDrag = (e) => {
+              if (!isDragging) return;
+              const rect = wrapper.getBoundingClientRect();
+              const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+              const x = clientX - rect.left;
+              const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+              slider.value = percent;
+              updateSlider(percent);
+            };
+
+            const stopDrag = () => { isDragging = false; };
+
+            slider.addEventListener('mousedown', startDrag);
+            window.addEventListener('mousemove', doDrag);
+            window.addEventListener('mouseup', stopDrag);
+            slider.addEventListener('touchstart', startDrag, { passive: false });
+            window.addEventListener('touchmove', doDrag, { passive: false });
+            window.addEventListener('touchend', stopDrag);
+          });
+        }
+
+        // Carousel functionality
+        const track = document.querySelector('.carousel-track');
+        const items = document.querySelectorAll('.carousel-item');
+        const prevBtn = document.querySelector('.carousel-prev');
+        const nextBtn = document.querySelector('.carousel-next');
+        const dotsContainer = document.querySelector('.carousel-dots');
+        
+        let currentIndex = 0;
+        let itemsPerView = 1;
+
+        function updateItemsPerView() {
+          if (window.innerWidth >= 1200) itemsPerView = 3;
+          else if (window.innerWidth >= 768) itemsPerView = 2;
+          else itemsPerView = 1;
+        }
+
+        function createDots() {
+          dotsContainer.innerHTML = '';
+          for (let i = 0; i < items.length; i++) {
+            const dot = document.createElement('div');
+            dot.classList.add('carousel-dot');
+            if (i === 0) dot.classList.add('active');
+            dot.addEventListener('click', () => goToItem(i));            dotsContainer.appendChild(dot);
+          }
+        }
+
+        function updateCarousel() {
+          const itemWidth = items[0].getBoundingClientRect().width;
+          const gap = 30;
+          const offset = currentIndex * (itemWidth + gap);
+          track.style.transform = `translateX(-${offset}px)`;
+          
+          // Update dots (one per image; active = first visible item index)
+          const dots = document.querySelectorAll('.carousel-dot');
+          dots.forEach((dot, i) => {
+            dot.classList.toggle('active', i === currentIndex);
+          });
+        }
+
+        function nextSlide() {
+          if (currentIndex < items.length - itemsPerView) {
+            currentIndex++;
+            updateCarousel();
+          }
+        }
+
+        function prevSlide() {
+          if (currentIndex > 0) {
+            currentIndex--;
+            updateCarousel();
+          }
+        }
+
+        function goToItem(itemIndex) {
+          currentIndex = Math.min(Math.max(0, itemIndex), items.length - itemsPerView);
+          updateCarousel();
+        }
+
+        // Proximity detection
+        let proximityThreshold = 100; // px from edge
+        let lastEdgeAction = 0;
+        const debounceTime = 500; // ms
+
+        window.addEventListener('mousemove', (e) => {
+          const x = e.clientX;
+          const width = window.innerWidth;
+          
+          document.body.classList.toggle('proximity-active-left', x < proximityThreshold);
+          document.body.classList.toggle('proximity-active-right', x > width - proximityThreshold);
+
+          const now = Date.now();
+          if (now - lastEdgeAction > debounceTime) {
+            if (x < proximityThreshold) {
+              prevSlide();
+              lastEdgeAction = now;
+            } else if (x > width - proximityThreshold) {
+              nextSlide();
+              lastEdgeAction = now;
             }
           }
-
-          slider.addEventListener('input', (e) => {
-            updateSlider(e.target.value);
-          });
-
-          // Initialize
-          updateSlider(slider.value);
-
-          // Mouse drag on slider area
-          let isDragging = false;
-
-          slider.addEventListener('mousedown', (e) => {
-            isDragging = true;
-            const rect = wrapper.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-            slider.value = percent;
-            updateSlider(percent);
-            e.preventDefault();
-          });
-
-          document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            const rect = wrapper.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-            slider.value = percent;
-            updateSlider(percent);
-          });
-
-          document.addEventListener('mouseup', () => {
-            isDragging = false;
-          });
-
-          // Mouse drag on handle
-          handle.addEventListener('mousedown', (e) => {
-            isDragging = true;
-            e.preventDefault();
-          });
-
-          // Touch support
-          slider.addEventListener('touchstart', (e) => {
-            isDragging = true;
-            const rect = wrapper.getBoundingClientRect();
-            const touch = e.touches[0];
-            const x = touch.clientX - rect.left;
-            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-            slider.value = percent;
-            updateSlider(percent);
-            e.preventDefault();
-          });
-
-          document.addEventListener('touchmove', (e) => {
-            if (!isDragging) return;
-            const rect = wrapper.getBoundingClientRect();
-            const touch = e.touches[0];
-            const x = touch.clientX - rect.left;
-            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-            slider.value = percent;
-            updateSlider(percent);
-          });
-
-          document.addEventListener('touchend', () => {
-            isDragging = false;
-          });
         });
+
+        // Event listeners
+        prevBtn.addEventListener('click', prevSlide);
+        nextBtn.addEventListener('click', nextSlide);
+        window.addEventListener('resize', () => {
+          updateItemsPerView();
+          createDots();
+          updateCarousel();
+        });
+
+        // Init
+        updateItemsPerView();
+        createDots();
+        initSliders();
+        updateCarousel();
       });
 
     </script>
 
+    <!-- <div class="proximity-hint proximity-hint-left">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+        <path d="M15 18L9 12L15 6" stroke="#ca6702" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </div>
+    <div class="proximity-hint proximity-hint-right">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+        <path d="M9 18L15 12L9 6" stroke="#ca6702" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </div> -->
     <div class="citation-section">
       <h2 class="citation-title">Citation</h2>
       <div class="bibtex-container">
-        <pre id="bibtex-code">@misc{rota2025unreflectanythingrgbonlyhighlightremoval,
+        <pre id="bibtex-code">@misc{rota2025unreflectanything,
   title={UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision}, 
   author={Alberto Rota and Mert Kiray and Mert Asim Karaoglu and Patrick Ruhkamp and Elena De Momi and Nassir Navab and Benjamin Busam},
   year={2025},
