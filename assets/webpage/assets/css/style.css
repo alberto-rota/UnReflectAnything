@@ -1296,17 +1296,20 @@ body * {
   opacity: 1;
 }
 
-/* Demo button (Coming soon) – keep style when disabled */
-#demo-btn {
+/* Demo / Video buttons (Coming soon) – keep style when disabled */
+#demo-btn,
+#youtube-btn {
   transition: width 0.28s ease;
 }
 
-#demo-btn:disabled {
+#demo-btn:disabled,
+#youtube-btn:disabled {
   cursor: default;
   opacity: 1;
 }
 
-#demo-btn span {
+#demo-btn span,
+#youtube-btn span {
   transition: opacity 0.28s ease;
   white-space: nowrap;
 }
