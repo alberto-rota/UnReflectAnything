@@ -2184,3 +2184,677 @@ body * {
     padding: 8px;
   }
 }
+
+/* ============================================================
+   HEADER: structured layout (replaces inline-style flex 20/80)
+   ============================================================ */
+.header-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+}
+
+.header-logo-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 20%;
+  max-width: 240px;
+  min-width: 100px;
+}
+
+.header-logo {
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.25));
+}
+
+.header-title-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.header-title-wrap .project-name {
+  text-align: left;
+  margin: 0;
+  line-height: 1.15;
+}
+
+/* ============================================================
+   CVPR BANNER
+   ============================================================ */
+.cvpr-banner {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 18px;
+  padding: 18px 22px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 10px 35px -10px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: relative;
+  overflow: hidden;
+}
+
+.cvpr-banner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(255, 215, 0, 0.08), transparent 50%),
+    radial-gradient(circle at 100% 100%, rgba(202, 103, 2, 0.12), transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.cvpr-banner-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
+}
+
+.cvpr-venue-group {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  color: #fff;
+}
+
+.cvpr-venue-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.cvpr-venue-name {
+  font-family: 'Bebas Neue', 'Montserrat', sans-serif !important;
+  font-size: 2.1rem;
+  letter-spacing: 0.05em;
+  font-weight: 400;
+  background: linear-gradient(90deg, #ffd700 0%, #ffae42 50%, #ffd700 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 30px rgba(255, 215, 0, 0.25);
+  line-height: 1;
+}
+
+.cvpr-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.cvpr-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 100px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  position: relative;
+  border: 1.5px solid transparent;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.cvpr-badge:hover {
+  transform: translateY(-2px);
+}
+
+.cvpr-badge-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.cvpr-badge-oral {
+  background: linear-gradient(135deg, #ca6702 0%, #e8821a 100%);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 6px 18px -4px rgba(202, 103, 2, 0.6);
+}
+
+.cvpr-badge-oral:hover {
+  box-shadow: 0 10px 24px -4px rgba(202, 103, 2, 0.75);
+}
+
+.cvpr-badge-award {
+  background: linear-gradient(135deg, #ffd700 0%, #f59e0b 50%, #d97706 100%);
+  color: #2a1500;
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 6px 18px -4px rgba(255, 200, 0, 0.55);
+  animation: award-shimmer 3s ease-in-out infinite;
+}
+
+.cvpr-badge-award:hover {
+  box-shadow: 0 10px 24px -4px rgba(255, 200, 0, 0.8);
+}
+
+@keyframes award-shimmer {
+  0%, 100% {
+    box-shadow: 0 6px 18px -4px rgba(255, 200, 0, 0.55);
+  }
+  50% {
+    box-shadow: 0 6px 30px -2px rgba(255, 200, 0, 0.95);
+  }
+}
+
+.cvpr-sessions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  position: relative;
+  z-index: 1;
+}
+
+.cvpr-session {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  transition: background 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+}
+
+.cvpr-session:hover {
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(255, 215, 0, 0.35);
+  transform: translateY(-2px);
+}
+
+.cvpr-session-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(202, 103, 2, 0.2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffd700;
+}
+
+.cvpr-session-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.cvpr-session-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: #fff;
+}
+
+.cvpr-session-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.cvpr-session-when {
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.cvpr-session-where {
+  font-size: 0.82rem;
+  opacity: 0.8;
+  line-height: 1.25;
+}
+
+/* ============================================================
+   AUTHORS + AFFILIATION POPUPS (no superscripts)
+   ============================================================ */
+.affiliations {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 12px;
+  font-size: 0.85em;
+  color: #555;
+}
+
+.affiliation-sep {
+  color: #ca6702;
+  font-weight: 700;
+  opacity: 0.55;
+  user-select: none;
+}
+
+.affiliation-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  outline: none;
+}
+
+.author-link.author-highlight {
+  color: #ca6702 !important;
+}
+
+.author-link.author-highlight::after {
+  transform: scaleX(1) !important;
+  transform-origin: left !important;
+}
+
+/* ============================================================
+   YOUTUBE BUTTON (red gradient, black icon like the others)
+   ============================================================ */
+.btn-youtube {
+  background-image: linear-gradient(135deg, #ffffff 0%, #ffcdd2 25%, #ff1a1a 100%);
+}
+
+.btn-youtube::before {
+  background-image: linear-gradient(135deg, #ff1a1a 0%, #cc0000 50%, #990000 100%);
+}
+
+.btn-youtube:hover::before {
+  opacity: 1;
+}
+
+/* ============================================================
+   MOBILE — make it stunning and usable
+   ============================================================ */
+
+/* Desktop: keep header padding generous */
+@media (min-width: 1024px) {
+  .page-header {
+    padding: 2.5rem 3rem !important;
+  }
+}
+
+/* Tablet / small desktop */
+@media (max-width: 1023px) {
+  .page-header {
+    padding: 1.75rem 1.25rem !important;
+  }
+
+  .header-inner {
+    gap: 22px;
+  }
+
+  .cvpr-venue-name {
+    font-size: 1.85rem;
+  }
+}
+
+/* Tablet portrait and smaller */
+@media (max-width: 768px) {
+  .header-inner {
+    gap: 20px;
+  }
+
+  .header-top {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 14px;
+  }
+
+  .header-logo-wrap {
+    width: 30%;
+    max-width: 130px;
+    min-width: 80px;
+  }
+
+  .header-title-wrap .project-name {
+    text-align: center;
+    font-size: 1.55rem !important;
+    line-height: 1.2;
+  }
+
+  /* CVPR banner stacks */
+  .cvpr-banner {
+    padding: 16px 14px;
+    gap: 12px;
+    border-radius: 14px;
+  }
+
+  .cvpr-banner-main {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .cvpr-venue-group {
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    text-align: center;
+  }
+
+  .cvpr-venue-label {
+    font-size: 0.72rem;
+  }
+
+  .cvpr-venue-name {
+    font-size: 2.4rem;
+  }
+
+  .cvpr-badges {
+    justify-content: center;
+  }
+
+  .cvpr-badge {
+    font-size: 0.72rem;
+    padding: 7px 13px;
+    letter-spacing: 0.04em;
+  }
+
+  .cvpr-badge-icon {
+    width: 14px;
+    height: 14px;
+  }
+
+  .cvpr-sessions {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .cvpr-session {
+    padding: 10px 12px;
+    gap: 12px;
+  }
+
+  .cvpr-session-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .cvpr-session-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .cvpr-session-when {
+    font-size: 0.9rem;
+  }
+
+  .cvpr-session-where {
+    font-size: 0.78rem;
+  }
+
+  /* Authors / affiliations */
+  .authors-section {
+    margin: 24px 0 8px 0;
+  }
+
+  .authors {
+    font-size: 1.05em !important;
+    line-height: 1.6;
+  }
+
+  .authors b {
+    font-size: 1em;
+  }
+
+  .affiliations {
+    font-size: 0.78em;
+    gap: 4px 10px;
+    margin-top: 10px;
+  }
+
+  /* Buttons section — single column on phone, two columns on small tablets */
+  .buttons-section {
+    gap: 10px;
+    margin: 8px 0;
+  }
+
+  .btn-custom {
+    padding: 12px 22px;
+    font-size: 0.92em;
+  }
+
+  /* pip command sized to viewport */
+  .pip-command-container {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    padding: 12px 20px;
+    box-sizing: border-box;
+  }
+
+  .pip-command-container code {
+    font-size: 0.95em;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  /* Content padding */
+  .main-content {
+    padding: 0 14px !important;
+  }
+
+  .content-wrapper {
+    padding: 10px 0;
+  }
+
+  /* Abstract */
+  .abstract-container {
+    margin: 30px auto;
+  }
+
+  .abstract-card {
+    padding: 22px 18px;
+    border-radius: 16px;
+  }
+
+  .abstract-text {
+    font-size: 0.95em;
+    line-height: 1.55;
+  }
+
+  /* Carousel — tighter on mobile */
+  .carousel-container {
+    padding: 0 8px;
+  }
+
+  .carousel-prev,
+  .carousel-next {
+    width: 40px;
+    height: 40px;
+    margin: 6px 4px;
+  }
+
+  .carousel-prev svg,
+  .carousel-next svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .slider-wrapper {
+    border-radius: 14px;
+  }
+
+  /* Disable proximity hover effects on touch */
+  .proximity-active-left .proximity-hint-left,
+  .proximity-active-right .proximity-hint-right {
+    opacity: 0;
+  }
+
+  /* Citation */
+  .citation-section {
+    padding: 0 12px;
+    margin: 40px auto;
+  }
+
+  .bibtex-container {
+    padding: 18px 16px;
+    border-radius: 10px;
+  }
+
+  .bibtex-container pre {
+    font-size: 0.78em;
+    line-height: 1.45;
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+
+  .citation-title {
+    font-size: 1.5em;
+  }
+
+  /* Bento */
+  .bento-grid {
+    gap: 16px;
+    margin-top: 24px;
+  }
+
+  .bento-item {
+    padding: 18px;
+    border-radius: 16px;
+  }
+
+  .bento-item h3 {
+    font-size: 1em;
+  }
+
+  .bento-item p {
+    font-size: 0.82em;
+  }
+}
+
+/* Small phones */
+@media (max-width: 480px) {
+  .page-header {
+    padding: 1.25rem 0.75rem !important;
+  }
+
+  .header-title-wrap .project-name {
+    font-size: 1.3rem !important;
+  }
+
+  .header-logo-wrap {
+    width: 32%;
+    max-width: 110px;
+  }
+
+  .cvpr-banner {
+    padding: 14px 12px;
+  }
+
+  .cvpr-venue-name {
+    font-size: 2rem;
+  }
+
+  .cvpr-badges {
+    flex-direction: column;
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .cvpr-badge {
+    justify-content: center;
+    width: 100%;
+    font-size: 0.7rem;
+    padding: 8px 12px;
+  }
+
+  .cvpr-session-info {
+    min-width: 0;
+  }
+
+  .cvpr-session-when,
+  .cvpr-session-where {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .authors {
+    font-size: 1em !important;
+  }
+
+  .affiliations {
+    font-size: 0.74em;
+  }
+
+  /* Buttons stack and full-width, but keep two columns where they fit */
+  .buttons-section {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .buttons-section .btn-custom,
+  .buttons-section .pip-command-container {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    justify-content: center;
+  }
+
+  /* Loose buttons (not inside buttons-section) — make them block too */
+  .content-wrapper > .btn-custom {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    justify-content: center;
+    margin: 6px 0;
+  }
+
+  /* Carousel nav slightly tighter */
+  .carousel-container {
+    padding: 0 4px;
+  }
+
+}
+
+/* The loose buttons (not inside a div) — wrap them visually on desktop+ */
+.content-wrapper > .btn-custom {
+  margin: 6px;
+}
+
+/* When pip command + buttons share the section, allow them to flow naturally on PC */
+@media (min-width: 769px) {
+  .content-wrapper > .btn-custom {
+    display: inline-flex;
+  }
+}
+
+/* Ensure the existing 42em (672px) media query for header doesn't override our new layout */
+@media screen and (max-width: 42em) {
+  .header-content {
+    flex-direction: row;
+  }
+}
+
+/* Override the existing min-width 64em padding-heavy header — we manage padding ourselves */
+@media screen and (min-width: 64em) {
+  .page-header {
+    padding: 2.5rem 3rem !important;
+  }
+}

@@ -12,6 +12,7 @@
   <link rel="preload" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap"
     as="style" type="text/css" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#157878">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -22,41 +23,122 @@
   <a id="skip-to-content" href="#content">Skip to the content.</a>
 
   <header class="page-header" role="banner">
-    <div style="display: flex; align-items: center; width: 100%;">
-      <div style="flex: 0 0 20%; display: flex; justify-content: center;">
-        <img src="assets/webpage/assets/logo.ico" alt="Logo">
+    <div class="header-inner">
+      <div class="header-top">
+        <div class="header-logo-wrap">
+          <img src="assets/webpage/assets/logo.ico" alt="UnReflectAnything Logo" class="header-logo">
+        </div>
+        <div class="header-title-wrap">
+          <h1 class="project-name">UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular
+            Supervision</h1>
+        </div>
       </div>
-      <div style="flex: 0 0 80%;">
-        <h1 class="project-name">UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular
-          Supervision</h1>
+
+      <div class="cvpr-banner">
+        <div class="cvpr-banner-main">
+          <div class="cvpr-venue-group">
+            <span class="cvpr-venue-label">Presented at</span>
+            <span class="cvpr-venue-name">CVPR 2026</span>
+          </div>
+          <div class="cvpr-badges">
+            <span class="cvpr-badge cvpr-badge-oral">
+              <svg class="cvpr-badge-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+              <span>Oral Presentation</span>
+            </span>
+            <span class="cvpr-badge cvpr-badge-award">
+              <svg class="cvpr-badge-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="8" r="7"/>
+                <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>
+              </svg>
+              <span>Award Candidate</span>
+            </span>
+          </div>
+        </div>
+        <div class="cvpr-sessions">
+          <div class="cvpr-session">
+            <div class="cvpr-session-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+            </div>
+            <div class="cvpr-session-info">
+              <div class="cvpr-session-label">Oral Session 1D - Computational Imaging</div>
+              <div class="cvpr-session-when">June 5th, 2026 &middot; 9:15 AM - 10:30 AM</div>
+              <div class="cvpr-session-where">Mile High Ballroom 1A - 2A  &middot; Colorado Convention Center, Denver CO</div>
+            </div>
+          </div>
+          <div class="cvpr-session">
+            <div class="cvpr-session-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <line x1="3" y1="9" x2="21" y2="9"/>
+                <line x1="9" y1="21" x2="9" y2="9"/>
+              </svg>
+            </div>
+            <div class="cvpr-session-info">
+              <div class="cvpr-session-label">Poster Session</div>
+              <div class="cvpr-session-when">June 5th, 2026 &middot; 10:45 AM</div>
+              <div class="cvpr-session-where">Exhibit Hall (ExHall A-F) &middot; Colorado Convention Center, Denver CO</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </header>
 
   <main id="content" class="main-content" role="main">
     <div class="content-wrapper">
-      <div class="authors-section">
+      <div class="authors-section"> 
         <p class="authors">
           <b>
-            <a href="mailto:alberto.rota@polimi.it" class="author-link">Alberto Rota</a><sup>1</sup>,
-            <a href="" class="author-link">Mert Kiray</a><sup>2,3</sup>,
-            <a href="" class="author-link">Mert Asim Karaoglu</a><sup>4,2</sup>,
-            <a href="" class="author-link">Patrick
-              Ruhkamp</a><sup>2</sup>,
-            <a href="" class="author-link">Elena De
-              Momi</a><sup>1</sup>,
-            <a href="" class="author-link">Nassir
-              Navab</a><sup>2,3</sup>,
-            <a href="" class="author-link">Benjamin
-              Busam</a><sup>2,3</sup>
-          </b><br>
-          <span class="affiliations">
-            <sup>1</sup><a href="https://www.polimi.it" class="affiliation-link">Politecnico di Milano</a> &nbsp;&nbsp;
-            <sup>2</sup><a href="https://www.tum.de" class="affiliation-link">Technical University of Munich</a>
-            &nbsp;&nbsp;
-            <sup>3</sup><a href="https://mcml.ai" class="affiliation-link">Munich Center for Machine Learning (MCML)</a>
-            &nbsp;&nbsp;
-            <sup>4</sup><a href="https://www.imfusion.com" class="affiliation-link">ImFusion</a>
+            <a href="https://albertorota.dev" class="author-link" data-author="alberto-rota">Alberto Rota</a>,
+            <a href="" class="author-link" data-author="mert-kiray">Mert Kiray</a>,
+            <a href="" class="author-link" data-author="mert-karaoglu">Mert Asim Karaoglu</a>,
+            <a href="" class="author-link" data-author="patrick-ruhkamp">Patrick Ruhkamp</a>,
+            <a href="" class="author-link" data-author="elena-de-momi">Elena De Momi</a>,
+            <a href="" class="author-link" data-author="nassir-navab">Nassir Navab</a>,
+            <a href="" class="author-link" data-author="benjamin-busam">Benjamin Busam</a>
+          </b>
+        </p>
+        <p class="affiliations" role="list">
+          <span class="affiliation-item" tabindex="0" role="listitem"
+            data-authors="alberto-rota,elena-de-momi">
+            <a href="https://www.polimi.it" class="affiliation-link" target="_blank" rel="noopener">Politecnico di
+              Milano</a>
+          </span>
+          <span class="affiliation-sep" aria-hidden="true">&bull;</span>
+          <span class="affiliation-item" tabindex="0" role="listitem"
+            data-authors="mert-kiray,mert-karaoglu,patrick-ruhkamp,nassir-navab,benjamin-busam">
+            <a href="https://www.tum.de" class="affiliation-link" target="_blank" rel="noopener">Technical University of
+              Munich</a>
+          </span>
+          <span class="affiliation-sep" aria-hidden="true">&bull;</span>
+          <span class="affiliation-item" tabindex="0" role="listitem"
+            data-authors="mert-kiray,nassir-navab,benjamin-busam">
+            <a href="https://mcml.ai" class="affiliation-link" target="_blank" rel="noopener">Munich Center for Machine
+              Learning</a>
+          </span>
+          <span class="affiliation-sep" aria-hidden="true">&bull;</span>
+          <span class="affiliation-item" tabindex="0" role="listitem"
+            data-authors="mert-karaoglu">
+            <a href="https://www.imfusion.com" class="affiliation-link" target="_blank" rel="noopener">ImFusion</a>
+          </span>
+          <span class="affiliation-sep" aria-hidden="true">&bull;</span>
+          <span class="affiliation-item" tabindex="0" role="listitem"
+            data-authors="mert-kiray,benjamin-busam">
+            <a href="https://obsphera.com" class="affiliation-link" target="_blank" rel="noopener">Obsphera</a>
           </span>
         </p>
       </div>
@@ -106,10 +188,16 @@
         <img src="assets/webpage/assets/icons/colab.webp" alt="Colab" class="btn-icon" />
         <span>Colab</span>
       </a>
+      <a href="#" id="youtube-btn" class="btn-custom btn-youtube" target="_blank" rel="noopener" aria-label="Watch video on YouTube">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="#000" aria-hidden="true">
+          <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.378.505A3.017 3.017 0 0 0 .5 6.186C0 8.07 0 12 0 12s0 3.93.5 5.814a3.016 3.016 0 0 0 2.122 2.136c1.873.505 9.378.505 9.378.505s7.505 0 9.378-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.546 15.568V8.432L15.818 12l-6.272 3.568z"/>
+        </svg>
+        <span>Video</span>
+      </a>
       <a href="mailto:alberto.rota@polimi.it" class="btn-custom btn-contact">
         <img src="assets/webpage/assets/icons/contact.png" alt="Contact" class="btn-icon" />
         <span>Contact</span>
-      </a>  
+      </a>
     </div>
     <div class="installation-section">
 
@@ -316,6 +404,24 @@
     <script>
       // Image slider functionality
       document.addEventListener('DOMContentLoaded', function () {
+        // Highlight matching authors when hovering / focusing an affiliation
+        const affiliationItems = document.querySelectorAll('.affiliation-item');
+        const authorLinks = document.querySelectorAll('.author-link[data-author]');
+
+        affiliationItems.forEach(item => {
+          const ids = (item.getAttribute('data-authors') || '')
+            .split(',').map(s => s.trim()).filter(Boolean);
+          const matching = Array.from(authorLinks)
+            .filter(a => ids.includes(a.getAttribute('data-author')));
+
+          const setOn = (on) => matching.forEach(a => a.classList.toggle('author-highlight', on));
+
+          item.addEventListener('mouseenter', () => setOn(true));
+          item.addEventListener('mouseleave', () => setOn(false));
+          item.addEventListener('focusin', () => setOn(true));
+          item.addEventListener('focusout', () => setOn(false));
+        });
+
         // Copy button functionality
         const copyBtn = document.getElementById('copy-btn');
         const copyIcon = document.getElementById('copy-icon');
