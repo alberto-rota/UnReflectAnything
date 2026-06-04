@@ -174,10 +174,11 @@
         <span>Source Code</span>
       </a>
 
-      <button type="button" class="btn-custom btn-huggingface" id="demo-btn" aria-label="Demo">
+      <a href="https://huggingface.co/spaces/AlbeRota/UnReflectAnything" class="btn-custom btn-huggingface"
+        id="demo-btn" target="_blank" rel="noopener" aria-label="Demo">
         <img src="assets/webpage/assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
         <span>Demo</span>
-      </button>
+      </a>
       <a href="https://huggingface.co/AlbeRota/UnReflectAnything" class="btn-custom btn-huggingface2"
         id="huggingface-btn">
         <img src="assets/webpage/assets/icons/huggingface.png" alt="Huggingface" class="btn-icon" />
@@ -188,12 +189,13 @@
         <img src="assets/webpage/assets/icons/colab.webp" alt="Colab" class="btn-icon" />
         <span>Colab</span>
       </a>
-      <button type="button" class="btn-custom btn-youtube" id="youtube-btn" aria-label="Video">
+      <a href="https://www.youtube.com/watch?v=vfBbGixu_4s" class="btn-custom btn-youtube" id="youtube-btn"
+        target="_blank" rel="noopener" aria-label="Watch video on YouTube">
         <svg class="btn-icon" viewBox="0 0 24 24" fill="#000" aria-hidden="true">
           <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.378.505A3.017 3.017 0 0 0 .5 6.186C0 8.07 0 12 0 12s0 3.93.5 5.814a3.016 3.016 0 0 0 2.122 2.136c1.873.505 9.378.505 9.378.505s7.505 0 9.378-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.546 15.568V8.432L15.818 12l-6.272 3.568z"/>
         </svg>
         <span>Video</span>
-      </button>
+      </a>
       <a href="mailto:alberto.rota@polimi.it" class="btn-custom btn-contact">
         <img src="assets/webpage/assets/icons/contact.png" alt="Contact" class="btn-icon" />
         <span>Contact</span>
@@ -473,31 +475,6 @@
           }, { threshold: 0.5 });
           observer.observe(pipCommand);
         }
-
-        // Demo / Video buttons: crossfade + width transition to "Coming soon" on click
-        function setupComingSoonButton(btnId) {
-          const btn = document.getElementById(btnId);
-          if (!btn) return;
-          const label = btn.querySelector('span');
-          const transitionMs = 280;
-          btn.addEventListener('click', function () {
-            if (!label || btn.disabled) return;
-            label.style.opacity = '0';
-            setTimeout(function () {
-              var w = btn.offsetWidth;
-              btn.style.overflow = 'hidden';
-              btn.style.width = w + 'px';
-              label.textContent = 'Coming soon';
-              btn.setAttribute('aria-label', 'Coming soon');
-              btn.disabled = true;
-              w = Math.ceil(btn.scrollWidth);
-              btn.style.width = w + 'px';
-              label.style.opacity = '1';
-            }, transitionMs);
-          });
-        }
-        setupComingSoonButton('demo-btn');
-        setupComingSoonButton('youtube-btn');
 
         // Citation copy button functionality
         const citationCopyBtn = document.getElementById('citation-copy-btn');
